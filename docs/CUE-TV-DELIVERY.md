@@ -1,5 +1,22 @@
 # Cue TV delivery and next work
 
+## Physical Apple TV retest, 17 November 2026
+
+The existing installed build 4 passed the awake-session playback test on the real Apple TV. No app code, build, installation, account connection or pairing was changed for this retest.
+
+- Cue Home and Continue Watching were visually confirmed.
+- The same authenticated source-selection API used by the phone received a successful handoff acknowledgement in 1.29 seconds. That is acknowledgement time, not source startup time. Actual video and captions inside Cue TV were confirmed separately on screen and through increasing saved episode progress.
+- The remote's Pause stopped progress; two history reads six seconds apart had the same position. One Back returned to the existing Cue browser, visually confirmed.
+- Reopening the same episode resumed from its saved position of about 74 seconds. It advanced beyond 75 seconds after about 11 seconds of wall time, and the real player screen showed 1:17 while paused.
+- The current `apple_tv` held-button command opened the real Apple TV Control Centre, then Back dismissed it.
+- The player was exited and the TV switched off. The authenticated power response reported off.
+
+The earlier handoff timeout did not recur. Its cause was not established: the TV was already awake on the Apple input when this test began. Cold wake, the user chooser, AirPods audio, every source format and physical iPhone tapping were not tested in this run. Standalone Apple-only mode remains unfinished. This result verifies the tested awake-session path, rather than every startup condition.
+
+Local evidence is excluded from Git: `dist/apple-tv-research/cue-tv-apple-17nov-results.json`, the handoff/pause/resume records and private device captures beginning `cue-tv-apple-17nov-`. No account, media URL or screenshot is published.
+
+The 16 November delivery notes below retain the earlier failures and preparation evidence as history; this retest supersedes their unverified awake-session Apple playback status.
+
 16 November 2026.
 
 ## Installed remote repair

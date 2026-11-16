@@ -6,7 +6,7 @@ Cue TV now has its own episode/source browser and an internal VLCKit player. Pho
 
 The current installation still needs that Android host for pairing, catalogues, source access and local progress. Standalone Apple-only deployment is unfinished. The tvOS app receives phone requests only while in front; it does not promise a background server.
 
-Build 4 is installed. Native unit checks and a real generated-sample playback/progress/pause/Back simulator test pass. The latest physical Apple TV phone-to-player handoff timed out and is unresolved. AirPods output also needs hardware acceptance. Android playback, exact-episode progress and one-press Back were verified, then the television was switched off as requested.
+Build 4 is installed. Native unit checks and generated-sample playback tests pass. On 17 November, the real Apple TV passed the phone-style source handoff, video playback, saved episode progress, pause, Back, resume and held TV/Control Centre tests. The earlier timeout did not recur, but cold wake/user selection and AirPods audio remain unverified. The TV was switched off after testing. See the dated delivery evidence for the limits of this awake-session test.
 
 Use [current delivery evidence and limits](../docs/CUE-TV-DELIVERY.md), [player architecture and licences](../docs/CUE-TV-PLAYBACK.md) and [the repository setup guide](../README.md) for this update. Keep the bundled VideoLAN LGPL notice and pinned source/build reference when distributing a build.
 
