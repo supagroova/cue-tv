@@ -1,0 +1,134 @@
+[
+  {
+    "rule": "private-ip-192.168",
+    "path": "apple-tv/Tests/LibraryTests.swift",
+    "sha256": "3f1765b6ef6f6b2ca423f6069522c4bd2b1e1f89871065f671dcd59410db832c",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "apple-tv/Tests/LibraryTests.swift",
+    "sha256": "2aa4e99a5f1a3eada6e5123ea51525956b0a90e453dad5b8057f31fd7f6fb3b5",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "apple-tv/Tests/LibraryTests.swift",
+    "sha256": "bf0cfa51fe74146c7c38aa7cb9254c7b9aef873ecf66a6a4af53a0b4e12ba273",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "37278d2973d5f777ce8877b662ed53a3e532fccffbcc2eedbb0345b8c0fd4f4f",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "2b406a0148ed53446044a46020f6701c521678a765b4c530474785a6d4e1950c",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-10.x",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "37278d2973d5f777ce8877b662ed53a3e532fccffbcc2eedbb0345b8c0fd4f4f",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-10.x",
+    "path": "iphone/Tests/YouTubeVideoTests.swift",
+    "sha256": "9ab3c2f5caf0d7958f717d1e473c905b9d77634d726b5d92a67202cad3523b31",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-172.16-31",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "37278d2973d5f777ce8877b662ed53a3e532fccffbcc2eedbb0345b8c0fd4f4f",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "link-local-ip",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "2b406a0148ed53446044a46020f6701c521678a765b4c530474785a6d4e1950c",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "email",
+    "path": "on-tv/android/app/src/test/java/dev/couchtv/ontv/YouTubeAccountsTest.kt",
+    "sha256": "90690a488b858e10dc18b37ad164c8d72896f71e9690a66fd34d61e81edd878f",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "email",
+    "path": "on-tv/android/app/src/test/java/dev/couchtv/ontv/StremioPlaybackTest.kt",
+    "sha256": "8f72da37bfbcf7732c65fea7c25798205f51899a420146fcdd07ff079b89f881",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "email",
+    "path": "on-tv/android/app/src/test/java/dev/couchtv/ontv/YouTubeAccountStorageTest.kt",
+    "sha256": "b3ee77237f789528d0dabf7a042d627b9fe81ba13abba02f5d6c6b7e8a394985",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "email",
+    "path": "iphone/Tests/YouTubeVideoTests.swift",
+    "sha256": "2b41e23e724a038ecd46afdefe5d5334e8ebc06033b6fd688b0140c27f0f32b7",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "email",
+    "path": "iphone/Tests/YouTubeNavigationTests.swift",
+    "sha256": "2a8ec548400fed992555aa9f505f1b5431dcc150d937ea96d23cd691b5a11518",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "mac-address",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "a609649cf3a81f9259ba0c3e1d75e228282086d77f5a748fcdb7dd7d52ed7b8c",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "mac-address",
+    "path": "iphone/Tests/YouTubeVideoTests.swift",
+    "sha256": "9ab3c2f5caf0d7958f717d1e473c905b9d77634d726b5d92a67202cad3523b31",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "mac-address-dash",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "17b78525970f744b72ac206f5af047e528e5a90dee8dbcc60df8451ce8f2fd5e",
+    "reason": "Synthetic input for validation, isolation or hostile-URL tests; reviewed before first share."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "iphone/TVConfig.example.plist",
+    "sha256": "f1efc6e42dd1a8adfb883912569b5c44e219cf040692eb4c0ebcc7520b4bf907",
+    "reason": "Documented dummy private-network example; not a household endpoint."
+  },
+  {
+    "rule": "mac-address",
+    "path": "iphone/TVConfig.example.plist",
+    "sha256": "dace5ea1827b01f05311240ec89a8cbbaf44d3e023c3e0e2f094f55754247438",
+    "reason": "Locally administered dummy MAC for the portable example."
+  },
+  {
+    "rule": "private-ip-192.168",
+    "path": "apple-tv/TVConfig.example.plist",
+    "sha256": "f1efc6e42dd1a8adfb883912569b5c44e219cf040692eb4c0ebcc7520b4bf907",
+    "reason": "Documented dummy private-network example; not a household endpoint."
+  },
+  {
+    "rule": "mac-address",
+    "path": "apple-tv/TVConfig.example.plist",
+    "sha256": "dace5ea1827b01f05311240ec89a8cbbaf44d3e023c3e0e2f094f55754247438",
+    "reason": "Locally administered dummy MAC for the portable example."
+  },
+  {
+    "rule": "phone-au",
+    "path": "iphone/Tests/WakePacketTests.swift",
+    "sha256": "17b78525970f744b72ac206f5af047e528e5a90dee8dbcc60df8451ce8f2fd5e",
+    "reason": "The exact dummy MAC in this packet test also matches the generic telephone pattern."
+  }
+]

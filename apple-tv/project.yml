@@ -1,0 +1,67 @@
+name: SittingRoomTV
+options:
+  bundleIdPrefix: com.rupertlaycock.couchtv
+  deploymentTarget:
+    tvOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: 2
+    MARKETING_VERSION: '1.0'
+configFiles:
+  Debug: Config/Signing.mine.xcconfig
+  Release: Config/Signing.mine.xcconfig
+targets:
+  SittingRoomTV:
+    type: application
+    platform: tvOS
+    sources:
+      - Sources
+      - path: TVConfig.plist
+        buildPhase: resources
+      - path: ../tvos/CouchTV/Assets.xcassets
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rupertlaycock.couchtv.appletv
+        ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: TV
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: TV uses your home network to show your Stremio library and work with the iPhone remote.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true
+        LSApplicationQueriesSchemes: [stremio, youtube]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.rupertlaycock.couchtv.appletv
+            CFBundleURLSchemes: [couchtv]
+  SittingRoomTVTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources: [Tests]
+    dependencies: [{target: SittingRoomTV}]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  SittingRoomTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources: [UITests]
+    dependencies: [{target: SittingRoomTV}]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  SittingRoomTV:
+    build:
+      targets: {SittingRoomTV: all, SittingRoomTVTests: [test]}
+    test:
+      targets: [SittingRoomTVTests, SittingRoomTVUITests]

@@ -1,0 +1,15 @@
+import AppKit
+let size = NSSize(width: 1024, height: 1024)
+let image = NSImage(size: size)
+image.lockFocus()
+NSColor(calibratedWhite: 0.08, alpha: 1).setFill()
+NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+NSColor.white.setStroke()
+let frame = NSBezierPath(roundedRect: NSRect(x: 226, y: 340, width: 572, height: 380), xRadius: 42, yRadius: 42)
+frame.lineWidth = 27; frame.stroke()
+let stand = NSBezierPath(); stand.move(to: NSPoint(x: 512, y: 340)); stand.line(to: NSPoint(x: 512, y: 262)); stand.move(to: NSPoint(x: 398, y: 262)); stand.line(to: NSPoint(x: 626, y: 262)); stand.lineWidth = 27; stand.lineCapStyle = .round; stand.stroke()
+NSColor.white.setFill()
+let play = NSBezierPath(); play.move(to: NSPoint(x: 466, y: 444)); play.line(to: NSPoint(x: 466, y: 614)); play.line(to: NSPoint(x: 608, y: 529)); play.close(); play.fill()
+image.unlockFocus()
+let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))

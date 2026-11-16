@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en-AU">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>YouTube privacy | Sitting Room TV</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<nav aria-label="Information"><a href="index.html">Sitting Room TV</a><a href="privacy.html" aria-current="page">Privacy</a><a href="terms.html">Use and terms</a></nav>
+<h1>YouTube privacy</h1>
+<p><small>Updated 16 November 2026</small></p>
+<p>This notice covers the YouTube features in the private Sitting Room TV app, maintained by Rupert Laycock.</p>
+<h2>YouTube Home on your iPhone</h2>
+<p>The native iPhone app can display YouTube's own website inline using WebKit, or open it in Apple's Safari browser view. You sign in and change accounts directly with YouTube. These website sessions stay on that phone and are separate from each other and from the optional API library connection below. Sitting Room TV does not read or export Google cookies, passwords or recommendation lists. Selecting a video sends its public video ID to the paired TV for playback.</p>
+<p>You can name multiple Home feeds on one iPhone. Each uses a separate persistent WebKit website session. Feed names and the selected feed are stored in that app on that phone; adding a feed does not add it to another phone. Removing a feed clears that feed's website data on the phone. The optional library account is managed separately.</p>
+<p>When you tap the TV button, a bundled action reads the current page URL, validates that it is a YouTube video and sends only its video ID to your paired TV. Extra tracking and playlist parameters are discarded. After a successful handoff, the action pauses the phone's video to avoid playing it on both screens.</p>
+<h2>What the connection accesses</h2>
+<p>With your permission, the app uses YouTube API Services and Google's read-only YouTube permission to retrieve your YouTube channel name and image, subscriptions, channel videos, playlists you own, liked videos and related display information. It uses this information to show your lists and let you choose videos to open on the TV.</p>
+<p>The app does not change your YouTube account, subscriptions, likes or playlists. It does not receive your Google password. Google does not make Watch History or Watch Later available through this connection.</p>
+<h2>Where information is stored and shared</h2>
+<p>Google connection credentials and account display details are encrypted in private storage on your Android TV. Account credentials are not sent to the phone. Personal lists are cached briefly on the TV and displayed only to the paired phone making the request. Each phone has a separate connection.</p>
+<p>Requests to Google's account and YouTube APIs use HTTPS. The phone and TV communicate over your home network using the TV's paired local HTTP service. That local connection is not encrypted, so use it on a trusted home network.</p>
+<p>Google and YouTube receive the requests needed to authorise access and retrieve your lists, images and chosen videos. This integration does not sell Google user data, use it for advertising or send it to an analytics service. This information website does not collect Google account data.</p>
+<h2>Changing accounts and removing access</h2>
+<p>In the phone app, open Watch, choose YouTube and select <strong>Disconnect this phone</strong>. This removes that phone's saved Google credentials, account details and cached personal lists from the TV. You can then connect a different account. It leaves the phone's TV pairing and other phones' connections in place.</p>
+<p>You can also revoke Sitting Room TV in <a href="https://myaccount.google.com/connections">your Google account connections</a>. Revoking Google's app grant can affect other phones connected to the same Google account. Google's own records are governed by the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+<p>Sitting Room TV's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements.</p>
+<p>For questions or help removing a connection, contact <a href="mailto:support@example.com">support@example.com</a>.</p>
+</main></body></html>

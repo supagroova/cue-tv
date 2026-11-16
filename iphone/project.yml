@@ -1,0 +1,108 @@
+name: CouchRemote
+options:
+  bundleIdPrefix: com.rupertlaycock.couchtv
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    DEVELOPMENT_TEAM: ''
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: 4
+    MARKETING_VERSION: '1.0'
+targets:
+  CouchRemote:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Shared
+      - path: Resources
+        buildPhase: resources
+      - path: TVConfig.plist
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rupertlaycock.couchtv.remote
+        TARGETED_DEVICE_FAMILY: '1,2'
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: YouTubeAction
+        embed: true
+    entitlements:
+      path: CouchRemote.entitlements
+      properties:
+        keychain-access-groups: ["$(AppIdentifierPrefix)com.rupertlaycock.couchtv.remote"]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: TV
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        TVPairingAccessGroup: "$(AppIdentifierPrefix)com.rupertlaycock.couchtv.remote"
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: TV connects to Sitting Room TV on your home Wi-Fi so you can control it and turn it on.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+  YouTubeAction:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: YouTubeAction
+      - path: Shared
+      - path: Sources/TVTarget.swift
+      - path: Sources/TVConnection.swift
+      - path: Sources/PairingStore.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rupertlaycock.couchtv.remote.youtube-action
+        TARGETED_DEVICE_FAMILY: '1,2'
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    entitlements:
+      path: YouTubeAction/YouTubeAction.entitlements
+      properties:
+        keychain-access-groups: ["$(AppIdentifierPrefix)com.rupertlaycock.couchtv.remote"]
+    info:
+      path: YouTubeAction/Info.plist
+      properties:
+        CFBundleDisplayName: Play on TV
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        TVPairingAccessGroup: "$(AppIdentifierPrefix)com.rupertlaycock.couchtv.remote"
+        NSLocalNetworkUsageDescription: Play on TV sends your chosen YouTube video to your paired TV on home Wi-Fi.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.ui-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).YouTubeActionViewController"
+          NSExtensionAttributes:
+            NSExtensionJavaScriptPreprocessingFile: YouTubePage
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+  CouchRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies: [{target: CouchRemote}]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  CouchRemoteUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies: [{target: CouchRemote}]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  CouchRemote:
+    build:
+      targets: {CouchRemote: all, CouchRemoteTests: [test]}
+    test:
+      targets: [CouchRemoteTests, CouchRemoteUITests]
