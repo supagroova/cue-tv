@@ -44,6 +44,14 @@ Phone-interface fixture, with no TV commands:
 COUCHTV_FIXTURE_PORT=5400 python3 tests/hybrid_fixture.py
 ```
 
+Android's Companion interoperability checks also use the project-local Python environment:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r bridge/requirements.txt
+COUCHTV_TEST_PYTHON="$PWD/.venv/bin/python" tv-home/android/gradlew -p on-tv/android --no-daemon testDebugUnitTest
+```
+
 Before generating Apple projects:
 
 ```sh
