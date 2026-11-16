@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 import time
 import os
+import re
 from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +29,37 @@ def platform():
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs): super().__init__(*args, directory=str(ROOT / 'remote/dist'), **kwargs)
+    def translate_path(self, path):
+        clean = urlsplit(path).path
+        if clean.startswith('/tv/'):
+            root = (ROOT / 'tv-home/web').resolve(); target = (root / clean.removeprefix('/tv/')).resolve()
+            if target.is_relative_to(root): return str(target)
+        if clean == '/cue-test.mkv': return str(ROOT / 'dist/player-fixtures/cue-test.mkv')
+        return super().translate_path(path)
     def log_message(self, *args): pass
+    def send_head(self):
+        if urlsplit(self.path).path != '/cue-test.mkv': return super().send_head()
+        file = open(ROOT / 'dist/player-fixtures/cue-test.mkv', 'rb')
+        size = os.fstat(file.fileno()).st_size; start = 0; end = size - 1
+        requested = self.headers.get('Range')
+        if requested:
+            match = re.fullmatch(r'bytes=(\d+)-(\d*)', requested)
+            if not match or int(match[1]) >= size:
+                file.close(); self.send_response(416); self.send_header('Content-Range', 'bytes */' + str(size)); self.end_headers(); return None
+            start = int(match[1]); end = min(size - 1, int(match[2]) if match[2] else size - 1)
+            if end < start: file.close(); self.send_error(416); return None
+        self.send_response(206 if requested else 200)
+        self.send_header('Content-Type', 'video/x-matroska'); self.send_header('Accept-Ranges', 'bytes')
+        self.send_header('Content-Length', str(end - start + 1))
+        if requested: self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.end_headers(); file.seek(start); self.cue_range_remaining = end - start + 1; return file
+    def copyfile(self, source, outputfile):
+        remaining = getattr(self, 'cue_range_remaining', None)
+        if remaining is None: return super().copyfile(source, outputfile)
+        while remaining > 0:
+            block = source.read(min(65536, remaining))
+            if not block: break
+            outputfile.write(block); remaining -= len(block)
     def reply(self, value, status=200):
         data = json.dumps(value).encode()
         self.send_response(status); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data))); self.end_headers()
@@ -47,6 +78,12 @@ class Handler(SimpleHTTPRequestHandler):
                 'link': account.get('link')}
     def do_GET(self):
         url = urlsplit(self.path); path = url.path
+        if path == '/api/stremio/collections':
+            return self.reply({'ok': True, 'country': 'AU', 'collections': [
+                {'id': 'netflix:trending', 'title': 'Trending TV Shows on Netflix', 'type': 'series', 'items': SERIES[:4]},
+                {'id': 'netflix:popular', 'title': 'Popular TV Shows on Netflix', 'type': 'series', 'items': SERIES[4:8]},
+                {'id': 'apple:new', 'title': 'New TV Shows on Apple TV+', 'type': 'series', 'items': SERIES[8:12]},
+            ]})
         if path == '/api/stremio/detail':
             if STATE.get('stremio_detail_error'): return self.reply({'ok': False, 'error': 'Could not load these episodes.'}, 502)
             query = parse_qs(url.query); kind = query.get('type', ['series'])[0]; identity = query.get('id', ['tt1'])[0]
@@ -137,6 +174,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ('/api/youtube/disconnect', '/api/youtube/link/cancel'):
             STATE['accounts'].pop(self.youtube_client(), None)
             return self.reply({'ok': True, **self.youtube_account()})
+        if path == '/api/stremio/playback/choice':
+            return self.reply({'ok': True, 'media': {'playback': 'a'*32, 'url': 'http://127.0.0.1:' + str(self.server.server_port) + '/cue-test.mkv',
+                'type': 'series', 'id': 'tt1234', 'video': 'tt1234:1:1', 'title': 'Cue TV player test', 'resume': 0}})
         if path == '/api/key' and body.get('key') == 'home': STATE['home_request'] += 1; STATE['open_request'] = None
         if path == '/api/platform/apple/opened' and (STATE['open_request'] or {}).get('serial') == body.get('serial'): STATE['open_request'] = None
         if path == '/api/platform':

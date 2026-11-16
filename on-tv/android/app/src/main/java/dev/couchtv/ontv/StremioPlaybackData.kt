@@ -86,6 +86,19 @@ internal object StremioPlaybackData {
         val path = uri.rawPath.removeSuffix("/manifest.json") + "/$resource/$type/" + component(id) + ".json"
         return uri.scheme + "://" + uri.rawAuthority + path + (uri.rawQuery?.let { "?$it" } ?: "")
     }
+    fun cuePayload(stream: JSONObject, meta: JSONObject, video: String): JSONObject {
+        if (!realDebridStream(stream)) throw ApiError(400, "Choose a Real-Debrid Torrentio source.")
+        validate(meta.getString("type"), meta.getString("id")); validate(meta.getString("type"), video)
+        val result = JSONObject().put("url", stream.getString("url")).put("type", meta.getString("type"))
+            .put("id", meta.getString("id")).put("video", video).put("title", meta.getString("title"))
+            .put("poster", meta.opt("poster") ?: JSONObject.NULL).put("background", meta.opt("background") ?: JSONObject.NULL)
+            .put("year", meta.optString("year")).put("description", meta.optString("description"))
+        val videos = meta.optJSONArray("videos") ?: JSONArray()
+        (0 until videos.length()).mapNotNull { videos.optJSONObject(it) }.firstOrNull { it.optString("id") == video }?.let {
+            result.put("season", it.optInt("season")).put("episode", it.optInt("episode")).put("episodeTitle", it.optString("title"))
+        }
+        return result
+    }
     fun usable(stream: JSONObject): Boolean {
         if (stream.toString().length > 16000) return false
         if (Regex("[a-fA-F0-9]{40}").matches(stream.optString("infoHash"))) return stream.optInt("fileIdx", 0) in 0..65535

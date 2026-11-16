@@ -20,7 +20,7 @@ internal class StremioPlaybackEngine(
 ) {
     private data class Meta(val display: JSONObject, val provider: String, val at: Long)
     private data class Addon(val url: String, val manifest: JSONObject, val name: String)
-    private data class Choice(val owner: String, val profile: String, val uri: String, val at: Long)
+    private data class Choice(val owner: String, val profile: String, val uri: String, val native: JSONObject, val at: Long)
     private data class Ticket(val uri: String, val at: Long)
     private data class Group(val index: Int, val addon: Addon, val streams: JSONArray?, val failed: Boolean)
     private val metadata = LinkedHashMap<String, Meta>()
@@ -120,7 +120,7 @@ internal class StremioPlaybackEngine(
                     val handle = opaque()
                     if (uri != null) {
                         while (choices.size >= 400) choices.remove(choices.keys.first())
-                        choices[handle] = Choice(owner, version, uri, now())
+                        choices[handle] = Choice(owner, version, uri, StremioPlaybackData.cuePayload(stream, meta.display, video), now())
                     }
                     rows.put(JSONObject().put("id", handle).put("provider", group.addon.name)
                         .put("name", StremioPlaybackData.text(stream.optString("name").ifBlank { group.addon.name }, 160))
@@ -151,7 +151,13 @@ internal class StremioPlaybackEngine(
     @Synchronized fun player(ticket: String): JSONObject {
         checkProfile()
         val found = tickets[ticket] ?: throw ApiError(404, "The playback request expired. Choose the source again.")
-        return JSONObject().put("uri", found.uri)
+        return JSONObject().put("uri", found.uri).put("media", runCatching { nativePlayer(found.uri) }.getOrNull() ?: JSONObject.NULL)
+    }
+    @Synchronized fun nativePlayer(uri: String): JSONObject {
+        val version = checkProfile()
+        val found = choices.values.firstOrNull { it.uri == uri && it.profile == version }
+            ?: throw ApiError(409, "The source expired. Choose it again.")
+        return JSONObject(found.native.toString())
     }
     @Synchronized fun finish(ticket: String) { tickets.remove(ticket) }
     private fun requireOwner(owner: String) {
@@ -169,13 +175,14 @@ internal object StremioPlayback {
     fun sources(owner: String, type: String, id: String, video: String) = engine.sources(owner, type, id, video)
     fun selected(owner: String, handle: String) = engine.selected(owner, handle)
     fun ticket(uri: String) = engine.ticket(uri)
-    fun player(ticket: String) = engine.player(ticket)
+    fun player(ticket: String): JSONObject = engine.player(ticket).also { it.put("media", CuePlayback.prepare(it.getJSONObject("media"))) }
+    fun nativePlayer(uri: String) = CuePlayback.prepare(engine.nativePlayer(uri))
     fun finish(ticket: String) = engine.finish(ticket)
     fun clear() = engine.clear()
 }
 
 /** Bounded add-on GET requests check redirect destinations and resolved network addresses. */
-private object StremioResourceHTTP {
+internal object StremioResourceHTTP {
     fun get(input: String): JSONObject {
         var uri = URI(input)
         repeat(4) {

@@ -130,5 +130,11 @@
     "path": "iphone/Tests/WakePacketTests.swift",
     "sha256": "17b78525970f744b72ac206f5af047e528e5a90dee8dbcc60df8451ce8f2fd5e",
     "reason": "The exact dummy MAC in this packet test also matches the generic telephone pattern."
+  },
+  {
+    "rule": "email",
+    "path": "apple-tv/Tests/CuePlayerTests.swift",
+    "sha256": "20fb3b383022a9231aa26ac7ca786ac434ccb70eee1758ede8f51cf382d1c45e",
+    "reason": "Literal fake user and secret in hostile-URL validation cases, never an account or credential."
   }
 ]

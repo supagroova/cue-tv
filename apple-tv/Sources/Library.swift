@@ -10,6 +10,7 @@ nonisolated struct Title: Decodable, Identifiable, Hashable, Sendable {
     let year: String?
     let progress: Double?
     let inProgress: Bool?
+    let video: String?
     var identity: String { "\(type):\(id)" }
     var posterURL: URL? { Self.imageURL(poster) }
     var backgroundURL: URL? { Self.imageURL(background) }
@@ -37,11 +38,20 @@ nonisolated struct Library: Decodable, Sendable {
     let items: [Title]
 }
 nonisolated struct SearchResults: Decodable, Sendable { let items: [Title] }
+nonisolated struct CollectionShelf: Decodable, Identifiable, Sendable {
+    let id: String
+    let title: String
+    let type: String
+    let items: [Title]
+}
+nonisolated struct ServiceCollections: Decodable, Sendable { let collections: [CollectionShelf] }
 nonisolated struct PairResponse: Decodable, Sendable { let token: String }
 nonisolated struct APIMessage: Decodable, Sendable { let error: String? }
 nonisolated struct Acknowledgement: Decodable, Sendable { let ok: Bool }
 nonisolated struct StremioPlayerLink: Decodable, Sendable {
     let uri: String
+    let media: CueMedia?
+    init(uri: String, media: CueMedia? = nil) { self.uri = uri; self.media = media }
     var validatedURL: URL? {
         guard uri.utf8.count <= 40000, let url = URL(string: uri), url.scheme == "stremio", (url.host ?? "").isEmpty,
               url.path.hasPrefix("/player/"), url.query == nil, url.fragment == nil else { return nil }

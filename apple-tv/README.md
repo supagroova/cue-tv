@@ -1,4 +1,20 @@
-# TV on Apple TV
+# Cue TV on Apple TV
+
+## Current build 4
+
+Cue TV now has its own episode/source browser and an internal VLCKit player. Phone source requests present that same player. YouTube continues to open the installed YouTube app. The normal Stremio flow no longer needs a separate Stremio installation or sign-in on Apple TV; it uses the account already linked to Cue's Android host.
+
+The current installation still needs that Android host for pairing, catalogues, source access and local progress. Standalone Apple-only deployment is unfinished. The tvOS app receives phone requests only while in front; it does not promise a background server.
+
+Build 4 is installed. Native unit checks and a real generated-sample playback/progress/pause/Back simulator test pass. The latest physical Apple TV phone-to-player handoff timed out and is unresolved. AirPods output also needs hardware acceptance. Android playback, exact-episode progress and one-press Back were verified, then the television was switched off as requested.
+
+Use [current delivery evidence and limits](../docs/CUE-TV-DELIVERY.md), [player architecture and licences](../docs/CUE-TV-PLAYBACK.md) and [the repository setup guide](../README.md) for this update. Keep the bundled VideoLAN LGPL notice and pinned source/build reference when distributing a build.
+
+Before `xcodegen generate`, copy `TVConfig.example.plist` to ignored `TVConfig.plist` and `Config/Signing.example.xcconfig` to ignored `Config/Signing.mine.xcconfig`. Choose your own signing team locally. The project needs an Xcode version with Swift 6 support and the pinned official VLCKit package. Do not install a differently signed build over an existing household installation.
+
+## Historical setup notes
+
+The build 1/2 instructions and evidence below describe the earlier external-Stremio relay. They are retained as history; the current build and its remaining acceptance gates are described above.
 
 ## Phone-side episode and source selection, 16 November 2026
 

@@ -164,6 +164,7 @@ class Server(private val ctx: Context, port: Int) : NanoWSD(port) {
                 json(200, ok().put("accepted", Platforms.confirmTitle(b.getLong("serial"), b.getBoolean("opened"))))
             }
             "GET /api/stremio/discover" -> json(200, ok(Stremio.discover()))
+            "GET /api/stremio/collections" -> json(200, ok(StremioCollections.get()))
             "GET /api/stremio/detail" -> json(200, ok(StremioPlayback.detail(q("type").orEmpty(), q("id").orEmpty())))
             "GET /api/stremio/sources" -> json(200, ok(StremioPlayback.sources(pairedClient(), q("type").orEmpty(), q("id").orEmpty(), q("video").orEmpty())))
             "POST /api/stremio/play" -> {
@@ -174,6 +175,15 @@ class Server(private val ctx: Context, port: Int) : NanoWSD(port) {
             "GET /api/stremio/playback" -> {
                 if (!Auth.isAppleTVClient(tokenOf(s))) throw ApiError(403, "Only the paired Apple TV receives private playback details.")
                 json(200, ok(StremioPlayback.player(q("id").orEmpty())))
+            }
+            "POST /api/stremio/progress" -> {
+                if (!Auth.isAppleTVClient(tokenOf(s))) throw ApiError(403, "Only the paired TV can update playback progress.")
+                CuePlayback.progress(body(s)); json(200, ok())
+            }
+            "POST /api/stremio/playback/choice" -> {
+                if (!Auth.isAppleTVClient(tokenOf(s))) throw ApiError(403, "Only the paired Apple TV receives private playback details.")
+                val uri = StremioPlayback.selected(pairedClient(), body(s).optString("id"))
+                json(200, ok().put("media", StremioPlayback.nativePlayer(uri)))
             }
             "GET /api/youtube/search" -> json(200, ok().put("items", YouTube.search(q("q").orEmpty())))
             "GET /api/youtube/account" -> json(200, ok(YouTubeAccount.status(pairedClient())))
@@ -192,7 +202,7 @@ class Server(private val ctx: Context, port: Int) : NanoWSD(port) {
             "POST /api/stremio/link" -> json(200, ok().put("link", Stremio.beginLink()))
             "GET /api/stremio/link" -> json(200, ok().put("connected", Stremio.pollLink()))
             "POST /api/stremio/unlink" -> { Stremio.unlink(); json(200, ok()) }
-            "GET /api/stremio/library" -> json(200, ok(Stremio.library()))
+            "GET /api/stremio/library" -> json(200, ok(CuePlayback.merge(Stremio.library())))
             "POST /api/stremio/open" -> {
                 val b = body(s)
                 Platforms.openTitle(b.optString("type"), b.optString("id"))
@@ -432,7 +442,7 @@ class Server(private val ctx: Context, port: Int) : NanoWSD(port) {
         .put("phones", Auth.phoneCount()).put("port", Store.port).put("adb", JSONObject(Adb.status()))
         .put("skip_watch_next", JSONArray(Store.skipWatchNext().sorted())).put("watch_next_per_app", Store.watchNextPerApp())
         .put("watch_next", JSONObject().put("granted", WatchNext.granted()).put("listed", WatchNext.listed()))
-        // Xiaomi only: Couch TV in PatchWall's place (FireHome); the setup page shows the switch when xiaomi is true
+        // Xiaomi only: Cue TV in PatchWall's place (FireHome); the setup page shows the switch when xiaomi is true
         .put("xiaomi", FireHome.isXiaomi).put("patchwall_replace", Store.bool("patchwall_replace")).put("watch", WatchService.connected)
         .put("inputs", Store.inputs())
 

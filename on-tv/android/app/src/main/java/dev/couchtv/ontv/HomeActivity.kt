@@ -107,6 +107,7 @@ class HomeActivity : Activity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     ready = true; view.requestFocus()
                     view.evaluateJavascript("window.tv && tv.ready && tv.ready()", null)
+                    openRequestedTitle()
                 }
                 override fun onReceivedError(view: WebView, req: WebResourceRequest, err: WebResourceError) {
                     // The server may still be starting: try again shortly.
@@ -142,8 +143,18 @@ class HomeActivity : Activity() {
     override fun onPause() { super.onPause(); front = false; js("window.tv && tv.pause && tv.pause()") }
     @Volatile private var front = false
     override fun onNewIntent(i: Intent) {
-        super.onNewIntent(i)
+        super.onNewIntent(i); intent = i
+        if (openRequestedTitle()) return
         if (web?.url?.contains("/tv/watch.html") == true && !Kids.isKid(Now.who)) js("window.tv && tv.home()") else load()
+    }
+    private fun openRequestedTitle(): Boolean {
+        val type = intent.getStringExtra("cue-type") ?: return false
+        val id = intent.getStringExtra("cue-id") ?: return false
+        if (!ready) return false
+        if (type !in setOf("movie", "series") || !Regex("[A-Za-z0-9:_-]{1,160}").matches(id)) return false
+        intent.removeExtra("cue-type"); intent.removeExtra("cue-id")
+        js("window.tv && tv.openTitle && tv.openTitle(" + org.json.JSONObject.quote(type) + "," + org.json.JSONObject.quote(id) + ")")
+        return true
     }
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {

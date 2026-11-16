@@ -4,6 +4,7 @@ import UIKit
 
 @Observable final class WatchModel {
     var catalogue = Catalogue()
+    var collections: [CollectionShelf] = []
     var library: [Title] = []
     var linked = false
     var connected = false
@@ -71,6 +72,8 @@ import UIKit
             let result = try await service.request("api/stremio/library", as: Library.self)
             library = result.items; linked = result.connected
         } catch { handle(error) }
+        do { collections = try await service.request("api/stremio/collections", as: ServiceCollections.self).collections }
+        catch { /* Existing catalogue and history remain usable during a provider outage. */ }
     }
     func observeRemote() async {
         await service.events { [weak self] event in
@@ -80,11 +83,21 @@ import UIKit
                 lastHomeSignal = revision
             }
             if let request = event.platform?.open_request, request.serial != lastTitleSignal {
-                lastTitleSignal = request.serial; selected = nil
+                lastTitleSignal = request.serial
                 if request.service == "stremio-player" {
                     Task { await openStremioPlayer(request) }
                     return
                 }
+                if (request.service ?? "stremio") == "stremio" {
+                    Task {
+                        do {
+                            selected = try await service.request("api/stremio/detail", as: Title.self, parameters: ["type": request.type, "id": request.id])
+                            try await service.confirmTitle(request.serial, opened: true)
+                        } catch { self.error = "Couldn’t open this title. Try again."; try? await service.confirmTitle(request.serial, opened: false) }
+                    }
+                    return
+                }
+                selected = nil
                 guard let url = request.url else {
                     Task { try? await service.confirmTitle(request.serial, opened: false) }
                     return
@@ -101,8 +114,10 @@ import UIKit
         }
         do {
             let link = try await service.request("api/stremio/playback", as: StremioPlayerLink.self, parameters: ["id": request.id])
-            guard let url = link.validatedURL else { throw TVError(message: "This Stremio source could not be opened.", status: 400) }
-            openURL(url, missing: "Stremio could not open this source. Try another source.", replyTo: request.serial)
+            guard let media = link.media else { throw TVError(message: "Update Cue TV on the Android host to use its internal player.", status: 409) }
+            let opened = CuePlayerPresenter.show(media, service: service)
+            try await service.confirmTitle(request.serial, opened: opened)
+            if !opened { error = "This source couldn’t be opened. Choose another source." }
         } catch {
             self.error = "Couldn’t receive this Stremio source. Choose it again on your phone."
             try? await service.confirmTitle(request.serial, opened: false)

@@ -12,19 +12,25 @@ Built from [Seagey/couch-tv](https://github.com/Seagey/couch-tv), retaining its 
 - `apple-tv/`: native tvOS browsing interface, currently connected to the Android API.
 - `tv-home/web/`: custom Android home and browsing interface.
 
-Playback uses the installed official Stremio and YouTube apps. Stremio Core was consulted for its playback-link protocol; its Rust engine is not embedded in the custom interface. No always-on Mac is required by the current installation.
+Stremio browsing now stays inside Cue TV, including seasons, episodes, exact Real-Debrid Torrentio source selection and internal Android/tvOS players. YouTube continues to open its own app on the selected platform. Stremio Core was consulted for protocol compatibility; its Rust engine is not embedded. No always-on Mac is required by the current hybrid installation.
 
-## Requested work
+## Current update
 
-1. Rename the visible apps and tvOS interface to **Cue TV**, retaining existing bundle IDs, signing identity and pairings.
-2. Stop YouTube feed previews playing automatically, improve the compact browsing layout and require an explicit Play on TV action.
-3. Support **Android TV only**, **Apple TV only**, and **Both**. Android currently hosts the service even when Apple TV is selected. Apple TV-only is not implemented yet and requires an independent connection and browsing path.
+- Visible app names are **Cue TV**, preserving existing bundle IDs and household pairings.
+- The remote supports held Select without text selection. Apple TV has a separate TV button: tap for the system TV action, hold for Control Centre. Android's existing raw TV key remains available.
+- The iPhone YouTube panel has compact controls and separate named website feeds. Sending a video requires an explicit **Play on TV** action. Build 5 is installed on the owner's phone; actual personalised layout and previews need a fresh household check.
+- Netflix, Prime Video and Apple TV+ have separate **Trending**, **Popular** and **New** film/show shelves in the configured country. These are provider-labelled discovery catalogues, not private viewing figures. Stream providers remain Real-Debrid Torrentio only.
+- Cue stores its own playback progress under the current Stremio account fingerprint and merges it with existing history. It does not overwrite the external Stremio account.
 
-The imported native iPhone baseline is build 4. Twenty-one unit checks and three UI checks passed. Real signed-in Home recommendations have been confirmed by the owner. Automatic previews and the embedded layout are known issues being addressed; a full recommendation-to-TV playback acceptance check remains separate.
+Android release, lint and 135 unit checks completed with no failures and one optional network skip. Remote/browser checks cover deliberate hold, cancellation, platform routing, separate service rankings and exact episode/source selection. Native tvOS tests played a generated Matroska fixture, recorded real progress, paused and returned to the same source chooser. The Android internal player has played a real selected source on hardware. The tvOS update is installed, but the latest real-device phone-to-player handoff timed out and remains unresolved. See [delivery evidence and limits](docs/CUE-TV-DELIVERY.md) and [playback architecture](docs/CUE-TV-PLAYBACK.md).
+
+## Deployment modes
+
+The current Android-hosted installation works with Android TV and the existing Apple TV hybrid. **Standalone Apple TV only remains unfinished.** It needs independent native phone discovery/pairing, remote control and Stremio browsing, without depending on an Android host. A platform picker does not provide that capability. Preserve existing household connections when implementing the three complete setup modes.
 
 ## Local development
 
-Use Python 3.11+, a supported Node version, JDK 21/Android SDK for Android, and Xcode/XcodeGen for Apple targets. See the target READMEs for existing build commands.
+Use Python 3.11+, a supported Node version, JDK 21/Android SDK 36 for Android (minimum Android 6; target SDK 34), and Xcode/XcodeGen for Apple targets. See the target READMEs for existing build commands.
 
 ```sh
 cd remote
@@ -43,6 +49,7 @@ Before generating Apple projects:
 ```sh
 cp iphone/TVConfig.example.plist iphone/TVConfig.plist
 cp apple-tv/TVConfig.example.plist apple-tv/TVConfig.plist
+cp apple-tv/Config/Signing.example.xcconfig apple-tv/Config/Signing.mine.xcconfig
 ```
 
 The examples contain dummy network values. Replace them locally for your own TV. These local files are ignored. Run `xcodegen generate` inside the relevant Apple target directory. The shared project leaves DEVELOPMENT_TEAM empty; choose your own team for a physical-device build. If using a different Apple team, use your own bundle identifiers consistently for the app, extension and extension launch identifier. Simulator checks do not require household signing material.

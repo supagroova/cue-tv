@@ -22,7 +22,7 @@ class YouTubeTest {
         assertEquals("A channel", item.getString("channel"))
         assertEquals("12:34", item.getString("duration"))
         assertEquals("https://i.ytimg.com/vi/abcdefghijk/mqdefault.jpg", item.getString("thumbnail"))
-        assertEquals(setOf("id", "title", "channel", "duration", "thumbnail"), item.keySet())
+        assertEquals(setOf("id", "title", "channel", "duration", "thumbnail"), item.keys().asSequence().toSet())
     }
     @Test fun ignoresAdsDuplicatesInvalidIdsAndSecondarySuggestions() {
         val rows = org.json.JSONArray().put(JSONObject().put("adSlotRenderer", video("advert12345")))

@@ -62,6 +62,11 @@ object Platforms {
     }
 
     fun key(name: String, hold: Boolean): String = synchronized(actions) {
+        if (name == "apple_tv") {
+            if (active(fresh = true) != PlatformRules.Platform.APPLE) throw ApiError(409, "The TV button is available when Apple TV is selected.")
+            AppleLink.tvButton(hold)
+            return@synchronized name
+        }
         val code = Keys.resolve(name) ?: throw ApiError(400, "Unknown remote control.")
         // Volume and panel power belong to the television, including when AirPods are connected
         // to the Apple TV. Navigation and media controls belong to the visible platform.
@@ -74,12 +79,13 @@ object Platforms {
 
     /** true means handled here; Android's existing app launcher handles the other case. */
     fun launch(target: String): Boolean = synchronized(actions) {
+        if (target in setOf("stremio", "com.stremio.one") && active() == PlatformRules.Platform.ANDROID) { Tv.startHome(); return@synchronized true }
         if (active() != PlatformRules.Platform.APPLE) return@synchronized false
         titles.cancel()
         when (target) {
             "home", BuildConfig.APPLICATION_ID -> appleHome()
             "youtube", "com.google.android.youtube.tv" -> AppleLink.app("com.google.ios.youtube")
-            "stremio", "com.stremio.one" -> AppleLink.stremio()
+            "stremio", "com.stremio.one" -> AppleLink.home()
             else -> throw ApiError(409, "This shortcut is not available on Apple TV. Choose Android TV to use it there.")
         }
         true
@@ -94,8 +100,8 @@ object Platforms {
         val ticket = StremioPlayback.ticket(uri)
         try {
             openOnActivePlatform("stremio-player", "stream", ticket) {
-                try { Tv.startUri(uri, "com.stremio.one") }
-                catch (_: Exception) { throw ApiError(502, "Stremio couldn’t open this source. Try another, or open the episode on the TV.") }
+                try { CuePlayerActivity.open(StremioPlayback.nativePlayer(uri)) }
+                catch (_: Exception) { throw ApiError(502, "Cue TV couldn’t open this source. Choose another source.") }
             }
         } finally { StremioPlayback.finish(ticket) }
     }
@@ -128,7 +134,7 @@ object Platforms {
     fun launchAppleApp(target: String) = synchronized(actions) {
         if (target !in setOf("youtube", "stremio")) throw ApiError(400, "Choose YouTube or Stremio.")
         titles.cancel()
-        if (target == "youtube") AppleLink.app("com.google.ios.youtube") else AppleLink.stremio()
+        if (target == "youtube") AppleLink.app("com.google.ios.youtube") else AppleLink.home()
     }
 
     private fun appleHome(wake: Boolean = false) {

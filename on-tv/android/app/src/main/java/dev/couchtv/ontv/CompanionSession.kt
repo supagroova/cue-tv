@@ -93,7 +93,7 @@ internal class CompanionSession(host: String, port: Int) : Closeable {
     }
     fun start() {
         ask("_systemInfo", mapOf("_bf" to 0, "_cf" to 512, "_clFl" to 128, "_i" to "couch-tv", "_idsID" to CompanionWire.hex(CompanionWire.random(8)),
-            "_pubID" to "couch-tv", "_sf" to 256, "_sv" to "170.18", "model" to "iPhone10,6", "name" to "Couch TV"))
+            "_pubID" to "couch-tv", "_sf" to 256, "_sv" to "170.18", "model" to "iPhone10,6", "name" to "Cue TV"))
         val sid = CompanionWire.random(4).foldIndexed(0L) { i, n, b -> n or ((b.toLong() and 255) shl (i * 8)) }
         ask("_sessionStart", mapOf("_srvT" to "com.apple.tvremoteservices", "_sid" to sid))
         // Older tvOS versions do not recognise the extra TV Remote session request.
@@ -101,7 +101,7 @@ internal class CompanionSession(host: String, port: Int) : Closeable {
     }
     fun key(code: Int, hold: Boolean = false) {
         ask("_hidC", mapOf("_hBtS" to 1, "_hidC" to code))
-        try { Thread.sleep(if (hold) 700 else 50) }
+        try { Thread.sleep(if (hold) 1000 else 50) }
         finally { ask("_hidC", mapOf("_hBtS" to 2, "_hidC" to code)) }
     }
     fun prepareForApp(wake: Boolean = false) {

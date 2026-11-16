@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Window changes only: no content reading, no feedback. canRequestFilterKeyEvents is the capability
      for one opt-in Xiaomi case (WatchService.onKeyEvent): the service asks for key events at run
-     time only when "Couch TV in PatchWall's place" is on, and then acts on the PatchWall button alone. -->
+     time only when "Cue TV in PatchWall's place" is on, and then acts on the PatchWall button alone. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

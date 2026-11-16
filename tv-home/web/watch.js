@@ -3,10 +3,12 @@
   var byId = function (id) { return document.getElementById(id); };
   var page = byId('page'), content = byId('content'), sidebar = byId('sidebar');
   var catalogue = { series: [], movies: [], loading: true, failed: false };
+  var collections = [];
   var library = { connected: null, items: [], failed: false };
   var currentPage = 'home', featured = null, detailItem = null, lastMainKey = null, detailOrigin = null;
   var searchItems = [], searchQuery = '', searchState = 'empty', searchSequence = 0;
   var hasNavigated = false, toastTimer = null;
+  var choice = null, choiceSequence = 0;
   var names = { home: 'Home', search: 'Search', movies: 'Movies', shows: 'TV Shows', library: 'Library', apps: 'Apps', settings: 'Settings' };
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var scrollBehavior = reduceMotion ? 'auto' : 'smooth';
@@ -41,9 +43,9 @@
     b.addEventListener('click', on); return b;
   }
   function openInStremio(item) {
-    if (!item) return openApp('com.stremio.one');
-    message('Opening ' + item.title + ' in Stremio…');
-    api('POST', '/api/stremio/open', { type: item.type, id: item.id }).then(function () { message(''); }).catch(function (e) { message(e.message); });
+    if (!item) return home();
+    if (!detailItem || detailItem.id !== item.id || detailItem.type !== item.type) openDetail(item);
+    openChoices(item);
   }
   function openApp(pkg) {
     try { if (window.TVOS && window.TVOS.launch(pkg)) return; } catch (_) {}
@@ -51,9 +53,10 @@
     api('POST', '/api/launch', { app: pkg }).catch(function (e) { message(e.message || 'Could not open this app.'); });
   }
   function openDetail(item) {
+    hideChoices();
     detailItem = item; detailOrigin = document.activeElement && document.activeElement.dataset.focusKey;
     byId('detail-title').textContent = item.title; byId('detail-meta').textContent = metadata(item);
-    byId('detail-description').textContent = item.description || 'Open this title in Stremio to see the available episodes and viewing options.';
+    byId('detail-description').textContent = item.description || 'Choose an episode and a source to watch in Cue TV.';
     applyImage(byId('detail-art'), artwork(item));
     byId('detail').hidden = false; page.inert = true; sidebar.inert = true;
     page.setAttribute('aria-hidden', 'true'); sidebar.setAttribute('aria-hidden', 'true');
@@ -61,9 +64,82 @@
   }
   function closeDetail(restore) {
     if (!detailItem) return;
+    hideChoices();
     detailItem = null; byId('detail').hidden = true; page.inert = false; sidebar.inert = false;
     page.removeAttribute('aria-hidden'); sidebar.removeAttribute('aria-hidden');
     if (restore !== false) focusKey(detailOrigin) || focusMain();
+  }
+  function hideChoices() {
+    choiceSequence++; choice = null;
+    byId('detail-choices').hidden = true; byId('detail-choices').replaceChildren();
+    document.querySelector('.detail-copy').hidden = false;
+  }
+  function choiceHeader(title) {
+    var panel = byId('detail-choices'); panel.replaceChildren();
+    var heading = node('div', 'choices-header'); heading.appendChild(action('Back', 'back', choiceBack, false));
+    heading.appendChild(node('h1', '', title)); panel.appendChild(heading); return panel;
+  }
+  function choiceBack() {
+    if (!choice) return;
+    if (choice.stage === 'sources' && choice.item.type === 'series') return renderEpisodes();
+    hideChoices(); byId('detail-open').focus();
+  }
+  function choiceFailure(text, retry) {
+    var panel = choiceHeader('Couldn’t load this'); panel.appendChild(node('p', 'empty', text));
+    var again = action('Try again', null, retry, true); panel.appendChild(again); again.focus();
+  }
+  function openChoices(item) {
+    var serial = ++choiceSequence;
+    var videoParts = (item.video || '').split(':');
+    choice = { item: item, stage: 'episodes', season: videoParts.length >= 3 ? Number(videoParts[videoParts.length - 2]) || 1 : 1 };
+    document.querySelector('.detail-copy').hidden = true; byId('detail-choices').hidden = false;
+    choiceHeader(item.title).appendChild(node('p', 'empty', 'Loading episodes…'));
+    api('GET', '/api/stremio/detail?type=' + encodeURIComponent(item.type) + '&id=' + encodeURIComponent(item.id)).then(function (result) {
+      if (!choice || serial !== choiceSequence) return;
+      choice.info = result;
+      if (item.type === 'movie') loadSources(item.id);
+      else renderEpisodes();
+    }).catch(function (e) { if (choice && serial === choiceSequence) choiceFailure(e.message, function () { openChoices(item); }); });
+  }
+  function renderEpisodes() {
+    if (!choice) return; choiceSequence++; choice.stage = 'episodes';
+    var videos = choice.info.videos || [], seasons = Array.from(new Set(videos.map(function (v) { return v.season; }))).sort(function (a, b) { return a - b; });
+    if (seasons.indexOf(choice.season) < 0) choice.season = seasons.filter(function (s) { return s > 0; })[0] || seasons[0];
+    var panel = choiceHeader(choice.item.title), picker = node('div', 'choices-seasons');
+    seasons.forEach(function (season) {
+      var button = action(season ? 'Season ' + season : 'Specials', null, function () { choice.season = season; renderEpisodes(); }, season === choice.season);
+      picker.appendChild(button);
+    }); panel.appendChild(picker);
+    var list = node('div', 'choices-list');
+    videos.filter(function (v) { return v.season === choice.season; }).forEach(function (video) {
+      var button = action(video.episode + '. ' + video.title, null, function () { loadSources(video.id); }, false);
+      var released = Date.parse(video.released); button.disabled = isFinite(released) && released > Date.now();
+      if (button.disabled) button.appendChild(node('small', '', 'Not released yet'));
+      list.appendChild(button);
+    }); panel.appendChild(list);
+    if (!videos.length) panel.appendChild(node('p', 'empty', 'No episodes are available for this title.'));
+    (list.querySelector('button:not(:disabled)') || panel.querySelector('button')).focus();
+  }
+  function loadSources(video) {
+    if (!choice) return; var serial = ++choiceSequence, item = choice.item;
+    choice.stage = 'sources'; choice.video = video;
+    choiceHeader('Choose a source').appendChild(node('p', 'empty', 'Finding your Real-Debrid sources…'));
+    api('GET', '/api/stremio/sources?type=' + encodeURIComponent(item.type) + '&id=' + encodeURIComponent(item.id) + '&video=' + encodeURIComponent(video)).then(function (result) {
+      if (!choice || serial !== choiceSequence) return;
+      var panel = choiceHeader('Choose a source'), list = node('div', 'choices-list');
+      (result.items || []).forEach(function (source) {
+        var button = action(source.name, 'play', function () {
+          button.disabled = true; message('Opening your source…');
+          api('POST', '/api/stremio/play', { id: source.id }).then(function () { message(''); }).catch(function (e) { message(e.message); }).finally(function () { button.disabled = !source.playable; });
+        }, false);
+        button.disabled = !source.playable;
+        button.appendChild(node('small', '', source.description || source.reason || 'Real-Debrid'));
+        list.appendChild(button);
+      });
+      panel.appendChild(list);
+      if (!result.items || !result.items.length) { panel.appendChild(node('p', 'empty', 'No Real-Debrid Torrentio sources are available.')); panel.appendChild(action('Try again', null, function () { loadSources(video); }, true)); }
+      (list.querySelector('button:not(:disabled)') || panel.querySelector('button')).focus();
+    }).catch(function (e) { if (choice && serial === choiceSequence) choiceFailure(e.message, function () { loadSources(video); }); });
   }
   function card(item) {
     var b = node('button', 'card'); b.dataset.focusKey = 'title:' + item.type + ':' + item.id;
@@ -111,7 +187,7 @@
     if (item) copy.appendChild(node('p', 'metadata', metadata(item)));
     copy.appendChild(node('p', 'hero-description', item && item.description ? item.description : 'Your movies, shows and favourite apps, together on your TV.'));
     var actions = node('div', 'actions'); actions.setAttribute('data-nav-group', '');
-    actions.appendChild(action(item ? 'Watch in Stremio' : 'Open Stremio', 'play', function () { openInStremio(item); }, true, 'hero-watch'));
+    actions.appendChild(action(item ? (item.type === 'series' ? 'Episodes & Sources' : 'Choose a source') : 'Watch Now', 'play', function () { openInStremio(item); }, true, 'hero-watch'));
     actions.appendChild(action('YouTube', 'youtube', function () { openApp('com.google.android.youtube.tv'); }, false, 'hero-youtube'));
     copy.appendChild(actions); section.appendChild(copy); return section;
   }
@@ -144,6 +220,7 @@
       !type || type === 'series' ? shelf('Popular TV Shows', series) : null,
       !type || type === 'movie' ? shelf('Popular Movies', movies) : null
     ]);
+    collections.forEach(function (row) { if (!type || row.type === type) append(content, [shelf(row.title, row.items)]); });
   }
   function renderLibrary() {
     var wrap = subpage('Library', 'Your watching history, from Stremio.');
@@ -243,6 +320,7 @@
     render(); if (!fromNav) focusMain();
   }
   function refreshCatalogue() {
+    api('GET', '/api/stremio/collections').then(function (j) { collections = j.collections || []; if (currentPage !== 'search') render(); }).catch(function () {});
     return api('GET', '/api/stremio/discover').then(function (j) {
       catalogue = Object.assign({ loading: false, failed: false, series: [], movies: [] }, j); if (currentPage !== 'search') render();
     }).catch(function () { catalogue.loading = false; catalogue.failed = true; if (currentPage !== 'search') render(); });
@@ -260,6 +338,7 @@
   }
   function navForPage() { return document.querySelector('.nav-item[data-page="' + currentPage + '"]') || byId('settings'); }
   function back() {
+    if (choice) return choiceBack();
     if (detailItem) return closeDetail();
     if (sidebar.contains(document.activeElement)) { if (currentPage !== 'home') showPage('home', true); else focusMain(); }
     else navForPage().focus();
@@ -281,6 +360,10 @@
       hasNavigated = true;
       if (current && current.tagName === 'INPUT' && !dy) return;
       e.preventDefault();
+      if (choice) {
+        var controls = visibleFocusables(byId('detail-choices')), index = controls.indexOf(current);
+        focusMove(controls[Math.max(0, Math.min(controls.length - 1, index + (dy || dx)))]); return;
+      }
       if (detailItem) { focusMove(dy < 0 || dx < 0 ? byId('detail-back') : byId('detail-open')); return; }
       if (sidebar.contains(current)) {
         var nav = Array.from(sidebar.querySelectorAll('button')), ni = nav.indexOf(current);
@@ -304,11 +387,13 @@
   document.querySelectorAll('.nav-item[data-page]').forEach(function (b) { b.addEventListener('click', function () { showPage(b.dataset.page); }); });
   document.querySelector('[data-launch]').addEventListener('click', function () { openApp(this.dataset.launch); });
   byId('settings').addEventListener('click', function () { showPage('settings'); });
-  byId('detail-back').addEventListener('click', function () { closeDetail(); });
+  byId('detail-back').addEventListener('click', function () { if (choice) choiceBack(); else closeDetail(); });
   byId('detail-open').addEventListener('click', function () { openInStremio(detailItem); });
   document.querySelectorAll('svg.icon').forEach(function (s) { s.setAttribute('aria-hidden', 'true'); });
   function ready() { if (!hasNavigated) focusMain(); }
-  window.tv = { home: home, back: back, resume: resume, pause: function () {}, ready: ready, settingsKey: function () { showPage('settings'); } };
+  window.tv = { home: home, back: back, resume: resume, pause: function () {}, ready: ready, settingsKey: function () { showPage('settings'); }, openTitle: function (type, id) {
+    api('GET', '/api/stremio/detail?type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(id)).then(openDetail).catch(function (e) { message(e.message); });
+  } };
   setInterval(function () { api('GET', '/api/stremio/status').then(function (j) { if (j.connected !== library.connected) { refreshLibrary(); refreshCatalogue(); } }).catch(function () {}); }, 15000);
   function clock() { byId('clock').textContent = new Date().toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' }); }
   clock(); setInterval(clock, 60_000); render(); ready(); refreshCatalogue(); refreshLibrary();

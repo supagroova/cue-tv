@@ -9,6 +9,26 @@ struct RemoteWebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.userContentController.add(context.coordinator, name: "couchNative")
         configuration.userContentController.addUserScript(WKUserScript(source: Self.bridgeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let compactYouTube = #"""
+        (() => {
+          if (location.protocol !== 'http:' || location.port !== '5400') return;
+          const style = document.createElement('style');
+          style.textContent = `
+            .pad, .pad .ring, .pad .hint, .pad svg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+            .youtube-browser .stremio-intro-row h2 { font-size: 28px; }
+            .youtube-browser .stremio-intro-row p { display: none; }
+            .youtube-browser .stremio-intro-row > button { width: 44px; height: 44px; }
+            .youtube-browser .youtube-library-tabs { gap: 2px; padding: 3px; border: 1px solid var(--rim); border-radius: 12px; background: rgba(255,255,255,.04); }
+            .youtube-browser .youtube-library-tabs button { flex: 1; min-width: 0; padding: 0 7px; border: 0; font-size: 12px; }
+            .youtube-browser .youtube-feed-heading h3 { display: none; }
+            .youtube-browser .youtube-feed-heading:not(:has(select)) { display: none; }
+            .youtube-browser .youtube-inline-home { margin-top: 0; }
+            .youtube-browser .youtube-inline-space { border-radius: 12px; background: #08080a; }
+          `;
+          (document.head || document.documentElement).append(style);
+        })();
+        """#
+        configuration.userContentController.addUserScript(WKUserScript(source: compactYouTube, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.accessibilityIdentifier = "tv-remote-web"
         view.navigationDelegate = context.coordinator; view.uiDelegate = context.coordinator

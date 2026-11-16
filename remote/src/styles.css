@@ -273,7 +273,9 @@ main { position: relative; z-index: 1; height: 100%; }
 .pad {
   position: relative; flex: 1; min-height: 180px; border-radius: 34px; overflow: hidden;
   touch-action: none; display: grid; place-items: center; container-type: size;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
+.pad .ring, .pad .hint, .pad svg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 @container (max-height: 330px) { .pad .hint { display: none; } }
 .pad .chev { position: absolute; width: 24px; height: 24px; color: var(--ink); opacity: 0.38; transition: opacity 0.35s, transform 0.35s var(--ease); }
 .pad .chev.up { top: 16px; }
@@ -308,6 +310,9 @@ main { position: relative; z-index: 1; height: 100%; }
 
 /* Bottom controls */
 .controls { display: flex; gap: 10px; align-items: center; }
+.controls.apple-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.controls.apple-controls > .round { justify-self: center; }
+.controls.apple-controls .volume { grid-column: 1 / -1; height: 44px; }
 .volume { flex: 1; height: var(--ctl); border-radius: calc(var(--ctl) / 2); display: flex; align-items: stretch; overflow: hidden; }
 .volume button { width: 48px; display: grid; place-items: center; flex: none; touch-action: pan-x; }
 .volume .vol-mid { flex: 1; width: auto; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: 16px; font-variant-numeric: tabular-nums; color: var(--ink-2); }

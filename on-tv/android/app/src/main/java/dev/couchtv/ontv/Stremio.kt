@@ -16,6 +16,7 @@ object Stremio {
     @Volatile private var linkUntil = 0L
     @Volatile private var cached: JSONObject? = null
     @Volatile private var cachedAt = 0L
+    @Volatile private var lastLibrary = JSONArray()
 
     fun connected() = !Store.str(KEY).isNullOrBlank()
     internal fun accountFingerprint(): String? = Store.str(KEY)?.takeIf { it.isNotBlank() }?.let {
@@ -73,6 +74,7 @@ object Stremio {
             .optJSONObject("result")?.optString("authKey").orEmpty()
         if (auth.isEmpty()) throw ApiError(502, "Stremio did not finish linking. Try again.")
         Store.putStr(KEY, auth)
+        lastLibrary = JSONArray()
         StremioPlayback.clear()
         linkCode = null; linkUntil = 0; cachedAt = 0
         return true
@@ -82,9 +84,10 @@ object Stremio {
         Store.putStr(KEY, null)
         StremioPlayback.clear()
         linkCode = null; linkUntil = 0; cachedAt = 0
+        lastLibrary = JSONArray()
     }
 
-    private fun cleanMeta(item: JSONObject): JSONObject? {
+    internal fun cleanMeta(item: JSONObject): JSONObject? {
         val id = item.optString("id", item.optString("_id"))
         val type = item.optString("type")
         val name = item.optString("name")
@@ -166,7 +169,14 @@ object Stremio {
         val data = JSONObject().put("authKey", key).put("collection", "libraryItem").put("ids", JSONArray()).put("all", true)
         val values = request("https://api.strem.io/api/datastoreGet", data).optJSONArray("result")
             ?: throw ApiError(502, "Stremio did not return the library. Try linking again.")
-        return JSONObject().put("connected", true).put("items", watchedItems(values))
+        val items = watchedItems(values); lastLibrary = items
+        return JSONObject().put("connected", true).put("items", items)
+    }
+    internal fun resume(meta: JSONObject): Long {
+        val snapshot = lastLibrary
+        return (0 until snapshot.length()).mapNotNull { snapshot.optJSONObject(it) }.firstOrNull {
+            it.optString("type") == meta.optString("type") && it.optString("id") == meta.optString("id") && it.optString("video") == meta.optString("video") && it.optBoolean("inProgress")
+        }?.optLong("position")?.coerceIn(0, 2_592_000_000L) ?: 0
     }
 
     internal fun watchedItems(values: JSONArray): JSONArray {
@@ -184,6 +194,7 @@ object Stremio {
                 item.put("background", "https://images.metahub.space/background/medium/$imdb/img")
             val duration = state.optLong("duration", 0)
             item.put("lastWatched", last.ifEmpty { raw.optString("_mtime") })
+                .put("position", offset).put("duration", duration).put("video", state.optString("video_id", if (item.optString("type") == "movie") imdb else ""))
                 .put("progress", if (duration > 0 && offset > 0) (offset.toDouble() / duration).coerceIn(0.0, 1.0) else JSONObject.NULL)
                 .put("inProgress", offset > 0)
             items.add(item)
@@ -200,8 +211,8 @@ object Stremio {
     }
 
     fun open(type: String, id: String) {
-        val uri = detailUri(type, id)
-        if (!Tv.hasPackage(PACKAGE)) throw ApiError(404, "Stremio is not installed on the TV.")
-        Tv.startUri(uri, PACKAGE)
+        detailUri(type, id)
+        Tv.start(android.content.Intent(Store.context(), HomeActivity::class.java).putExtra("cue-type", type).putExtra("cue-id", id)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP))
     }
 }

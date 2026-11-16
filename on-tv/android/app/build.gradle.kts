@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "dev.couchtv.ontv"
-    compileSdk = 34
+    compileSdk = 36
     defaultConfig {
         applicationId = "dev.couchtv.ontv"
         minSdk = 23          // Android 6.0. Wireless debugging pairing needs Android 11+ on the TV.
@@ -42,6 +42,9 @@ android {
 }
 
 dependencies {
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
     // HTTP + WebSocket server (Apache 2.0 / BSD).
     implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")

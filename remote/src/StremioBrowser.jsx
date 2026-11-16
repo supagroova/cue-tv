@@ -24,6 +24,7 @@ function Titles({ title, items, onOpen }) {
 export function StremioBrowser({ onOpen, onPlaySource, onLaunch, active, platform, platformBusy, platformDisabled, onPlatform }) {
   const [selected, setSelected] = useState(null);
   const [catalogue, setCatalogue] = useState(null);
+  const [collections, setCollections] = useState(null);
   const [library, setLibrary] = useState(null);
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,6 +53,7 @@ export function StremioBrowser({ onOpen, onPlaySource, onLaunch, active, platfor
   const refreshLibrary = () => api.stremioLibrary().then(setLibrary).catch(() => setError('Could not load your Stremio history.'));
   useEffect(() => {
     api.stremioDiscover().then(setCatalogue).catch(() => setCatalogue(false));
+    api.stremioCollections().then(setCollections).catch(() => setCollections(false));
     refreshLibrary();
     const refresh = () => refreshLibrary();
     window.addEventListener('tv:resume', refresh);
@@ -117,6 +119,8 @@ export function StremioBrowser({ onOpen, onPlaySource, onLaunch, active, platfor
     </div> : <>
     <Titles title="Continue Watching" items={items.filter((item) => item.inProgress)} onOpen={selectTitle} />
     <Titles title="Recently Watched" items={items.filter((item) => !item.inProgress)} onOpen={selectTitle} />
+    {(collections?.collections || []).map((row) => <Titles key={row.id} title={row.title} items={row.items || []} onOpen={selectTitle} />)}
+    {collections === false && <p className="stremio-search-status">Service lists couldn’t load. <button className="stremio-connect-button" onClick={() => { setCollections(null); api.stremioCollections().then(setCollections).catch(() => setCollections(false)); }}>Try again</button></p>}
     <Titles title="Trending Series" items={catalogue?.trendingSeries || []} onOpen={selectTitle} />
     <Titles title="Trending Films" items={catalogue?.trendingMovies || []} onOpen={selectTitle} />
     <Titles title="Popular Series" items={catalogue?.series || []} onOpen={selectTitle} />

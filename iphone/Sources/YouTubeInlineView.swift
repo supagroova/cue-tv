@@ -59,6 +59,7 @@ struct YouTubeFeedFrame: Equatable {
         clipping.frame = visible; clipping.isHidden = false
         feed.frame = CGRect(x: value.full.minX * scale - visible.minX, y: value.full.minY * scale - visible.minY,
             width: value.full.width * scale, height: value.full.height * scale)
+        feed.setNeedsLayout()
         feed.start()
     }
 }
@@ -70,6 +71,7 @@ struct YouTubeFeedFrame: Equatable {
     private let status = UIStackView()
     private let message = UILabel()
     private let retry = UIButton(type: .system)
+    private let cancelSelection = UIButton(type: .system)
     private var windows: [YouTubeAccountWindow] = []
     private let open: @MainActor (YouTubeVideo) async throws -> Void
     private var observation: NSKeyValueObservation?
@@ -82,6 +84,12 @@ struct YouTubeFeedFrame: Equatable {
         self.open = open
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: profileID)
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        configuration.allowsInlineMediaPlayback = true
+        if let url = Bundle.main.url(forResource: "YouTubeFeedAppearance", withExtension: "js"),
+           let script = try? String(contentsOf: url, encoding: .utf8) {
+            configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        }
         page = WKWebView(frame: .zero, configuration: configuration)
         super.init(frame: .zero)
         page.accessibilityIdentifier = "youtube-inline-web"
@@ -92,11 +100,21 @@ struct YouTubeFeedFrame: Equatable {
         page.allowsBackForwardNavigationGestures = false
         addSubview(page); addSubview(spinner)
         message.font = .preferredFont(forTextStyle: .footnote); message.numberOfLines = 3
+        message.adjustsFontForContentSizeCategory = true
+        var playStyle = UIButton.Configuration.filled()
+        playStyle.baseBackgroundColor = .white; playStyle.baseForegroundColor = .black
+        playStyle.cornerStyle = .capsule; playStyle.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        retry.configuration = playStyle
         retry.setTitle("Try again", for: .normal); retry.addTarget(self, action: #selector(tryAgain), for: .touchUpInside)
+        cancelSelection.setImage(UIImage(systemName: "xmark"), for: .normal)
+        cancelSelection.accessibilityLabel = "Cancel selected video"
+        cancelSelection.addTarget(self, action: #selector(clearSelection), for: .touchUpInside)
+        cancelSelection.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        cancelSelection.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         status.axis = .horizontal; status.spacing = 12; status.alignment = .center
         status.isLayoutMarginsRelativeArrangement = true; status.layoutMargins = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         status.backgroundColor = .secondarySystemBackground; status.layer.cornerRadius = 10
-        status.addArrangedSubview(message); status.addArrangedSubview(retry); status.isHidden = true; addSubview(status)
+        status.addArrangedSubview(message); status.addArrangedSubview(retry); status.addArrangedSubview(cancelSelection); status.isHidden = true; addSubview(status)
         observation = page.observe(\.url, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.observeAddress() }
         }
@@ -104,11 +122,17 @@ struct YouTubeFeedFrame: Equatable {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func layoutSubviews() {
         super.layoutSubviews(); page.frame = bounds; spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
-        status.frame = CGRect(x: 8, y: 8, width: max(0, bounds.width - 16), height: 76)
+        let portion = superview.map { bounds.intersection(convert($0.bounds, from: $0)) } ?? bounds
+        let visible = portion.isNull || portion.isInfinite ? bounds : portion
+        status.frame = CGRect(x: 8, y: max(visible.minY, visible.maxY - 84), width: max(0, bounds.width - 16), height: 76)
     }
     func start() {
         guard !started else { return }; started = true
         #if DEBUG
+        if ProcessInfo.processInfo.environment["COUCHTV_REMOTE_PREVIEW"] == "1",
+           ProcessInfo.processInfo.environment["COUCHTV_YOUTUBE_SELECTION_PREVIEW"] == "1" {
+            page.loadHTMLString(Self.selectionPreview, baseURL: Self.home); return
+        }
         if ProcessInfo.processInfo.environment["COUCHTV_REMOTE_PREVIEW"] == "1",
            ProcessInfo.processInfo.environment["COUCHTV_YOUTUBE_POPUP_PREVIEW"] == "1" {
             page.loadHTMLString(Self.popupPreview, baseURL: Self.home); return
@@ -135,18 +159,31 @@ struct YouTubeFeedFrame: Equatable {
         page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
     }
     private func observeAddress() {
+        page.evaluateJavaScript("window.cueFeedAppearance && window.cueFeedAppearance.update()", in: nil, in: .defaultClient, completionHandler: nil)
         guard !returningHome, let url = page.url, let video = YouTubeVideo(url: url) else { return }
-        select(video)
+        offer(video)
     }
-    private func select(_ video: YouTubeVideo) {
+    private func offer(_ video: YouTubeVideo) {
+        guard operation == nil else { return }
+        pending = video; pause()
+        message.text = "Selected video"
+        retry.setTitle("Play on TV", for: .normal); retry.isHidden = false; retry.isEnabled = true
+        cancelSelection.isHidden = false; status.isHidden = false; setNeedsLayout()
+    }
+    @objc private func clearSelection() {
+        guard operation == nil else { return }
+        pending = nil; status.isHidden = true
+        if let url = page.url, YouTubeVideo(url: url) != nil { returningHome = true; page.load(URLRequest(url: Self.home)) }
+    }
+    private func playSelected(_ video: YouTubeVideo) {
         guard operation == nil else { return }
         dismissWindows()
         pending = video; returningHome = true; page.stopLoading(); pause()
         page.load(URLRequest(url: Self.home))
-        message.text = "Opening on your TV…"; retry.isHidden = true; status.isHidden = false
+        message.text = "Opening on your TV…"; retry.isHidden = true; cancelSelection.isHidden = true; status.isHidden = false
         operation = Task { [weak self] in
             guard let self else { return }
-            defer { operation = nil; retry.isHidden = false }
+            defer { operation = nil; retry.setTitle("Try again", for: .normal); retry.isHidden = false; cancelSelection.isHidden = false }
             do { try await open(video); status.isHidden = true; pending = nil }
             catch is CancellationError { }
             catch {
@@ -157,7 +194,7 @@ struct YouTubeFeedFrame: Equatable {
     }
     @objc private func tryAgain() {
         status.isHidden = true
-        if let pending { select(pending) } else { (windows.last?.page ?? page).reload() }
+        if let pending { playSelected(pending) } else { (windows.last?.page ?? page).reload() }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
@@ -167,7 +204,7 @@ struct YouTubeFeedFrame: Equatable {
         if url.absoluteString == "about:blank",
            windows.contains(where: { $0.page === webView }) || (action.targetFrame == nil && YouTubeNavigation.isServiceOrigin(action.sourceFrame.securityOrigin)) { return .allow }
         guard YouTubeNavigation.isHTTPS(url) else { return .cancel }
-        if let video = YouTubeVideo(url: url) { select(video); return .cancel }
+        if let video = YouTubeVideo(url: url) { offer(video); return .cancel }
         if YouTubeNavigation.isService(url) { return .allow }
         if action.navigationType == .linkActivated { _ = await UIApplication.shared.open(url) }
         else {
@@ -194,6 +231,7 @@ struct YouTubeFeedFrame: Equatable {
         }
         windows.append(account)
         let navigation = UINavigationController(rootViewController: account)
+        navigation.overrideUserInterfaceStyle = .dark
         navigation.modalPresentationStyle = .fullScreen
         presenter.present(navigation, animated: true)
         return window
@@ -221,6 +259,13 @@ struct YouTubeFeedFrame: Equatable {
         returningHome = false; message.text = "Couldn’t load YouTube Home."; retry.isHidden = false; status.isHidden = false
     }
     #if DEBUG
+    private static let selectionPreview = #"""
+    <!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+    <body style="background:#111;color:white;font:18px system-ui;padding:16px">
+    <h2>Test recommendations</h2><p>The feed stays on this page until you choose TV playback.</p>
+    <a style="color:white;display:block;padding:16px" href="https://m.youtube.com/watch?v=jNQXAC9IVRw">Choose test video</a>
+    <script>setTimeout(() => history.pushState({}, '', '/watch?v=aqz-KE-bpKQ'), 500);</script>
+    """#
     private static let popupPreview = #"""
     <!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
     <body style="background:#111;color:white;font:20px system-ui;padding:20px">

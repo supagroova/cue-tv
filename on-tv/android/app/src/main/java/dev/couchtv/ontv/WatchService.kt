@@ -11,7 +11,7 @@ import android.view.accessibility.AccessibilityEvent
  * FireHome switches this service on with the secure-settings grant, and Android keeps it bound
  * across reboots, so the Home key keeps landing on this app's home with no computer involved.
  *
- * On Xiaomi with "Couch TV in PatchWall's place" on, it also filters keys, for one key only (see
+ * On Xiaomi with "Cue TV in PatchWall's place" on, it also filters keys, for one key only (see
  * onKeyEvent). Key filtering is requested at run time only then, so on every other TV, and on a
  * Xiaomi with the switch off, no key passes through this app.
  */
@@ -34,7 +34,7 @@ class WatchService : AccessibilityService() {
     /**
      * Xiaomi remotes: the PatchWall button arrives as KEYCODE_BUTTON_5 (scan code 580 on the
      * MiTV-AXFR0's remote, whose layout also maps 150 to it), and the TV's partnercustomizer turns
-     * it into a start of PatchWall by name. Here it opens Couch TV instead and is swallowed (a long
+     * it into a start of PatchWall by name. Here it opens Cue TV instead and is swallowed (a long
      * press's repeats too: one open, on release). Every other key goes straight on; the check costs
      * about 2 to 4 ms per key press on that TV.
      */
