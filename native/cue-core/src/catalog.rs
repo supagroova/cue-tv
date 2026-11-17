@@ -7,13 +7,14 @@ use stremio_core::{
         ctx::Ctx,
     },
     types::{
-        addon::{ResourcePath, ResourceRequest},
+        addon::{ExtraValue, ResourcePath, ResourceRequest},
         resource::MetaItemPreview,
     },
 };
 pub type Catalog = CatalogWithFilters<MetaItemPreview>;
 #[derive(Clone, Debug, Serialize)]
 pub struct Choice {
+    pub searchable: bool,
     pub index: usize,
     pub name: String,
     pub kind: String,
@@ -44,6 +45,7 @@ pub fn choices(ctx: &Ctx, offset: usize) -> (Vec<Choice>, usize) {
             .skip(offset)
             .take(16)
             .map(|(index, c)| Choice {
+                searchable: c.are_extra_names_supported(&["search".into()]),
                 index: *index,
                 name: c
                     .name
@@ -59,6 +61,9 @@ pub fn choices(ctx: &Ctx, offset: usize) -> (Vec<Choice>, usize) {
     )
 }
 pub fn selection(ctx: &Ctx, index: usize) -> Option<Selected> {
+    selection_with_search(ctx, index, None)
+}
+pub fn selection_with_search(ctx: &Ctx, index: usize, query: Option<&str>) -> Option<Selected> {
     let (addon, catalog) = ctx
         .profile
         .addons
@@ -71,13 +76,21 @@ pub fn selection(ctx: &Ctx, index: usize) -> Option<Selected> {
                 .map(move |catalog| (addon, catalog))
         })
         .nth(index)?;
-    if !catalog.is_extra_supported(&[]) {
+    let extra = query
+        .map(|query| {
+            vec![ExtraValue {
+                name: "search".into(),
+                value: query.into(),
+            }]
+        })
+        .unwrap_or_default();
+    if !catalog.is_extra_supported(&extra) {
         return None;
     }
     Some(Selected {
         request: ResourceRequest::new(
             addon.transport_url.clone(),
-            ResourcePath::without_extra("catalog", &catalog.r#type, &catalog.id),
+            ResourcePath::with_extra("catalog", &catalog.r#type, &catalog.id, &extra),
         ),
     })
 }
