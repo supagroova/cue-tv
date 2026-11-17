@@ -294,6 +294,21 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 XCTAssertTrue(source.waitForExistence(timeout: 5))
                 expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
                 waitForExpectations(timeout: 5)
+                XCUIRemote.shared.press(.select)
+                let restart = app.buttons["source-restart"]
+                XCTAssertTrue(restart.waitForExistence(timeout: 10))
+                for _ in 0..<3 where !restart.hasFocus { XCUIRemote.shared.press(.up) }
+                XCTAssertTrue(restart.hasFocus)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(clock.waitForExistence(timeout: 25))
+                expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= 1 }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertLessThan(try XCTUnwrap(Int(clock.label.dropLast())), 5, "Restart must decode from the beginning, not the saved position")
+                XCTAssertFalse(app.staticTexts["source-accounting-error"].exists)
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(source.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
             }
         }
         XCUIRemote.shared.press(.menu)

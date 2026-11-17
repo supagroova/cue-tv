@@ -546,3 +546,16 @@ Full 73-test suite passes 7a53703eb6cc4e2899281c89cf7347fa; unsigned device buil
 8dcf18302f29468e94c1b54ad193f25c. Ambiguous accepted operations still need reconciliation;
 this change only resolves contention before admission. Prior playback UI/relaunch,
 account journal and physical gates remain as recorded above.
+
+
+### Phase 5 — Restart decoder verification
+
+Extended the opt-in selected-episode journey after successful Resume: reopen the
+source, choose Start from beginning with the remote, wait for actual decoder time
+of at least one second and require it below five seconds (the saved position was
+at least eight). Close then restores source focus and Back restores episode/title
+focus. Full peer journey passes 36c273e643f84f639258832de78b9454. No production change
+or routine-CI expansion in this slice. This establishes Restart in the running app,
+not encrypted process relaunch or physical suspension. Next: a dedicated debug-only
+persistent fixture namespace and opt-in relaunch measurements, then account journal
+and ambiguous receipt reconciliation.
