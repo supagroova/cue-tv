@@ -34,6 +34,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Prepare Companion interoperability peer
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r bridge/requirements.txt
+
       - name: Bridge and tools compile
         run: python -m py_compile bridge/*.py scripts/*.py tv-home/tools/*.py sync/sync.py
 
@@ -57,7 +62,20 @@ jobs:
         run: sh scripts/build-apk.sh
 
       - name: On-TV app unit tests
-        run: tv-home/android/gradlew -p on-tv/android --no-daemon -q testDebugUnitTest
+        env:
+          COUCHTV_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
+        run: tv-home/android/gradlew -p on-tv/android --no-daemon --console=plain testDebugUnitTest
+
+      - name: Upload On-TV test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: on-tv-unit-test-results
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            on-tv/android/app/build/reports/tests/testDebugUnitTest/
+            on-tv/android/app/build/test-results/testDebugUnitTest/*.xml
 
       - name: Signing fingerprints
         run: for f in dist/*.apk; do echo "$f"; "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$f" | grep -i "SHA-256"; done
