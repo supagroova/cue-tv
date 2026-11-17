@@ -18,6 +18,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let stopped: Bool
         let interfaceLanguage: String
         let catalogs: [CatalogChoice]
+        let catalogChoicesOffset: Int
         let catalogTotal: Int
         let catalog: Catalog?
         let addonCount: Int
@@ -39,6 +40,7 @@ nonisolated protocol CoreService: Sendable {
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
+    func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func stop() async throws
 }
 
@@ -99,6 +101,11 @@ actor NativeCoreService: CoreService {
     func loadCatalog(index: Int, expectedRevision: UInt64) throws {
         guard index >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "load_catalog", "index": index, "revision": expectedRevision])
+    }
+
+    func showCatalogChoices(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "catalog_choices", "offset": offset, "revision": expectedRevision])
     }
 
     private func dispatch(_ command: [String: Any]) throws {

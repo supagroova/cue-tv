@@ -2,7 +2,7 @@ use serde::Serialize;
 use stremio_core::{
     models::{
         catalog_with_filters::{CatalogWithFilters, Selected},
-        common::Loadable,
+        common::{Loadable, ResourceError},
         ctx::Ctx,
     },
     types::{
@@ -29,7 +29,7 @@ pub struct View {
     pub items: Vec<Item>,
     pub has_more: bool,
 }
-pub fn choices(ctx: &Ctx) -> (Vec<Choice>, usize) {
+pub fn choices(ctx: &Ctx, offset: usize) -> (Vec<Choice>, usize) {
     let all: Vec<_> = ctx
         .profile
         .addons
@@ -39,6 +39,7 @@ pub fn choices(ctx: &Ctx) -> (Vec<Choice>, usize) {
         .collect();
     (
         all.iter()
+            .skip(offset)
             .take(16)
             .map(|(index, c)| Choice {
                 index: *index,
@@ -84,6 +85,11 @@ pub fn view(catalog: &Catalog) -> Option<View> {
     Some(match &page.content {
         None | Some(Loadable::Loading) => View {
             status: "loading",
+            items: vec![],
+            has_more: false,
+        },
+        Some(Loadable::Err(ResourceError::EmptyContent)) => View {
+            status: "ready",
             items: vec![],
             has_more: false,
         },

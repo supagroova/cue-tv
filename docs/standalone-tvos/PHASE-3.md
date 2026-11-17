@@ -362,3 +362,17 @@ fixture executes the same preview → install → catalogue chain through Swift.
 All 23 native tests, 25 simulator unit tests (3.431 seconds) and the device app
 build pass. Dedicated catalogue switching/pagination tests, metadata/sources,
 account operations and the standalone user journey remain required.
+
+## Catalogue-choice windows and empty results
+
+`catalog_choices` pages through the installed catalogue list in bounded windows,
+with the offset and total in the snapshot. It checks the displayed revision and
+rejects invalid offsets. A 35-catalogue Core profile test reaches every window,
+returns to the first, and rejects stale/out-of-range navigation. Swift exercises
+the operation before loading its selected fixture catalogue.
+
+Core's `EmptyContent` catalogue result now maps to a successful empty view rather
+than a transport failure. Its regression first reproduced the incorrect failed
+state. All 25 native tests, 25 simulator unit tests (3.483 seconds), and the device
+app build pass. This completes choice-list enumeration; catalogue **item** windows,
+remote page fetching, search/filter extras and retry UI remain required.

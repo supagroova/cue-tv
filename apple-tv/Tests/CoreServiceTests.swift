@@ -59,6 +59,14 @@ import Security
     }
     #expect(state.model?.addon?.installed == true)
     #expect(state.model?.addonCount == originalCount.map { $0 + 1 })
+    let beforePaging = try #require(state.model?.revision)
+    try await service.showCatalogChoices(offset: 0, expectedRevision: beforePaging)
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.revision != beforePaging { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.catalogChoicesOffset == 0)
     let choice = try #require(state.model?.catalogs.first { $0.name == "Fixture catalogue" })
     try await service.loadCatalog(index: choice.index, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {

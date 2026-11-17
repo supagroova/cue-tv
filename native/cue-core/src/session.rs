@@ -51,6 +51,7 @@ pub struct Snapshot {
     pub addon_count: usize,
     pub catalogs: Vec<crate::catalog::Choice>,
     pub catalog_total: usize,
+    pub catalog_choices_offset: usize,
     pub catalog: Option<crate::catalog::View>,
     pub addon: Option<AddonSnapshot>,
     pub pending_effects: usize,
@@ -61,6 +62,7 @@ enum Command {
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
     Install(u64, oneshot::Sender<Result<(), &'static str>>),
     Catalog(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Effect(Msg, u64, u64),
 }
 pub struct CoreSession {
@@ -104,6 +106,7 @@ impl CoreSession {
             &ctx,
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
+            0,
             0,
             0,
             false,
@@ -177,6 +180,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn show_catalog_choices(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::CatalogChoices(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -206,14 +220,16 @@ fn snapshot(
     ctx: &Ctx,
     addon: &AddonDetails,
     catalog: &crate::catalog::Catalog,
+    catalog_choices_offset: usize,
     revision: u64,
     pending_effects: usize,
     stopped: bool,
     error: Option<&'static str>,
 ) -> Snapshot {
-    let (catalogs, catalog_total) = crate::catalog::choices(ctx);
+    let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
         catalogs,
+        catalog_choices_offset,
         catalog_total,
         catalog: crate::catalog::view(catalog),
         revision,
@@ -257,6 +273,7 @@ async fn run(
     let mut addon = AddonDetails::default();
     let mut catalog = crate::catalog::Catalog::default();
     let mut catalog_generation = 0u64;
+    let mut catalog_choices_offset = 0usize;
     let mut addon_generation = 0u64;
     let mut revision = 0;
     let mut pending = 0usize;
@@ -344,6 +361,36 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                 )
+            }
+            Command::CatalogChoices(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_catalog"));
+                    continue;
+                }
+                let total = ctx
+                    .profile
+                    .addons
+                    .iter()
+                    .map(|addon| addon.manifest.catalogs.len())
+                    .sum::<usize>();
+                if offset != 0 && offset >= total {
+                    let _ = reply.send(Err("invalid_catalog_offset"));
+                    continue;
+                }
+                catalog_choices_offset = offset;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    catalog_choices_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
             }
             Command::Effect(message, generation, catalog_version) => {
                 pending = pending.saturating_sub(1);
@@ -444,7 +491,14 @@ async fn run(
             }
         }
         publish.send_replace(snapshot(
-            &ctx, &addon, &catalog, revision, pending, false, error,
+            &ctx,
+            &addon,
+            &catalog,
+            catalog_choices_offset,
+            revision,
+            pending,
+            false,
+            error,
         ));
         if let Some(reply) = reply {
             let _ = reply.send(if error.is_none() {
@@ -459,6 +513,7 @@ async fn run(
         &ctx,
         &addon,
         &catalog,
+        catalog_choices_offset,
         revision,
         0,
         true,

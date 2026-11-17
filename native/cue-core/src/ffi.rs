@@ -184,6 +184,7 @@ async fn own(
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
                             Command::LoadCatalog { index, revision, .. } => session.load_catalog(index, revision).await,
+                            Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
                         }} => {
                             command_error = result.err();
                         }
@@ -236,11 +237,18 @@ enum Command {
         index: usize,
         revision: u64,
     },
+    CatalogChoices {
+        version: u32,
+        offset: usize,
+        revision: u64,
+    },
 }
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::InstallAddon { version, .. } | Self::LoadCatalog { version, .. } => *version == 1,
+            Self::InstallAddon { version, .. }
+            | Self::LoadCatalog { version, .. }
+            | Self::CatalogChoices { version, .. } => *version == 1,
             Self::SetLanguage { version, language } => {
                 *version == 1
                     && language.len() == 3
