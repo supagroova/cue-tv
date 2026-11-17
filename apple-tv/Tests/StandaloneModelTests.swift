@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import SittingRoomTV
 
@@ -236,4 +237,65 @@ private actor ActionGate {
     #expect(!model.canSignOut)
     #expect(model.error == nil)
     #expect(!FileManager.default.fileExists(atPath: root.path))
+}
+
+@Test @MainActor func encryptedAccountRestoresAcrossHomeInstancesThenSignsOut() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    let selection = CoreAccountSelection(keyAccount: "restored-home-" + UUID().uuidString)
+    // Obtain the pinned Core settings schema through ordinary persisted guest state.
+    let seed = NativeCoreService(persistence: configuration)
+    try await seed.start()
+    try await seed.setInterfaceLanguage("fra")
+    var state = try await seed.snapshot()
+    for _ in 0..<200 where state.model?.interfaceLanguage != "fra" || state.model?.pendingEffects != 0 {
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await seed.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "fra")
+    try await seed.stop()
+    let path = configuration.directory.appendingPathComponent("state.bin")
+    let bytes = try Data(contentsOf: path)
+    let header = Data("CUECORE1".utf8)
+    #expect(bytes.prefix(8) == header)
+    let key = SymmetricKey(data: configuration.key)
+    let box = try AES.GCM.SealedBox(combined: Data(bytes.dropFirst(8)))
+    let plaintext = try AES.GCM.open(box, using: key, authenticating: header)
+    let values = try #require(JSONSerialization.jsonObject(with: plaintext) as? [String: Any])
+    var profile = try #require(values["profile"] as? [String: Any])
+    // Synthetic credentials never leave the test fixture. Restoration performs no login.
+    profile["auth"] = ["key": "synthetic-restoration-token", "user": [
+        "_id": "restoration-user", "email": "restore@example.test",
+        "lastModified": "2026-01-01T00:00:00Z", "dateRegistered": "2026-01-01T00:00:00Z",
+        "premium_expire": NSNull(),
+        "gdpr_consent": ["tos": true, "privacy": true, "marketing": false, "from": NSNull()]
+    ]]
+    profile["addons"] = []
+    let fixture = try JSONSerialization.data(withJSONObject: ["schema_version": 25, "profile": profile])
+    let encrypted = try AES.GCM.seal(fixture, using: key, authenticating: header)
+    try (header + #require(encrypted.combined)).write(to: path, options: .atomic)
+    try await selection.save(.init(namespace: namespace, userID: "restoration-user"))
+    var previousSession: UInt64?
+    for cycle in 0..<2 {
+        let model = StandaloneModel(accountSelection: selection, accountRoot: root)
+        let run = Task { await model.run() }
+        for _ in 0..<200 where model.snapshot?.status != .ready && model.error == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.error == nil)
+        #expect(model.snapshot?.model?.authenticated == true)
+        #expect(model.snapshot?.model?.interfaceLanguage == "fra")
+        #expect(model.canSignOut)
+        let session = try #require(model.snapshot?.session)
+        #expect(session != previousSession)
+        previousSession = session
+        if cycle == 0 { try await model.replace(with: nil) }
+        else { try await model.signOut() }
+        await run.value
+    }
+    #expect(try await selection.load() == nil)
+    #expect(!FileManager.default.fileExists(atPath: configuration.directory.path))
 }
