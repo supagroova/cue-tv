@@ -247,3 +247,14 @@ must preserve latest library membership and episode bits; do not overwrite a new
 manual edit with old Player state. Close retirement still has no durability barrier.
 PR13ab91481 completed fully green: sim8m17, native/device4m7. Push the accumulated
 native changes after this commit and verify remote blobs/current-head checks.
+
+### Phase 5 atomic storage batch — local work in progress
+
+`native/cue-core/src/environment.rs` adds a single encrypted replacement for a batch
+of values/deletions. Missing-method red: 3768b258ba304ee7aca7097dbf7981aa; initial
+green: 470d94a501c148ddba91d659cae6193e. Strengthened reopen/quota/update-delete
+assertions and full native suite pass: aeaf8ac5ee654186a41931be0e221dce. Unsigned
+device build passes: a088ce0eb1bd4753a940fd48a8a8a6a9; all 15 harness tests pass.
+No checkpoint caller exists yet. Root worktree's unrelated doc edits remain untouched. PR13 at
+70e9972 has passing native/device, Android and harness checks, simulator still
+running at last observation. PR7 current head 2006470 has all six checks passing.

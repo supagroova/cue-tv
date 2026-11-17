@@ -144,7 +144,59 @@ fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, EnvError> {
     serde_json::from_slice(bytes).map_err(|_| EnvError::Serde("Invalid JSON".into()))
 }
 
+type StorageBatch = BTreeMap<String, Option<Vec<u8>>>;
+
+fn write_storage_values(
+    env: Result<Arc<Environment>, EnvError>,
+    updates: Result<StorageBatch, EnvError>,
+) -> TryEnvFuture<()> {
+    async move {
+        let env = env?;
+        let updates = updates?;
+        let mut store = env
+            .storage
+            .lock()
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        if env.canceled.is_cancelled() {
+            return Err(canceled());
+        }
+        let mut next = store.clone();
+        for (key, value) in updates {
+            if let Some(value) = value {
+                next.insert(key, value);
+            } else {
+                next.remove(&key);
+            }
+        }
+        let size = next.iter().try_fold(0usize, |sum, (key, value)| {
+            sum.checked_add(key.len())
+                .and_then(|sum| sum.checked_add(value.len()))
+        });
+        if size.is_none_or(|size| size > STORAGE_LIMIT) {
+            return Err(EnvError::StorageWriteError(
+                "Storage budget exceeded".into(),
+            ));
+        }
+        if let Some(persistence) = &env.persistence {
+            persistence.save(&next).map_err(|_| {
+                EnvError::StorageWriteError("Encrypted storage write failed".into())
+            })?;
+        }
+        // Publish all keys only after the single encrypted-store replacement succeeds.
+        *store = next;
+        Ok(())
+    }
+    .boxed()
+}
+
 pub struct NativeEnv;
+impl NativeEnv {
+    /// Atomic update of already-serialized Core values in this identity's store.
+    pub(crate) fn set_storage_batch(updates: StorageBatch) -> TryEnvFuture<()> {
+        write_storage_values(context(), Ok(updates))
+    }
+}
+
 impl Env for NativeEnv {
     fn addon_transport(
         url: &reqwest::Url,
@@ -244,54 +296,12 @@ impl Env for NativeEnv {
         .boxed()
     }
     fn set_storage<T: Serialize>(key: &str, value: Option<&T>) -> TryEnvFuture<()> {
-        let key = key.to_owned();
-        let context = context();
-        let value = value
+        let values = value
             .map(serde_json::to_vec)
             .transpose()
+            .map(|value| BTreeMap::from([(key.to_owned(), value)]))
             .map_err(|_| EnvError::Serde("Invalid storage value".into()));
-        async move {
-            let env = context?;
-            let value = value?;
-            let mut store = env
-                .storage
-                .lock()
-                .map_err(|_| EnvError::StorageUnavailable)?;
-            if env.canceled.is_cancelled() {
-                return Err(canceled());
-            }
-            let remaining: usize = store
-                .iter()
-                .filter(|(k, _)| *k != &key)
-                .map(|(k, v)| k.len() + v.len())
-                .sum();
-            if value
-                .as_ref()
-                .is_some_and(|v| key.len() + v.len() > STORAGE_LIMIT.saturating_sub(remaining))
-            {
-                return Err(EnvError::StorageWriteError(
-                    "Storage budget exceeded".into(),
-                ));
-            }
-            if let Some(persistence) = &env.persistence {
-                let mut next = store.clone();
-                if let Some(value) = value {
-                    next.insert(key, value);
-                } else {
-                    next.remove(&key);
-                }
-                persistence.save(&next).map_err(|_| {
-                    EnvError::StorageWriteError("Encrypted storage write failed".into())
-                })?;
-                *store = next;
-            } else if let Some(value) = value {
-                store.insert(key, value);
-            } else {
-                store.remove(&key);
-            }
-            Ok(())
-        }
-        .boxed()
+        write_storage_values(context(), values)
     }
     fn exec_concurrent<F: Future<Output = ()> + ConditionalSend + 'static>(future: F) {
         spawn(future, false);
@@ -352,5 +362,109 @@ fn spawn(future: impl Future<Output = ()> + Send + 'static, sequential: bool) {
             },
             &env.runtime,
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_batch_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_batch_preserves_both_keys_and_retry_survives_reopen() {
+        let directory = std::env::temp_dir().join(format!(
+            "cue-storage-batch-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let unavailable = directory.with_extension("unavailable");
+        let updates = |first: u32, second: u32| {
+            BTreeMap::from([
+                ("recent".into(), Some(serde_json::to_vec(&first).unwrap())),
+                ("older".into(), Some(serde_json::to_vec(&second).unwrap())),
+            ])
+        };
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            NativeEnv::set_storage_batch(updates(11, 22)).await.unwrap();
+            std::fs::rename(&directory, &unavailable).unwrap();
+            assert!(NativeEnv::set_storage_batch(updates(33, 44)).await.is_err());
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(11)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(22)
+            );
+            std::fs::rename(&unavailable, &directory).unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(11)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(22)
+            );
+            NativeEnv::set_storage_batch(updates(33, 44)).await.unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(33)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(44)
+            );
+            // A rejected oversized batch must not partially delete an existing key.
+            assert!(
+                NativeEnv::set_storage_batch(BTreeMap::from([
+                    ("recent".into(), Some(vec![0; STORAGE_LIMIT])),
+                    ("older".into(), None),
+                ]))
+                .await
+                .is_err()
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(33)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(44)
+            );
+            NativeEnv::set_storage_batch(BTreeMap::from([
+                ("recent".into(), Some(b"55".to_vec())),
+                ("older".into(), None),
+            ]))
+            .await
+            .unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(55)
+            );
+            assert_eq!(NativeEnv::get_storage::<u32>("older").await.unwrap(), None);
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

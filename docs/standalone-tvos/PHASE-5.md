@@ -250,3 +250,14 @@ Duration updates at an unchanged clock now synchronize without adding watched ti
 so unknown duration cannot accidentally use a prior known duration for completion.
 The full native suite and device build pass. These native rules are not yet connected
 to Swift playback callbacks or durable checkpoint projection; those gates remain open.
+
+## Atomic local storage prerequisite
+
+NativeEnv now supports replacing several serialized values with one encrypted-store
+commit. Memory changes only after persistence succeeds; the combined final store
+must fit the existing storage budget. Single-key Core writes use the same path.
+The failure/reopen test verifies that both old values survive a failed write, both
+retry values survive reopening, and an oversized batch cannot partially delete a
+key. A successful update-plus-delete also survives reopening. Full native tests
+pass (record aeaf8ac5ee654186a41931be0e221dce). This prerequisite is not yet used
+by playback checkpoints; atomic library/journal integration remains outstanding.
