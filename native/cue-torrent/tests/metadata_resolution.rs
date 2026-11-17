@@ -7,15 +7,20 @@ async fn metadata_listing_keeps_original_indexes_without_materializing_media() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let bytes = std::fs::read(root.join("fixtures/torrents/multi-episode.torrent")).unwrap();
     let directory = tempfile::tempdir().unwrap();
+    let cancel = CancellationToken::new();
     let result = resolve(
         TorrentSource::Bytes(bytes.clone()),
         directory.path().to_owned(),
         vec![],
         Discovery::default(),
-        CancellationToken::new(),
+        cancel.clone(),
     )
     .await
     .unwrap();
+    assert!(
+        !cancel.is_cancelled(),
+        "resolver completion must not cancel its caller"
+    );
     assert_eq!(result.files.len(), 3);
     assert_eq!(result.files[2].index, 2);
     assert!(result.files[2].path.ends_with("tail-index.mp4"));
@@ -72,5 +77,27 @@ async fn cancellation_joins_a_pending_peer_metadata_request() {
         .unwrap()
         .unwrap();
     assert!(result.is_err());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn oversized_metadata_is_rejected_before_parsing_or_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let result = resolve(
+        TorrentSource::Bytes(vec![0; 16 * 1024 * 1024 + 1]),
+        directory.path().to_owned(),
+        vec![],
+        Discovery::default(),
+        CancellationToken::new(),
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("oversized metadata accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        cue_torrent::failure::FailureCode::from_error(&error),
+        cue_torrent::failure::FailureCode::SourceTooLarge
+    );
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
