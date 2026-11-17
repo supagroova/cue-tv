@@ -15,7 +15,7 @@ use stremio_core::{
         Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
         msg::{Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, Event, Internal, Msg},
     },
-    types::{notifications::NotificationsBucket, profile::Profile, server_urls::ServerUrlsBucket},
+    types::profile::Profile,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -128,15 +128,7 @@ impl CoreSession {
                             && auth.key.0.len() <= 4096 => {}
                     _ => return Err(EnvError::StorageUnavailable),
                 }
-                Ok(Ctx::new(
-                    profile,
-                    Default::default(),
-                    Default::default(),
-                    ServerUrlsBucket::new::<NativeEnv>(None),
-                    NotificationsBucket::new::<NativeEnv>(None, vec![]),
-                    Default::default(),
-                    Default::default(),
-                ))
+                crate::restore::context(profile).await
             })
             .await;
         let ctx = match setup {
