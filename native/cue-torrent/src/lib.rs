@@ -2,6 +2,7 @@
 pub mod failure;
 mod ffi;
 pub mod metadata;
+mod metadata_ffi;
 use failure::FailureCode;
 pub mod storage_budget;
 use anyhow::{Context, Result, bail};

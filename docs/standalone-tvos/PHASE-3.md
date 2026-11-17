@@ -511,3 +511,7 @@ The native metadata result now validates an explicit original torrent file index
 ### Owned metadata discovery lifetime
 
 `ResolutionSession` owns a resolver task and cancellation token. `finish` transfers the metadata result; `stop` requests cancellation and joins the worker before acknowledging; drop requests cancellation but explicitly does not promise synchronous teardown. Tests exercise a real peer holding the metadata exchange open, stop/join, and metadata-to-selection success without media storage. Red evidence `a9b2470145064e9fb4a63fe08696f992`; seven metadata tests green `fba1e887aacb46018f2f32d60acea8c7`; complete locked torrent suite green `e9bbb507c5aa4ca6b68f371374b74e14`. The lifecycle is native-only pending C/Swift exposure.
+
+### Metadata C boundary
+
+Added length-delimited metadata-start input (24 KiB maximum), eight-handle admission, monotonic handles, caller-owned JSON snapshots of 24 files, asynchronous stop status and release only after stop/completion. Resolved torrent bytes remain native; no media storage is created during enumeration. The boundary test checks original indexes, bounded windows, untouched undersized buffers, invalid offsets and stale/released handles against the owned fixture. Focused verification `61bf745ecb8f470cb06668cc42871141` passes. Stop acknowledges the resolver owner and normal upstream session.stop, not every upstream network task. Swift exposure and consuming a resolved C handle into playback remain unfinished; Apple compilation has not yet been rerun for these exports.
