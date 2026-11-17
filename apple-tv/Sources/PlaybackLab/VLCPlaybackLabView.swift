@@ -8,19 +8,23 @@ struct VLCPlaybackLabView: View {
     @State private var url: URL?
     @State private var torrent = TorrentLabSession()
     @State private var milliseconds = 0
+    @State private var audioTracks = 0
+    @State private var subtitleTracks = 0
     @State private var lifecycle = PlaybackSessionCoordinator()
     @State private var token: UUID?
     @FocusState private var stopFocused: Bool
     var body: some View {
         VStack {
             if let url {
-                VLCFixtureSurface(url: url) { [generation = token] value in
+                VLCFixtureSurface(url: url) { [generation = token] value, audio, subtitles in
                     guard let generation, generation == token else { return }
                     milliseconds = value
+                    audioTracks = audio; subtitleTracks = subtitles
                     if value > 500 { lifecycle.receive(.playing, generation: generation) }
                 }
                     .id(url).frame(height: 360)
                 Text(milliseconds > 500 ? "VLC playback advanced" : "Waiting for VLC").accessibilityIdentifier("vlc-progress")
+                Text("Audio tracks: \(audioTracks); subtitle tracks: \(subtitleTracks)")
                 Button("Stop VLC fixture") { stop() }
                     .focused($stopFocused)
                     .task { stopFocused = true }
@@ -60,7 +64,8 @@ struct VLCPlaybackLabView: View {
                 lifecycle.receive(.discovering, generation: next)
                 torrent.start()
             } else {
-                url = Bundle.main.url(forResource: "episode01", withExtension: "mkv")
+                let fixture = ProcessInfo.processInfo.environment["CUE_VLC_MATRIX"] == "1" ? "hevc-tracks" : "episode01"
+                url = Bundle.main.url(forResource: fixture, withExtension: "mkv")
                 lifecycle.receive(url == nil ? .failed(.invalidMetadata) : .buffering, generation: next)
             }
         }
@@ -75,7 +80,7 @@ struct VLCPlaybackLabView: View {
 
 private struct VLCFixtureSurface: UIViewRepresentable {
     let url: URL
-    var progress: @MainActor (Int) -> Void
+    var progress: @MainActor (Int, Int, Int) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -88,7 +93,7 @@ private struct VLCFixtureSurface: UIViewRepresentable {
             let coordinator = context.coordinator
             coordinator.polling = Task { @MainActor in
                 while !Task.isCancelled {
-                    report(Int(coordinator.player.time.intValue))
+                    report(Int(coordinator.player.time.intValue), coordinator.player.audioTracks.count, coordinator.player.textTracks.count)
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }

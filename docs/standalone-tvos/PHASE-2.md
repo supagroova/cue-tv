@@ -32,7 +32,11 @@ The simulator UI test `PlaybackLabTests/testMKVPlaybackWithVLCCandidate` passed:
 
 A follow-up simulator test connects VLC to the real embedded torrent engine and controlled local seeder through the loopback HTTP adapter, waits for playback progress, then stops through the remote. All four short Playback Lab UI tests passed in 31.103 seconds, including the existing AVPlayer regressions. Transfer cancellation is requested on Stop, disappearance and backgrounding; the production coordinator still requires lifecycle qualification. The torrent fixture is MP4 and is small, so this does not establish streamed MKV or playback before complete download in VLC.
 
-This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, HEVC, alternate tracks, subtitles, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
+This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, alternate-track switching, WebVTT rendering, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
+
+The generated `hevc-tracks.mkv` fixture adds 1080p HEVC Main 8-bit video, two distinct AAC LC audio tones, and SRT/WebVTT subtitle tracks. Its manifest records exact stream metadata, source/output hashes and the macOS VideoToolbox encoder used by `scripts/fixtures/generate-player-matrix.py`. The installed FFmpeg 7.1 libx265 encoder crashed on a minimal input; VideoToolbox generation succeeded. This is a fixture-generation issue, not evidence about the tvOS decoder.
+
+`testHEVCWithAlternateAudioAndSubtitles` passed in the simulator: playback advances and VLC enumerates both audio and both subtitle tracks. The attached screenshot was inspected and shows the blue video and “Cue TV SRT fixture” text. Track enumeration does not establish audio switching or WebVTT rendering. Hardware versus software decode remains unmeasured.
 
 ## Coordinator integration
 
