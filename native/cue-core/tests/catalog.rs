@@ -107,8 +107,8 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     let server = tokio::spawn(async move {
         for (request_path, range) in [
             ("/catalog/movie/fixture.json", 0..27),
-            ("/catalog/movie/fixture/skip=27.json", 27..30),
-            ("/catalog/movie/fixture/skip=30.json", 30..30),
+            ("/catalog/movie/fixture/skip=27.json", 25..30),
+            ("/catalog/movie/fixture/skip=32.json", 30..30),
         ] {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];

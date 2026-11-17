@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashSet;
 use stremio_core::{
     models::{
         catalog_with_filters::{CatalogWithFilters, Selected},
@@ -81,6 +82,8 @@ pub fn selection(ctx: &Ctx, index: usize) -> Option<Selected> {
     })
 }
 fn valid_items(catalog: &Catalog) -> impl Iterator<Item = &MetaItemPreview> {
+    // Deduplicate the presentation only: Core needs raw page lengths for remote skip.
+    let mut seen = HashSet::new();
     catalog
         .catalog
         .iter()
@@ -92,6 +95,7 @@ fn valid_items(catalog: &Catalog) -> impl Iterator<Item = &MetaItemPreview> {
                 .flatten()
         })
         .filter(|item| item.id.len() <= 512 && item.r#type.len() <= 64)
+        .filter(move |item| seen.insert((item.r#type.as_str(), item.id.as_str())))
 }
 pub fn loaded_count(catalog: &Catalog) -> usize {
     valid_items(catalog).count()

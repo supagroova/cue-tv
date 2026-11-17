@@ -413,3 +413,9 @@ Views and HTTP responses remain bounded, but Core currently retains loaded pages
 until a catalogue reload/selection change. Long-browse memory behavior, page-error
 retry, overlapping response coverage, search/filter extras, artwork and the
 standalone browsing UI remain required before this is merge-ready.
+
+### Overlapping catalogue pages
+
+Presentation windows now deduplicate by `(type, id)` across loaded pages, preserving the first occurrence. Core retains the raw page contents so its remote `skip` remains the number of server results, not the number of displayed unique titles. The network fixture returns two overlapping titles on its second page and asserts that the final request uses `skip=32` while the display has 30 unique titles.
+
+The strengthened test failed with repeated film-25 and film-26 before the change; all 26 native Core tests passed after it (`task.py verify phase-3-core`, evidence `5fdb0f031a98415b8281b28a4ffc9888.log`). This does not resolve the retained catalogue cache bound or page-error retry requirements.
