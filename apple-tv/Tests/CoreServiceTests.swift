@@ -228,3 +228,51 @@ nonisolated private final class CoreHTTPFixture: Sendable {
         return CoreHTTPFixture(listener: listener, port: port)
     }
 }
+
+@Test func accountNamespacesUseIndependentKeysAndState() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let firstID = UUID(), secondID = UUID()
+    defer {
+        for id in [firstID, secondID] {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: CoreStorage.keyService,
+                kSecAttrAccount as String: "account-v1:" + id.uuidString.lowercased()]
+            SecItemDelete(query as CFDictionary)
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+    let firstStore = CoreStorage.account(id: firstID, root: root)
+    let secondStore = CoreStorage.account(id: secondID, root: root)
+    let firstConfig = try await firstStore.prepare()
+    let secondConfig = try await secondStore.prepare()
+    #expect(firstConfig.directory != secondConfig.directory)
+    #expect(firstConfig.key != secondConfig.key)
+    #expect(firstConfig.directory.lastPathComponent == firstID.uuidString.lowercased())
+    let first = NativeCoreService(persistence: firstConfig)
+    try await first.start()
+    try await first.setInterfaceLanguage("fra")
+    var state = try await first.snapshot()
+    for _ in 0..<200 where state.model?.interfaceLanguage != "fra" || state.model?.pendingEffects != 0 {
+        try await Task.sleep(for: .milliseconds(10)); state = try await first.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "fra")
+    try await first.stop()
+    let second = NativeCoreService(persistence: secondConfig)
+    try await second.start()
+    state = try await second.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10)); state = try await second.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "eng")
+    try await second.stop()
+    let restored = try await CoreStorage.account(id: firstID, root: root).prepare()
+    #expect(restored.key == firstConfig.key)
+    let reopened = NativeCoreService(persistence: restored)
+    try await reopened.start()
+    state = try await reopened.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10)); state = try await reopened.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "fra")
+    try await reopened.stop()
+}

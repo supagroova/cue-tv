@@ -18,6 +18,17 @@ actor CoreStorage {
             .appendingPathComponent("CueCore/guest-v1", isDirectory: true),
         keyAccount: "guest-v1"
     )
+    /// Each login attempt receives a fresh opaque namespace. Reuse its UUID only
+    /// after authenticated identity/active-account restoration has been verified.
+    /// No email, provider user ID or token is used as a path or Keychain label.
+    nonisolated static func account(id: UUID, root: URL? = nil) -> CoreStorage {
+        let base = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CueCore/accounts-v1", isDirectory: true)
+        let name = id.uuidString.lowercased()
+        return CoreStorage(directory: base.appendingPathComponent(name, isDirectory: true),
+                           keyAccount: "account-v1:" + name)
+    }
+
     private let directory: URL
     private let keyAccount: String
     init(directory: URL, keyAccount: String) { self.directory = directory; self.keyAccount = keyAccount }
