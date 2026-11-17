@@ -446,3 +446,23 @@ and one durable Close. Red fa99e8d747c84f26a86cdcd267b41cee failed only the atte
 count. Green 4d7e495960b4499ca2d0b352bd3fde31 passes all five accounting owner tests.
 This does not resolve ambiguous native timeouts; production integration still needs
 receipt reconciliation, parent retention and Resume/Restart choice.
+
+
+### Phase 5 — initial resume receipt before decoder admission
+
+PlaybackAccountingOwner now accepts typed Core progress receipts. Startup atomically
+queues Start then Pause; Core Pause exposes restored position without adding viewed
+time or persisting. The first receipt is retained separately from later decoder
+pauses and published as initialProgress only after the queue drains and Close has
+not begun. Decoder activation is blocked until that point. Missing initial progress
+fails startup. Close while Start or initial Pause is pending drains and retires,
+without publishing a Resume choice or saving the previous record.
+
+Intentional ordering change: startup adds Pause before any decoder Unpause/Seek.
+Red ddf6f8a6965644b5a98b9f023d626ae7 verifies missing Pause in cancellation and normal
+playback sequences. Initial five tests pass 33f31d2197ef499eaa36dc961a47e43d. Added
+held-Pause/Close and missing-receipt coverage; full simulator suite passes 71 tests
+c3bd0ef3fe1d47478042628ce8d1f7d1. Unsigned tvOS build passes
+ef7ace8aaf704167b58d8093d5118802. The execution closure can now return service.playback's
+typed result directly; production StandaloneModel retention, Resume/Restart UI and
+VLC wiring remain the next integration task. No physical-device claim.

@@ -12,6 +12,8 @@ nonisolated struct PlaybackReposition: Sendable {
 final class PlaybackAccountingOwner {
     enum State { case playing, paused, other }
     private let queue: PlaybackAccountingQueue
+    private let resumeReceipt: PlaybackResumeReceipt
+    private(set) var initialProgress: CorePlaybackProgress?
     private let now: @MainActor () -> ContinuousClock.Instant
     private var nextCheckpoint: ContinuousClock.Instant
     private var started = false
@@ -27,19 +29,27 @@ final class PlaybackAccountingOwner {
     var failed: Bool { queue.failed || rejected != nil }
 
     init(now: @escaping @MainActor () -> ContinuousClock.Instant = { .now },
-         execute: @escaping @Sendable (CorePlaybackAction, UInt64, UInt64) async throws -> Void) {
+         execute: @escaping @Sendable (CorePlaybackAction, UInt64, UInt64) async throws -> CorePlaybackProgress?) {
         self.now = now
         nextCheckpoint = now().advanced(by: .seconds(5))
-        queue = PlaybackAccountingQueue(execute: execute)
+        let receipt = PlaybackResumeReceipt()
+        resumeReceipt = receipt
+        queue = PlaybackAccountingQueue { action, time, duration in
+            let progress = try await execute(action, time, duration)
+            if action == .pause { try await receipt.capture(progress) }
+        }
     }
     func start() async -> Bool {
         if !started {
             started = true
-            guard queue.enqueue(.start) else { return false }
+            guard queue.enqueue([.init(.start), .init(.pause)]) else { return false }
         }
         guard await queue.flush() else { return false }
+        guard !closing, let progress = await resumeReceipt.value else { return false }
+        guard !closing else { return false }
+        initialProgress = progress
         ready = true
-        return !closing
+        return true
     }
     func flush() async -> Bool {
         guard await queue.flush() else { return false }
@@ -108,5 +118,17 @@ final class PlaybackAccountingOwner {
         // An owner started only to inspect resume must not overwrite that record.
         if !queue.enqueue(hasObservation ? .close : .retire) { return await queue.flush() }
         return await queue.flush()
+    }
+}
+
+/// The first pause reads Core's restored clock without persisting or adding viewed
+/// time. Later pause receipts must not replace the original Resume choice.
+private actor PlaybackResumeReceipt {
+    private(set) var value: CorePlaybackProgress?
+    enum Failure: Error { case missingProgress }
+    func capture(_ progress: CorePlaybackProgress?) throws {
+        guard value == nil else { return }
+        guard let progress else { throw Failure.missingProgress }
+        value = progress
     }
 }

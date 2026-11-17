@@ -5,7 +5,7 @@ import Testing
 @Suite struct PlaybackAccountingOwnerTests {
     @Test @MainActor func concurrentStartWaitsForOneNativeReceipt() async {
         let gate = AccountingStartGate()
-        let owner = PlaybackAccountingOwner { action, _, _ in await gate.execute(action) }
+        let owner = PlaybackAccountingOwner { action, _, _ in await gate.execute(action); return resumeFixture(action) }
         let first = Task { await owner.start() }
         while !(await gate.entered) { await Task.yield() }
         var secondEntered = false
@@ -28,7 +28,7 @@ import Testing
 
     @Test @MainActor func closeDuringStartWaitsThenPreventsDecoderActivation() async {
         let gate = AccountingStartGate()
-        let owner = PlaybackAccountingOwner { action, _, _ in await gate.execute(action) }
+        let owner = PlaybackAccountingOwner { action, _, _ in await gate.execute(action); return resumeFixture(action) }
         let starting = Task { await owner.start() }
         while !(await gate.entered) { await Task.yield() }
         var closeEntered = false
@@ -43,6 +43,7 @@ import Testing
         #expect(!closeFinished)
         await gate.release()
         #expect(!(await starting.value))
+        #expect(owner.initialProgress == nil)
         #expect(await closing.value)
         let decoder = UUID()
         owner.activateDecoder(decoder)
@@ -52,25 +53,69 @@ import Testing
         #expect(await gate.retires == 1)
     }
 
+    @Test @MainActor func closeDuringResumeReadWaitsAndSuppressesTheChoice() async {
+        let gate = AccountingStartGate(holdAction: .pause)
+        let owner = PlaybackAccountingOwner { action, _, _ in
+            await gate.execute(action); return resumeFixture(action)
+        }
+        let starting = Task { await owner.start() }
+        while !(await gate.entered) { await Task.yield() }
+        #expect(owner.initialProgress == nil)
+        let decoder = UUID()
+        owner.activateDecoder(decoder)
+        #expect(!owner.sample(time: 0, duration: 1000, state: .playing, decoder: decoder))
+        var closingEntered = false
+        var closingFinished = false
+        let closing = Task {
+            closingEntered = true
+            let result = await owner.close()
+            closingFinished = true
+            return result
+        }
+        while !closingEntered { await Task.yield() }
+        #expect(!closingFinished)
+        await gate.release()
+        #expect(!(await starting.value))
+        #expect(await closing.value)
+        #expect(owner.initialProgress == nil)
+        #expect(await gate.retires == 1)
+        #expect(await gate.closes == 0)
+    }
+
+    @Test @MainActor func missingResumeReceiptDoesNotActivateDecoder() async {
+        let owner = PlaybackAccountingOwner { _, _, _ in nil }
+        #expect(!(await owner.start()))
+        #expect(owner.failed)
+        #expect(owner.initialProgress == nil)
+        let decoder = UUID()
+        owner.activateDecoder(decoder)
+        #expect(!owner.sample(time: 0, duration: 1000, state: .playing, decoder: decoder))
+    }
+
     @Test @MainActor func closingBeforeValidTimingRetiresWithoutSaving() async {
         let recorder = AccountingRecorder()
         let owner = PlaybackAccountingOwner { action, time, duration in
             await recorder.record(action, time, duration)
+            return resumeFixture(action)
         }
         #expect(await owner.start())
+        #expect(owner.initialProgress?.time == 600)
+        #expect(owner.initialProgress?.duration == 1000)
         let decoder = UUID()
         owner.activateDecoder(decoder)
         #expect(owner.sample(time: -1, duration: 0, state: .playing, decoder: decoder))
         #expect(owner.sample(time: 0, duration: 0, state: .other, decoder: decoder))
         #expect(await owner.close())
         #expect(await owner.close())
-        #expect(await recorder.calls.map(\.action) == [.start, .retire])
+        #expect(await recorder.calls.map(\.action) == [.start, .pause, .retire])
     }
 
     @Test @MainActor func closeRetryDoesNotReplayAnAlreadyAdmittedSampleTwice() async {
         let gate = AccountingReplayGate()
-        let owner = PlaybackAccountingOwner { action, time, _ in try await gate.execute(action, time) }
+        let owner = PlaybackAccountingOwner { action, time, _ in try await gate.execute(action, time); return resumeFixture(action) }
         #expect(await owner.start())
+        #expect(owner.initialProgress?.time == 600)
+        #expect(owner.initialProgress?.duration == 1000)
         let decoder = UUID()
         owner.activateDecoder(decoder)
         #expect(owner.sample(time: 100, duration: 2000, state: .playing, decoder: decoder))
@@ -95,8 +140,11 @@ import Testing
         var clock = ContinuousClock.now
         let owner = PlaybackAccountingOwner(now: { clock }) { action, time, duration in
             await recorder.record(action, time, duration)
+            return resumeFixture(action)
         }
         #expect(await owner.start())
+        #expect(owner.initialProgress?.time == 600)
+        #expect(owner.initialProgress?.duration == 1000)
         let decoder = UUID()
         owner.activateDecoder(decoder)
         #expect(owner.sample(time: 100, duration: 2000, state: .playing, decoder: decoder))
@@ -116,7 +164,7 @@ import Testing
         #expect(await owner.close())
         #expect(!owner.sample(time: 1900, duration: 2000, state: .playing, decoder: decoder))
         let calls = await recorder.calls
-        #expect(calls.map(\.action) == [.start, .unpause, .seek, .checkpoint, .seek, .checkpoint, .played, .seek, .pause, .checkpoint, .unpause, .seek, .checkpoint, .played, .checkpoint, .close])
+        #expect(calls.map(\.action) == [.start, .pause, .unpause, .seek, .checkpoint, .seek, .checkpoint, .played, .seek, .pause, .checkpoint, .unpause, .seek, .checkpoint, .played, .checkpoint, .close])
         #expect(calls.filter { $0.action == .seek }.map(\.time) == [100, 1500, 1600, 1650])
         #expect(calls.filter { $0.action == .played }.map(\.time) == [1600, 1800])
     }
@@ -133,11 +181,14 @@ private actor AccountingStartGate {
     private(set) var closes = 0
     private(set) var retires = 0
     private var continuation: CheckedContinuation<Void, Never>?
+    private let holdAction: CorePlaybackAction
+    init(holdAction: CorePlaybackAction = .start) { self.holdAction = holdAction }
     func execute(_ action: CorePlaybackAction) async {
         if action == .close { closes += 1 }
         if action == .retire { retires += 1 }
-        if action == .start {
-            starts += 1; entered = true
+        if action == .start { starts += 1 }
+        if action == holdAction {
+            entered = true
             await withCheckedContinuation { continuation = $0 }
         }
     }
@@ -164,4 +215,8 @@ private actor AccountingReplayGate {
     }
     func failOnce(at time: UInt64) { target = time }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+nonisolated private func resumeFixture(_ action: CorePlaybackAction) -> CorePlaybackProgress? {
+    action == .pause ? CorePlaybackProgress(time: 600, duration: 1000, timeWatched: 600, watched: false) : nil
 }
