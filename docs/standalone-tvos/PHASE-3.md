@@ -285,3 +285,32 @@ owner, stops/releases and immediately restores the setting in a new session.
 All 23 native tests pass and both tvOS library targets compile. The Swift app still
 uses memory-only creation; Keychain provisioning, app-owned directory setup,
 relaunch/recovery and account identity wiring remain required.
+
+## Keychain-backed Swift guest service
+
+`NativeCoreService.guest()` now prepares an application-support guest directory,
+loads or creates a 256-bit random Keychain key, and uses persistent C creation.
+The Keychain item is non-synchronizing and `AfterFirstUnlockThisDeviceOnly`; the
+key is never stored in the data directory. Competing key creation re-reads the
+winner rather than replacing it. Existing ciphertext with a missing key fails
+explicitly and is preserved. Keychain errors expose numeric Security status only,
+not key material. The default no-argument initializer remains ephemeral for
+isolated diagnostics; the standalone journey must use the guest factory.
+
+A simulator integration test uses the actual platform Keychain, persists a Core
+setting, recreates the Swift/native service and verifies restoration. It then
+removes only its uniquely named test Keychain item and verifies that startup
+preparation refuses to generate a replacement key over existing ciphertext. This
+is service-recreation evidence; full process termination/relaunch and physical
+Keychain behavior remain required.
+
+Unsigned simulator tests reproduced a Keychain-access failure. Simulator test
+commands now use ad-hoc manual signing, an empty development team and a fixed
+simulator-only application-identifier prefix. No developer certificate/account is
+needed. Device build checks remain unsigned. All 25 simulator unit tests pass
+(3.246 seconds of execution), and the device application builds. Missing/corrupt
+state recovery UI, account identity/sign-out and remaining Core service operations
+are still open.
+
+All 10 short Playback Lab UI tests also pass with ad-hoc simulator signing
+(100.490 seconds of test execution). Sustained playback remains manual-only.

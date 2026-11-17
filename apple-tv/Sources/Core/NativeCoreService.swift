@@ -36,6 +36,12 @@ nonisolated protocol CoreService: Sendable {
 /// Serializes native admission off the UI actor. No account data crosses this initial service.
 actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout }
+    private let persistence: CorePersistenceConfiguration?
+    init(persistence: CorePersistenceConfiguration? = nil) { self.persistence = persistence }
+    nonisolated static func guest() async throws -> NativeCoreService {
+        let configuration = try await CoreStorage.shared.prepare()
+        return NativeCoreService(persistence: configuration)
+    }
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?
 
@@ -43,7 +49,16 @@ actor NativeCoreService: CoreService {
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
         guard cue_core_abi_version() == 1 else { throw Failure.unavailable }
-        let created = cue_core_create()
+        let created: UInt64
+        if let persistence {
+            let path = Data(persistence.directory.path.utf8)
+            created = path.withUnsafeBytes { pathBytes in
+                persistence.key.withUnsafeBytes { keyBytes in
+                    cue_core_create_persistent(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                                               keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count)
+                }
+            }
+        } else { created = cue_core_create() }
         guard created != 0 else { throw Failure.unavailable }
         handle = created
     }

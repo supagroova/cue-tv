@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Network
+import Security
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
@@ -50,6 +51,38 @@ import Network
     #expect(state.model?.addon?.id == "org.cue.simulator")
     #expect(state.model?.addon?.name == "Simulator fixture")
     try await service.stop()
+}
+
+@Test func keychainBackedGuestSurvivesServiceRecreation() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let account = "test-" + UUID().uuidString
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                               kSecAttrService as String: CoreStorage.keyService,
+                               kSecAttrAccount as String: account]
+    defer { SecItemDelete(query as CFDictionary); try? FileManager.default.removeItem(at: directory) }
+    let store = CoreStorage(directory: directory, keyAccount: account)
+    let first = NativeCoreService(persistence: try await store.prepare())
+    try await first.start()
+    try await first.setInterfaceLanguage("deu")
+    var state = try await first.snapshot()
+    for _ in 0..<200 {
+        if state.model?.interfaceLanguage == "deu" && state.model?.pendingEffects == 0 { break }
+        try await Task.sleep(for: .milliseconds(10)); state = try await first.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "deu")
+    #expect(state.model?.error == nil)
+    try await first.stop()
+    let second = NativeCoreService(persistence: try await store.prepare())
+    try await second.start()
+    state = try await second.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10)); state = try await second.snapshot()
+    }
+    #expect(state.model?.interfaceLanguage == "deu")
+    try await second.stop()
+    #expect(SecItemDelete(query as CFDictionary) == errSecSuccess)
+    await #expect(throws: CoreStorage.Failure.missingKey) { try await store.prepare() }
+    #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("state.bin").path))
 }
 
 }
