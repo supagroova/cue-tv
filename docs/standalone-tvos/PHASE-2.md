@@ -145,3 +145,27 @@ of playback: the blue video frame remained visible with no subtitle text and VLC
 reported selected subtitle 0. Automatic CI uses the short fixtures; the long
 playback/seek qualifications remain opt-in only. Physical decoding and audible
 track verification are still not established.
+
+### Structured native failure delivery
+
+Failed snapshots now include stable `error_code` values for invalid metadata,
+unsupported torrent formats, sources exceeding the cache cap, insufficient free
+space and read/storage failures. The optional field extends the v1 snapshot
+without changing handle or allocation ownership. Raw native error chains, source
+paths and URLs are not serialized into failure payloads. Swift maps unknown or
+missing codes to a safe generic read failure.
+
+Storage limit reasons survive upstream initialization wrapping and are distinct
+from invalid metadata. Other storage initialization failures remain read failures;
+a regression creates a directory where the media file should be and verifies this
+classification. Existing preflight and real-peer write-exhaustion tests now check
+the corresponding typed codes. A C ABI regression first failed on a missing code,
+then passed while also verifying source-name/marker redaction.
+
+The lab forwards the failure immediately to the generation-owning coordinator,
+which retires resources and presents a fixed actionable message with source
+choices. It no longer waits for the discovery/buffering timeout to notice a known
+failure. A UI test confirms a rejected fixture returns the error and source choices
+within three seconds. Validation: 26 native tests, 22 unit tests and the focused
+failure UI test passed. This does not claim every network or codec failure can be
+classified more precisely than a generic read/decoder error.

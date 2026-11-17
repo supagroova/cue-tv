@@ -1,5 +1,6 @@
 //! C ABI: input strings borrowed for each call; snapshot strings must be freed.
 //! Handles are monotonic IDs, not pointers. Stop is idempotent and nonblocking.
+use super::failure::FailureCode;
 use super::{Discovery, PlaybackSession, TorrentSource};
 use serde::Deserialize;
 use std::{
@@ -58,7 +59,7 @@ pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
                 let source = match (config.torrent_path, config.magnet) {
                     (Some(path), None) => TorrentSource::Bytes(std::fs::read(path)?),
                     (None, Some(magnet)) => TorrentSource::Magnet(magnet),
-                    _ => anyhow::bail!("exactly one torrent source required"),
+                    _ => anyhow::bail!(FailureCode::InvalidMetadata),
                 };
                 PlaybackSession::start_budgeted_in_root(source, config.file_index, config.output, config.initial_peers, config.discovery, super::storage_budget::StorageBudget::default(), None, config.cache_root).await
             };
@@ -66,7 +67,7 @@ pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
                 _ = entry.cancel.cancelled() => return,
                 result = setup => match result {
                     Ok(s) => s,
-                    Err(_) => { *entry.status.lock().unwrap() = r#"{"state":"failed","error":"Torrent session could not start"}"#.into(); return; }
+                    Err(error) => { *entry.status.lock().unwrap() = FailureCode::from_error(&error).snapshot().to_string(); return; }
                 }
             };
             loop {
@@ -250,5 +251,38 @@ mod tests {
         unsafe {
             cue_torrent_string_free(status);
         }
+    }
+    #[test]
+    fn invalid_metadata_has_stable_redacted_failure_code() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("private-fixture-name.torrent");
+        std::fs::write(&path, b"not a torrent: private-marker").unwrap();
+        let config = CString::new(
+            serde_json::json!({"api_version":1,"torrent_path":path,
+            "output":directory.path(),"file_index":0,"initial_peers":[]})
+            .to_string(),
+        )
+        .unwrap();
+        let id = unsafe { cue_torrent_start(config.as_ptr()) };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let payload = loop {
+            let ptr = cue_torrent_snapshot(id);
+            let raw = unsafe { CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe {
+                cue_torrent_string_free(ptr);
+            }
+            let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            if value["state"] == "failed" {
+                break (raw, value);
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        cue_torrent_stop(id);
+        assert_eq!(payload.1["error_code"], "invalid_metadata");
+        assert!(!payload.0.contains("private-marker"));
+        assert!(!payload.0.contains("private-fixture-name"));
     }
 }

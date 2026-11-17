@@ -9,6 +9,9 @@
 uint64_t cue_torrent_start(const char *config);
 // Versioned snapshot includes api_version=1 and session_id matching the handle.
 // Ready snapshots include files and verified/total byte counts.
+// Failed snapshots add error_code: invalid_metadata, unsupported_format,
+// source_too_large, low_storage, or read. Consumers must handle unknown codes.
+// Error payloads exclude raw native error chains, source paths and URLs.
 // Caller owns returned string; free exactly once with cue_torrent_string_free.
 char *cue_torrent_snapshot(uint64_t handle);
 void cue_torrent_string_free(char *value);

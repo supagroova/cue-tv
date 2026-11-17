@@ -77,9 +77,13 @@ struct VLCPlaybackLabView: View {
                 Button("Stream torrent with VLC") { start(torrentSource: true) }
                 Text(torrent.status)
                 if case .failed(let failure) = lifecycle.state {
-                    Text("Playback failed: \(String(describing: failure))")
+                    Text(failure.message).accessibilityIdentifier("playback-failure")
                 }
             }
+        }
+        .onChange(of: torrent.failure) { _, failure in
+            guard let failure, let token else { return }
+            lifecycle.receive(.failed(failure), generation: token)
         }
         .onChange(of: torrent.url) { _, value in
             guard let value else { return }

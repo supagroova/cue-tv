@@ -262,3 +262,12 @@ import Testing
     #expect(coordinator.state == .failed(.read))
     await coordinator.stop()
 }
+
+@Test func nativeFailureCodesKeepStorageAndMetadataDistinct() {
+    #expect(PlaybackSessionCoordinator.Failure.native(code: "low_storage") == .lowStorage)
+    #expect(PlaybackSessionCoordinator.Failure.native(code: "source_too_large") == .sourceTooLarge)
+    #expect(PlaybackSessionCoordinator.Failure.native(code: "invalid_metadata") == .invalidMetadata)
+    #expect(PlaybackSessionCoordinator.Failure.native(code: "unsupported_format") == .unsupportedFormat)
+    #expect(PlaybackSessionCoordinator.Failure.native(code: "future-code") == .read)
+    #expect(PlaybackSessionCoordinator.Failure.native(code: nil) == .read)
+}

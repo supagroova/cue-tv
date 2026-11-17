@@ -6,6 +6,7 @@ import CueTorrent
 @Observable
 final class TorrentLabSession {
     private(set) var status = "Idle"
+    private(set) var failure: PlaybackSessionCoordinator.Failure?
     private(set) var url: URL?
     private(set) var verifiedBytes: UInt64 = 0
     private(set) var totalBytes: UInt64 = 0
@@ -25,16 +26,16 @@ final class TorrentLabSession {
         let requestedFixture = ProcessInfo.processInfo.environment["CUE_TORRENT_FIXTURE"] ?? "single"
         let fixture = ProcessInfo.processInfo.environment["CUE_LONG_TORRENT"] == "1" ? "long" : requestedFixture
         guard ["single", "long", "mkv", "hevc-mkv", "hevc-mp4"].contains(fixture) else {
-            status = "Unknown torrent fixture"; return
+            status = "Unknown torrent fixture"; failure = .invalidMetadata; return
         }
         guard let torrent = Bundle.main.url(forResource: fixture, withExtension: "torrent") else {
-            status = "Missing torrent fixture"; return
+            status = "Missing torrent fixture"; failure = .invalidMetadata; return
         }
         let output: URL
         do { output = try await TorrentCacheStore.shared.acquire() }
         catch {
             guard generation == requestedGeneration else { return }
-            status = "Media cache is unavailable; previous cleanup may be incomplete"; return
+            status = "Media cache is unavailable; previous cleanup may be incomplete"; failure = .read; return
         }
         guard generation == requestedGeneration else {
             try? await TorrentCacheStore.shared.release(output)
@@ -49,7 +50,7 @@ final class TorrentLabSession {
         handle = json.withCString { cue_torrent_start($0) }
         guard handle != 0 else {
             try? await TorrentCacheStore.shared.release(output)
-            status = "Engine rejected configuration"; return
+            status = "Engine rejected configuration"; failure = .invalidMetadata; return
         }
         cacheDirectory = output
         status = "Connecting to fixture peer"
@@ -62,7 +63,7 @@ final class TorrentLabSession {
                     cue_torrent_string_free(pointer)
                     if let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
                         guard snapshot.api_version == 1, snapshot.session_id == self.handle else {
-                            self.stop(); self.status = "Invalid engine response"; return
+                            self.stop(); self.status = "Invalid engine response"; self.failure = .read; return
                         }
                         self.verifiedBytes = snapshot.verified_bytes ?? 0
                         self.totalBytes = snapshot.total_bytes ?? 0
@@ -71,7 +72,10 @@ final class TorrentLabSession {
                         if snapshot.state == "ready", let value = snapshot.url {
                             if self.url == nil { self.url = URL(string: value) }
                         }
-                        if snapshot.state == "failed" { return }
+                        if snapshot.state == "failed" {
+                            self.failure = .native(code: snapshot.error_code)
+                            return
+                        }
                     }
                 }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -111,13 +115,14 @@ final class TorrentLabSession {
                 if !removed { self.cleanupFailures += 1 }
             }
         }
-        url = nil; status = "Idle"
+        url = nil; status = "Idle"; failure = nil
         verifiedBytes = 0; totalBytes = 0; selectedFile = nil
     }
     private struct Snapshot: Decodable {
         let api_version: UInt32
         let session_id: UInt64
         let state: String
+        let error_code: String?
         let url: String?
         let verified_bytes: UInt64?
         let total_bytes: UInt64?

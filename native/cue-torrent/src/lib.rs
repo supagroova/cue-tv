@@ -1,5 +1,7 @@
 //! Embedded byte transport. The HTTP adapter binds only to loopback.
+pub mod failure;
 mod ffi;
+use failure::FailureCode;
 pub mod storage_budget;
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -234,11 +236,11 @@ impl PlaybackSession {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
             TorrentSource::Magnet(value) => {
                 if value.len() > 16384 || !value.starts_with("magnet:?") {
-                    bail!("invalid magnet");
+                    bail!(FailureCode::InvalidMetadata);
                 }
-                let magnet = Magnet::parse(&value)?;
+                let magnet = Magnet::parse(&value).context(FailureCode::InvalidMetadata)?;
                 if magnet.as_id20().is_none() {
-                    bail!("v1 torrent hash required");
+                    bail!(FailureCode::UnsupportedFormat);
                 }
                 AddTorrent::from_url(value)
             }
@@ -280,9 +282,10 @@ impl PlaybackSession {
                         ..Default::default()
                     }),
                 )
-                .await?
+                .await
+                .context(FailureCode::InvalidMetadata)?
                 .into_handle()
-                .context("torrent handle")?;
+                .context(FailureCode::InvalidMetadata)?;
             handle.wait_until_initialized().await?;
             if storage_lease.0.has_failed() {
                 bail!("storage policy failed during initialization");
@@ -306,7 +309,7 @@ impl PlaybackSession {
                         (f.len, mime, ext)
                     })
                 })?
-                .context("file index")?;
+                .context(FailureCode::InvalidMetadata)?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let address = listener.local_addr()?;
             let path = format!("/{}/stream.{extension}", uuid::Uuid::new_v4());
@@ -343,19 +346,34 @@ impl PlaybackSession {
             Err(e) => {
                 cancel.cancel();
                 session.stop().await;
+                if storage_lease.0.has_failed() {
+                    return Err(storage_lease
+                        .0
+                        .limit_failure()
+                        .unwrap_or(FailureCode::Read)
+                        .into());
+                }
                 Err(e)
             }
         }
     }
     pub fn snapshot(&self) -> serde_json::Value {
         if self.storage.0.has_failed() {
-            return serde_json::json!({"state":"failed", "error":"Storage policy failed"});
+            return self
+                .storage
+                .0
+                .limit_failure()
+                .unwrap_or(FailureCode::Read)
+                .snapshot();
         }
         let stats = self.torrent.stats();
+        if stats.error.is_some() {
+            return FailureCode::Read.snapshot();
+        }
         let files = self.torrent.with_metadata(|m| m.file_infos.iter().enumerate().map(|(index, file)| {
             serde_json::json!({"index": index, "path": file.relative_filename.to_string_lossy(), "bytes": file.len})
         }).collect::<Vec<_>>()).unwrap_or_default();
-        serde_json::json!({"state": if stats.error.is_some() {"failed"} else {"ready"}, "url": self.url,
+        serde_json::json!({"state": "ready", "url": self.url,
             "verified_bytes": stats.progress_bytes, "total_bytes": stats.total_bytes, "files": files})
     }
 

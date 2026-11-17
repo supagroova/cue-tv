@@ -25,7 +25,14 @@ async fn oversized_torrent_is_rejected_before_creating_files() {
         None,
     )
     .await;
-    assert!(result.is_err());
+    let error = match result {
+        Ok(_) => panic!("oversized source was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.downcast_ref::<cue_torrent::failure::FailureCode>(),
+        Some(&cue_torrent::failure::FailureCode::SourceTooLarge)
+    );
     assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
 }
 
@@ -58,7 +65,14 @@ async fn reserve_is_preserved_without_filling_real_disk() {
         Some(disk),
     )
     .await;
-    assert!(result.is_err());
+    let error = match result {
+        Ok(_) => panic!("reserve violation was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.downcast_ref::<cue_torrent::failure::FailureCode>(),
+        Some(&cue_torrent::failure::FailureCode::LowStorage)
+    );
     assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
 }
 
@@ -158,6 +172,7 @@ async fn disk_exhaustion_after_admission_blocks_later_writes() {
         while session.snapshot()["state"] != "failed" {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        assert_eq!(session.snapshot()["error_code"], "low_storage");
         assert!(
             calls.load(Ordering::SeqCst) >= 4,
             "must observe write-time failure after admission"
@@ -375,5 +390,31 @@ async fn existing_root_data_cannot_masquerade_as_downloaded_torrent_bytes() {
     assert!(
         result.is_err(),
         "the full remaining torrent must fit after unrelated root allocation"
+    );
+}
+
+#[tokio::test]
+async fn storage_initialization_failure_is_not_bad_metadata() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let output = tempfile::tempdir().unwrap();
+    std::fs::create_dir(output.path().join("episode01.mp4")).unwrap();
+    let result = PlaybackSession::start_budgeted(
+        TorrentSource::Bytes(torrent),
+        0,
+        output.path().to_owned(),
+        vec![],
+        Discovery::default(),
+        StorageBudget::default(),
+        None,
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("invalid storage layout was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.downcast_ref::<cue_torrent::failure::FailureCode>(),
+        Some(&cue_torrent::failure::FailureCode::Read)
     );
 }

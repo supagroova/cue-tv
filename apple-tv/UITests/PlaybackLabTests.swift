@@ -2,6 +2,24 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testTorrentFailureReturnsToSourceChoicePromptly() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
+        app.launchEnvironment["CUE_VLC_LAB"] = "1"
+        app.launchEnvironment["CUE_TORRENT_FIXTURE"] = "unknown-fixture"
+        app.launch()
+        let stream = app.buttons["Stream torrent with VLC"]
+        XCTAssertTrue(stream.waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.down)
+        XCUIRemote.shared.press(.select)
+        let error = app.staticTexts["playback-failure"]
+        XCTAssertTrue(error.waitForExistence(timeout: 3))
+        XCTAssertEqual(error.label, "This torrent could not be read. Choose another source.")
+        XCTAssertTrue(stream.exists)
+        XCTAssertTrue(app.buttons["Play MKV with VLC"].exists)
+    }
+
+    @MainActor
     func testHEVCMKVTorrentTracksAndSubtitleOff() throws {
         try streamMatrixFixture("hevc-mkv", filename: "hevc-tracks.mkv", subtitles: 2)
         XCUIRemote.shared.press(.down)
@@ -54,7 +72,7 @@ nonisolated final class PlaybackLabTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
         // The owned fixture is 12 seconds; completion must not wait for a stall timeout.
         XCTAssertTrue(play.waitForExistence(timeout: 15))
-        XCTAssertFalse(app.staticTexts["Playback failed: read"].exists)
+        XCTAssertFalse(app.staticTexts["playback-failure"].exists)
     }
 
     @MainActor

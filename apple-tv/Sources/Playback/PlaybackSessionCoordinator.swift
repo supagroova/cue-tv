@@ -5,7 +5,31 @@ import Observation
 @MainActor @Observable
 final class PlaybackSessionCoordinator {
     enum Failure: Equatable {
-        case invalidMetadata, discovery, buffering, read, decoder, unsupportedFormat, lowStorage, cancellation
+        case invalidMetadata, discovery, buffering, read, decoder, unsupportedFormat, lowStorage, sourceTooLarge, cancellation
+
+        static func native(code: String?) -> Self {
+            switch code {
+            case "invalid_metadata": .invalidMetadata
+            case "unsupported_format": .unsupportedFormat
+            case "low_storage": .lowStorage
+            case "source_too_large": .sourceTooLarge
+            default: .read
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .invalidMetadata: "This torrent could not be read. Choose another source."
+            case .discovery: "No peers responded. Retry or choose another source."
+            case .buffering: "Playback could not start. Retry or choose another source."
+            case .read: "Playback data stopped arriving or could not be read. Retry or choose another source."
+            case .decoder: "This video could not be decoded. Choose another source."
+            case .unsupportedFormat: "This source format is not supported. Choose another source."
+            case .lowStorage: "There is not enough free space for this video. Free space or choose a smaller source."
+            case .sourceTooLarge: "This source exceeds the media cache limit. Choose a smaller source."
+            case .cancellation: "Playback was canceled."
+            }
+        }
     }
     enum State: Equatable {
         case idle, resolving, discovering, buffering, playing, paused, seeking, stopping

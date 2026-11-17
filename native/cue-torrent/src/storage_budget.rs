@@ -1,4 +1,5 @@
 //! Conservative admission plus write-time guards; no eviction of engine-owned pieces.
+use crate::failure::FailureCode;
 use anyhow::{Context, Result, bail};
 use librqbit::{
     ManagedTorrentShared, TorrentMetadata,
@@ -96,8 +97,17 @@ pub struct BudgetFactory {
     probe: DiskProbe,
     lock: Arc<Mutex<bool>>,
     failed: Arc<AtomicBool>,
+    limit: Arc<Mutex<Option<FailureCode>>>,
 }
 impl BudgetFactory {
+    pub fn limit_failure(&self) -> Option<FailureCode> {
+        *self.limit.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn fail_limit(&self, code: FailureCode) -> anyhow::Error {
+        *self.limit.lock().unwrap_or_else(|e| e.into_inner()) = Some(code);
+        self.failed.store(true, Ordering::Release);
+        code.into()
+    }
     pub fn has_failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
@@ -123,6 +133,7 @@ impl BudgetFactory {
             probe: probe.unwrap_or_else(|| Arc::new(disk_usage)),
             lock: Arc::new(Mutex::new(false)),
             failed: Arc::new(AtomicBool::new(false)),
+            limit: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -135,7 +146,14 @@ impl StorageFactory for BudgetFactory {
     ) -> Result<Self::Storage> {
         let _guard = self.enter()?;
         Ok(BudgetStorage {
-            inner: Box::new(FilesystemStorageFactory::default().create(shared, metadata)?),
+            inner: Box::new(
+                FilesystemStorageFactory::default()
+                    .create(shared, metadata)
+                    .map_err(|error| {
+                        self.failed.store(true, Ordering::Release);
+                        error
+                    })?,
+            ),
             policy: self.clone(),
             initial_allocated: 0,
             lengths: metadata.file_infos.iter().map(|f| f.len).collect(),
@@ -188,7 +206,7 @@ impl BudgetStorage {
             .and_then(|n| n.checked_add(overhead))
             .context("budget overflow")?;
         if bound > self.policy.budget.cap_bytes {
-            bail!("cache budget exhausted");
+            return Err(self.policy.fail_limit(FailureCode::SourceTooLarge));
         }
         let headroom = remaining
             .checked_add(overhead.saturating_sub(usage.metadata_allocated))
@@ -201,13 +219,17 @@ impl BudgetStorage {
                 .checked_add(headroom)
                 .context("reserve overflow")?
         {
-            bail!("storage reserve reached");
+            return Err(self.policy.fail_limit(FailureCode::LowStorage));
         }
         Ok(())
     }
 }
-impl TorrentStorage for BudgetStorage {
-    fn init(&mut self, shared: &ManagedTorrentShared, metadata: &TorrentMetadata) -> Result<()> {
+impl BudgetStorage {
+    fn initialize(
+        &mut self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> Result<()> {
         let _guard = self.policy.enter()?;
         if self.lengths.len() > self.policy.budget.max_files {
             bail!("too many torrent files");
@@ -230,16 +252,25 @@ impl TorrentStorage for BudgetStorage {
             .context("budget overflow")?
             > self.policy.budget.cap_bytes
         {
-            bail!("torrent exceeds cache budget");
+            return Err(self.policy.fail_limit(FailureCode::SourceTooLarge));
         }
         if usage.available
             < full
                 .checked_add(self.policy.budget.reserve_bytes)
                 .context("reserve overflow")?
         {
-            bail!("insufficient space after reserve");
+            return Err(self.policy.fail_limit(FailureCode::LowStorage));
         }
         self.inner.init(shared, metadata)
+    }
+}
+impl TorrentStorage for BudgetStorage {
+    fn init(&mut self, shared: &ManagedTorrentShared, metadata: &TorrentMetadata) -> Result<()> {
+        let result = self.initialize(shared, metadata);
+        if result.is_err() {
+            self.policy.failed.store(true, Ordering::Release);
+        }
+        result
     }
     fn pread_exact(&self, file: usize, offset: u64, buf: &mut [u8]) -> Result<()> {
         let _guard = self.policy.enter()?;
