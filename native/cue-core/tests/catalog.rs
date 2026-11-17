@@ -374,6 +374,24 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
             .unwrap()
             .contains("private-token")
     );
+    let revision = session.snapshot().revision;
+    let playback = session.prepare_torrent(0, revision).await.unwrap();
+    assert_eq!(playback.file_index, Some(0));
+    assert!(
+        playback
+            .magnet
+            .contains("0123456789abcdef0123456789abcdef01234567")
+    );
+    assert!(session.prepare_torrent(1, revision).await.is_err());
+    assert!(session.prepare_torrent(2, revision).await.is_err());
+    session.show_sources(1, revision).await.unwrap();
+    assert!(session.prepare_torrent(0, revision).await.is_err());
+    assert!(
+        session
+            .prepare_torrent(0, session.snapshot().revision)
+            .await
+            .is_err()
+    );
     server.await.unwrap();
     session.stop().await;
 }

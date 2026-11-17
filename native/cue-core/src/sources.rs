@@ -99,3 +99,18 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
             .collect(),
     })
 }
+
+pub(crate) fn prepare(
+    model: &MetaDetails,
+    index: usize,
+) -> Result<crate::playback_source::TorrentRequest, &'static str> {
+    let stream = model
+        .meta_streams
+        .iter()
+        .chain(&model.streams)
+        .filter_map(|page| page.content.as_ref()?.ready())
+        .flatten()
+        .nth(index)
+        .ok_or("invalid_source")?;
+    crate::playback_source::torrent(stream)
+}

@@ -75,6 +75,11 @@ enum Command {
         oneshot::Sender<Result<(), &'static str>>,
     ),
     SourceWindow(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    PrepareTorrent(
+        usize,
+        u64,
+        oneshot::Sender<Result<crate::playback_source::TorrentRequest, &'static str>>,
+    ),
     Effect(Msg, u64, u64, u64, u64),
 }
 pub struct CoreSession {
@@ -259,6 +264,18 @@ impl CoreSession {
         let (reply, ack) = oneshot::channel();
         self.commands
             .try_send(Command::SourceWindow(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Returns owned handoff data only to the requesting caller, never a snapshot.
+    pub async fn prepare_torrent(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<crate::playback_source::TorrentRequest, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::PrepareTorrent(index, expected_revision, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -560,6 +577,19 @@ async fn run(
                     details_generation,
                     source_generation,
                 )
+            }
+            Command::PrepareTorrent(index, expected, reply) => {
+                let result = if expected != revision {
+                    Err("stale_sources")
+                } else if !crate::sources::view(&details, source_offset)
+                    .is_some_and(|view| view.items.iter().any(|item| item.index == index))
+                {
+                    Err("invalid_source")
+                } else {
+                    crate::sources::prepare(&details, index)
+                };
+                let _ = reply.send(result);
+                continue;
             }
             Command::SourceWindow(offset, expected, reply) => {
                 if expected != revision {
