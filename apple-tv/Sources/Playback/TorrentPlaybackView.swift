@@ -1,0 +1,91 @@
+import SwiftUI
+import VLCKit
+
+struct TorrentPlaybackView: View {
+    let request: CoreTorrentRequest
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var model = TorrentPlaybackModel()
+    @State private var controller = VLCPlaybackController()
+    @State private var paused = false
+    @State private var audio = 0
+    @State private var subtitle = -1
+    @State private var audioCount = 0
+    @State private var subtitleCount = 0
+    @State private var milliseconds = 0
+    @State private var seekRequest: UUID?
+    @State private var seekTarget = 0
+    @State private var hasPlayed = false
+    @FocusState private var closeFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 24) {
+            if case .failed(let failure) = model.coordinator.state {
+                Text(failure.message).accessibilityIdentifier("source-playback-error")
+                Button("Retry source") { reset(); Task { await model.start(request) } }
+            } else if let url = model.playbackURL {
+                VLCPlaybackSurface(controller: controller, url: url, audioIndex: audio, subtitleIndex: subtitle,
+                    paused: paused, seekRequest: seekRequest, seekMilliseconds: seekTarget) { [token = model.generation] snapshot in
+                    guard let token, token == model.generation else { return }
+                    milliseconds = snapshot.milliseconds
+                    audioCount = snapshot.audioTracks; subtitleCount = snapshot.subtitleTracks
+                    if snapshot.state == .error { controller.stop(); model.coordinator.receive(.failed(.decoder), generation: token) }
+                    else if snapshot.state == .stopped, hasPlayed { stopAndClose() }
+                    else if snapshot.state == .paused { model.coordinator.receive(.paused, generation: token) }
+                    else if snapshot.state == .playing, snapshot.milliseconds > 0 {
+                        if model.coordinator.state == .seeking, abs(snapshot.milliseconds - seekTarget) > 1000 { return }
+                        hasPlayed = true
+                        model.coordinator.receive(.playing, generation: token)
+                        model.coordinator.reportProgress(milliseconds: snapshot.milliseconds, generation: token)
+                    }
+                }.id(url).frame(maxHeight: .infinity)
+                HStack {
+                    Button(paused ? "Resume" : "Pause") { paused.toggle() }
+                    Button("Back 10 seconds") { seek(to: max(0, milliseconds - 10000)) }
+                    Button("Forward 10 seconds") { seek(to: min(Int(Int32.max), milliseconds + 10000)) }
+                    if audioCount > 1 { Button("Next audio track") { audio = (audio + 1) % audioCount } }
+                    if subtitleCount > 0 { Button(subtitle == -1 ? "Enable subtitles" : "Next subtitle / Off") { subtitle = subtitle + 1 >= subtitleCount ? -1 : subtitle + 1 } }
+                }
+            } else if model.coordinator.state == .choosingFile, let files = model.files {
+                Text("Choose a video file").font(.title)
+                ScrollView {
+                    VStack {
+                        ForEach(files.files ?? [], id: \.index) { file in
+                            Button { Task { await model.select(fileIndex: file.index) } } label: {
+                                Text(file.path).lineLimit(2)
+                            }.disabled(file.padding || file.bytes == 0)
+                        }
+                        HStack {
+                            if let offset = files.offset, offset > 0 { Button("Previous files") { Task { await model.showFiles(offset: max(0, offset - 24)) } } }
+                            if let offset = files.offset, let total = files.total, offset + 24 < total { Button("More files") { Task { await model.showFiles(offset: offset + 24) } } }
+                        }
+                    }
+                }
+            } else { ProgressView("Preparing video…") }
+            Button("Close") { stopAndClose() }.focused($closeFocused)
+        }
+        .padding(40)
+        .task {
+            model.stopDecoder = { [controller] in controller.stop() }
+            closeFocused = true; await model.start(request)
+        }
+        .onChange(of: model.coordinator.state) { _, state in
+            if case .failed = state { controller.stop() }
+        }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { stopAndClose() } }
+        .onDisappear { controller.stop(); Task { await model.stop() } }
+    }
+    private func reset() {
+        controller.stop(); paused = false; audio = 0; subtitle = -1
+        milliseconds = 0; hasPlayed = false; seekRequest = nil
+    }
+    private func seek(to target: Int) {
+        guard let token = model.generation else { return }
+        seekTarget = target; seekRequest = UUID()
+        model.coordinator.receive(.seeking, generation: token)
+    }
+    private func stopAndClose() {
+        controller.stop()
+        Task { await model.stop(); dismiss() }
+    }
+}

@@ -10,7 +10,13 @@ struct VLCPlaybackSnapshot {
     let state: VLCMediaPlayerState
 }
 
+@MainActor final class VLCPlaybackController {
+    fileprivate weak var coordinator: VLCPlaybackSurface.Coordinator?
+    func stop() { coordinator?.stop() }
+}
+
 struct VLCPlaybackSurface: UIViewRepresentable {
+    var controller: VLCPlaybackController? = nil
     let url: URL
     let audioIndex: Int
     let subtitleIndex: Int
@@ -22,6 +28,7 @@ struct VLCPlaybackSurface: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .black
+        controller?.coordinator = context.coordinator
         context.coordinator.player.drawable = view
         do {
             let report = progress
@@ -53,14 +60,14 @@ struct VLCPlaybackSurface: UIViewRepresentable {
         context.coordinator.seekMilliseconds = seekMilliseconds
     }
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.polling?.cancel()
-        coordinator.polling = nil
-        coordinator.player.stop()
-        coordinator.player.drawable = nil
-        coordinator.player.media = nil
+        coordinator.stop()
     }
     final class Coordinator {
         let player = VLCMediaPlayer()
+        func stop() {
+            polling?.cancel(); polling = nil
+            player.stop(); player.drawable = nil; player.media = nil
+        }
         var polling: Task<Void, Never>?
         var audioIndex = 0
         var subtitleIndex = 0

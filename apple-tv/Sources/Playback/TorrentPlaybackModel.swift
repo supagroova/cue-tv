@@ -5,6 +5,7 @@ import Observation
 @MainActor @Observable
 final class TorrentPlaybackModel {
     let coordinator = PlaybackSessionCoordinator()
+    var stopDecoder: @MainActor () -> Void = {}
     private(set) var files: TorrentMetadataSnapshot?
     private(set) var playbackURL: URL?
     private(set) var generation: UUID?
@@ -16,6 +17,7 @@ final class TorrentPlaybackModel {
     func start(_ request: CoreTorrentRequest) async {
         let next = SourceOwner()
         guard let token = await coordinator.begin(teardown: { [weak self] in
+            self?.stopDecoder()
             do { try await next.stop() }
             catch { self?.cleanupFailed = true }
         }) else { return }
