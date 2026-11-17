@@ -55,3 +55,11 @@ The VLC lab now exposes pause/resume and a fixed eight-second seek for qualifica
 ## Remaining work
 
 Complete the selected player integration supporting the required MKV/MP4 codec, audio and subtitle matrix; implement the typed playback coordinator and cache lifetime; measure CPU/memory and set justified limits; classify failures with bounded timeouts; qualify simulator and subsequently physical-device behavior. The isolated VLCKit compile probe is candidate evidence only, not production player selection.
+
+### CI disk-exhaustion regression
+
+The first public-repository CI run exposed a scheduling race in the simulated
+write-time exhaustion test: the peer could write and exhaust its injected space
+before `start_budgeted` returned. The test now gates its peer connection until
+startup completes, preserving the existing first-write, blocked-write and failure
+assertions. All nine storage-budget tests pass locally with the explicit barrier.

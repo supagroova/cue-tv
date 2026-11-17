@@ -111,6 +111,17 @@ async fn disk_exhaustion_after_admission_blocks_later_writes() {
         .wait_until_completed()
         .await
         .unwrap();
+        // Hold the peer connection until startup returns. Without this barrier a
+        // fast peer can exhaust the injected disk during initialization instead.
+        let gate = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gated_address = gate.local_addr().unwrap();
+        let (release, ready) = tokio::sync::oneshot::channel();
+        let relay = tokio::spawn(async move {
+            let (mut client, _) = gate.accept().await.unwrap();
+            ready.await.unwrap();
+            let mut peer = tokio::net::TcpStream::connect(address).await.unwrap();
+            let _ = tokio::io::copy_bidirectional(&mut client, &mut peer).await;
+        });
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         let disk = Arc::new(move |path: &std::path::Path| {
@@ -136,13 +147,14 @@ async fn disk_exhaustion_after_admission_blocks_later_writes() {
             TorrentSource::Bytes(torrent),
             0,
             output.path().to_owned(),
-            vec![address],
+            vec![gated_address],
             Discovery::default(),
             budget,
             Some(disk),
         )
         .await
         .unwrap();
+        release.send(()).unwrap();
         while session.snapshot()["state"] != "failed" {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -170,6 +182,7 @@ async fn disk_exhaustion_after_admission_blocks_later_writes() {
         assert!(session.downloaded_bytes() < 175917);
         session.stop().await;
         seed.stop().await;
+        relay.abort();
     })
     .await
     .expect("quota failure must be reported promptly");
