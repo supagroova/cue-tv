@@ -419,3 +419,11 @@ standalone browsing UI remain required before this is merge-ready.
 Presentation windows now deduplicate by `(type, id)` across loaded pages, preserving the first occurrence. Core retains the raw page contents so its remote `skip` remains the number of server results, not the number of displayed unique titles. The network fixture returns two overlapping titles on its second page and asserts that the final request uses `skip=32` while the display has 30 unique titles.
 
 The strengthened test failed with repeated film-25 and film-26 before the change; all 26 native Core tests passed after it (`task.py verify phase-3-core`, evidence `5fdb0f031a98415b8281b28a4ffc9888.log`). This does not resolve the retained catalogue cache bound or page-error retry requirements.
+
+### Retry failed catalogue pages
+
+Selecting the failed end window again retries its exact request through Core's next-page action, preserving successful pages. EmptyContent remains terminal and is not retried. The real HTTP fixture now returns 503 once at skip=27, verifies a failed snapshot, then serves the retry with overlapping titles and continues to skip=32. The test failed before the fix; all 26 native tests passed afterward (30845f8c67b648b2b2b5eefbd84abd3e.log).
+
+All 25 simulator unit tests pass with the updated native library (1427e5b2cb4045efb18062b01a15f2e3.log). An initial invocation omitted the repository CARGO_HOME/RUSTUP_HOME and stalled fetching through the default cache; that owned Cargo process was terminated, the failed verification retained, and the explicit-toolchain retry passed.
+
+Remote run 44097149551 on 7aad39c passed all Apple build/test steps in 13m41s with the first cold lean cache. Warm-cache runtime is still unproven. The ten-minute playback probe remains manual-only. Review threads checked on open PRs 1 and 3–7: none unresolved. Catalogue cache retention remains unbounded and must be addressed before merge readiness.

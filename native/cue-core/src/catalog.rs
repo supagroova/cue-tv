@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use stremio_core::{
     models::{
-        catalog_with_filters::{CatalogWithFilters, Selected},
+        catalog_with_filters::{CatalogWithFilters, SelectablePage, Selected},
         common::{Loadable, ResourceError},
         ctx::Ctx,
     },
@@ -129,4 +129,18 @@ pub fn view(catalog: &Catalog, offset: usize) -> Option<View> {
         items,
         offset,
     })
+}
+
+/// Re-arm Core's next-page action with the failed request, preserving earlier pages.
+/// EmptyContent is the terminal page, not a retryable failure.
+pub fn prepare_retry(catalog: &mut Catalog) {
+    let failed = catalog.catalog.last().is_some_and(|page| {
+        matches!(&page.content, Some(Loadable::Err(error)) if !matches!(error, ResourceError::EmptyContent))
+    });
+    if failed {
+        let page = catalog.catalog.pop().expect("failed tail exists");
+        catalog.selectable.next_page = Some(SelectablePage {
+            request: page.request,
+        });
+    }
 }

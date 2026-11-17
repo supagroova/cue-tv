@@ -387,6 +387,9 @@ async fn run(
                     continue;
                 }
                 catalog_item_offset = offset;
+                if offset == total {
+                    crate::catalog::prepare_retry(&mut catalog);
+                }
                 if offset == total && catalog.selectable.next_page.is_some() {
                     error = None;
                     (

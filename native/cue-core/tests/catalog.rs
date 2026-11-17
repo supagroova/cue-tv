@@ -107,6 +107,7 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     let server = tokio::spawn(async move {
         for (request_path, range) in [
             ("/catalog/movie/fixture.json", 0..27),
+            ("/catalog/movie/fixture/skip=27.json", 0..0),
             ("/catalog/movie/fixture/skip=27.json", 25..30),
             ("/catalog/movie/fixture/skip=32.json", 30..30),
         ] {
@@ -119,11 +120,17 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
                     .starts_with(&format!("GET {request_path} "))
             );
             let metas: Vec<_> = range.map(|n| serde_json::json!({"id":format!("film-{n}"),"name":format!("Film {n}"),"type":"movie"})).collect();
+            let failed = request_path.ends_with("skip=27.json") && metas.is_empty();
+            let status = if failed {
+                "503 Service Unavailable"
+            } else {
+                "200 OK"
+            };
             let body = serde_json::json!({"metas":metas}).to_string();
             socket
                 .write_all(
                     format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         body.len(),
                         body
                     )
@@ -166,6 +173,17 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
         {
             session
                 .show_catalog_items(offset, session.snapshot().revision)
+                .await
+                .unwrap();
+        }
+        if offset == 27 {
+            let failed = tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(failed.catalog.unwrap().status, "failed");
+            session
+                .show_catalog_items(27, failed.revision)
                 .await
                 .unwrap();
         }
