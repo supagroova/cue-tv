@@ -136,3 +136,26 @@ private actor ActionGate {
     second.cancel()
     await second.value
 }
+
+@Test @MainActor func signInFormFailureKeepsGuestAndCanCloseCleanly() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selection = CoreAccountSelection(keyAccount: "form-selection-" + UUID().uuidString)
+    let form = AccountSignInModel(root: root, selection: selection)
+    let guest = NativeCoreService()
+    let home = StandaloneModel(service: guest)
+    let run = Task { await home.run() }
+    for _ in 0..<100 where home.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let original = home.snapshot?.session
+    form.submit(email: "", password: "synthetic-password", home: home) { Issue.record("Invalid credentials must not adopt an account") }
+    for _ in 0..<300 where form.busy { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!form.busy)
+    #expect(form.error != nil)
+    #expect(home.snapshot?.session == original)
+    #expect(try await selection.load() == nil)
+    await form.cancel()
+    let children = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+    #expect(children.isEmpty)
+    run.cancel()
+    await run.value
+}

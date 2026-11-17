@@ -6,6 +6,10 @@ struct StandaloneHome: View {
     @State private var manifest = ""
     @State private var search = ""
     @State private var restart = UUID()
+    @State private var signIn = AccountSignInModel()
+    @State private var showSignIn = false
+    @State private var preparingAccount = false
+    @State private var accountError: String?
     @State private var selectedSource: SelectedSource?
     enum Screen { case catalogs, titles, details, sources }
     struct SelectedSource: Identifiable { let id = UUID(); let request: CoreTorrentRequest }
@@ -13,6 +17,25 @@ struct StandaloneHome: View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
             Text(model.snapshot?.model?.authenticated == true ? "Stremio · Account" : "Stremio · Guest").foregroundStyle(.secondary)
+            if model.snapshot?.model?.authenticated != true {
+                HStack {
+                    Button("Sign in to Stremio") {
+                        preparingAccount = true
+                        accountError = nil
+                        Task {
+                            defer { preparingAccount = false }
+                            guard await signIn.cancel() else { accountError = signIn.error; return }
+                            do {
+                                try await model.replace(with: nil)
+                                signIn = AccountSignInModel()
+                                showSignIn = true
+                            } catch { accountError = "The current session could not stop. Please try again." }
+                        }
+                    }.disabled(preparingAccount)
+                    Spacer()
+                }.focusSection()
+            }
+            if let accountError { Text(accountError).foregroundStyle(.orange) }
             if let error = model.error { Text(error).foregroundStyle(.orange) }
             if let state = model.snapshot?.model {
                 if state.error != nil { Text("The request could not be completed. Please retry.").foregroundStyle(.orange) }
@@ -84,6 +107,11 @@ struct StandaloneHome: View {
             } else { ProgressView("Starting Stremio…") }
         }.padding(60)
         .task(id: restart) { await model.run() }
+        .fullScreenCover(isPresented: $showSignIn) {
+            AccountSignInView(model: signIn, home: model,
+                onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },
+                onSuccess: { showSignIn = false; screen = .catalogs; restart = UUID() })
+        }
         .fullScreenCover(item: $selectedSource) { TorrentPlaybackView(request: $0.request) }
     }
 }

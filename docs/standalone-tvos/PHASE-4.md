@@ -47,3 +47,11 @@ The default home model now uses the selected-account service factory, choosing g
 StandaloneModel can retire its current service and adopt another only after acknowledged shutdown. A retirement task prevents overlapping run calls from starting while that transition is pending. Generation checks prevent old snapshots/actions from being published after replacement. The caller retains responsibility for an incoming service until adoption succeeds, including cancellation or retirement failure.
 
 The real native-service test verifies old-owner shutdown, cleared old snapshot, a distinct replacement session, and rejection of a delayed old action's error. Full Swift suite passes (`ada90cb3971f468b8285ec733e2bc700`); missing-method reproduction retained (`2b75967136804f1dbacc722676dd2333`). This prepares the ownership transition; the sign-in form and success/cancellation account UI flows remain unfinished.
+
+### Sign-in form and cancellation
+
+Guest users can open an email/password form. Opening joins the prior Core owner; submission owns a fresh account candidate until Home accepts it. Cancellation joins the login task and removes unadopted account storage. Cleanup failure retains the owner for retry. Password input is cleared on submission and dismissal; displayed errors contain no server details or credentials.
+
+The initial combined simulator run (`de72a2cea54e45f38e64b3b4baecdf48`) passed all 45 unit tests and 11 existing UI tests, but the new sign-in UI test failed because upward remote navigation selected the top-right debug Playback Lab button. Giving the sign-in row a full-width focus section fixed that navigation. The unchanged targeted UI test passes (`f19ccbf570f346e9be109f4d3def58a4`), verifying form entry, disabled empty submission, and Menu cancellation back to guest catalogs. An intermediate invocation failed before testing because Cargo was absent from PATH (`c8f71ad0fae440a78fec8f1221a5a007`); the passing invocation used the pinned local toolchain.
+
+A native-backed unit test covers failed submission and clean cancellation without replacing the guest. Successful account authentication through the UI, sign-out, cleanup-failure injection and physical-device behavior remain unverified or unfinished. This slice does not complete phase four.

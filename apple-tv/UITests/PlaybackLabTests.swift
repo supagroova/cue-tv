@@ -17,6 +17,27 @@ nonisolated final class PlaybackLabTests: XCTestCase {
     }
 
     @MainActor
+    func testSignInFormCancelsBackToGuest() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let signIn = app.buttons["Sign in to Stremio"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !signIn.hasFocus { XCUIRemote.shared.press(.up) }
+        XCTAssertTrue(signIn.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.secureTextFields["Password"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["Email"].exists)
+        XCTAssertFalse(app.buttons["Sign in"].isEnabled)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Stremio sign-in form"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.buttons["Popular · movie"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Stremio · Guest"].exists)
+    }
+
+    @MainActor
     func testTorrentFailureReturnsToSourceChoicePromptly() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
