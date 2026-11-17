@@ -239,3 +239,58 @@ async fn injected_clock_and_storage_budget_are_session_scoped() {
     .await;
     env.cancel();
 }
+
+#[tokio::test]
+async fn shutdown_joins_concurrent_and_queued_effects() {
+    struct Dropped(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let executed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let env = Environment::new().unwrap();
+    let (ready, mut started) = tokio::sync::mpsc::channel(2);
+    env.scope(async {
+        let marker = Dropped(dropped.clone());
+        let concurrent_ready = ready.clone();
+        NativeEnv::exec_concurrent(async move {
+            let _marker = marker;
+            concurrent_ready.send(()).await.unwrap();
+            futures::future::pending::<()>().await;
+        });
+        let marker = Dropped(dropped.clone());
+        NativeEnv::exec_sequential(async move {
+            let _marker = marker;
+            ready.send(()).await.unwrap();
+            futures::future::pending::<()>().await;
+        });
+        let marker = Dropped(dropped.clone());
+        let executed = executed.clone();
+        NativeEnv::exec_sequential(async move {
+            let _marker = marker;
+            executed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+    })
+    .await;
+    for _ in 0..2 {
+        tokio::time::timeout(Duration::from_secs(2), started.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(1), env.shutdown())
+        .await
+        .unwrap();
+    assert_eq!(dropped.load(std::sync::atomic::Ordering::SeqCst), 3);
+    env.scope(async {
+        let executed = executed.clone();
+        NativeEnv::exec_concurrent(async move {
+            executed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+    })
+    .await;
+    env.shutdown().await;
+    assert_eq!(executed.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

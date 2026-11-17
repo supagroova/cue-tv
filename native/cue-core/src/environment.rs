@@ -22,6 +22,8 @@ tokio::task_local! { static CONTEXT: Arc<Environment>; }
 pub struct Environment {
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     canceled: CancellationToken,
+    tasks: tokio_util::task::TaskTracker,
+    runtime: tokio::runtime::Handle,
     sequential: tokio::sync::mpsc::Sender<futures::future::BoxFuture<'static, ()>>,
     client: reqwest::Client,
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
@@ -40,6 +42,8 @@ impl Environment {
         let env = Arc::new(Self {
             storage: Mutex::new(BTreeMap::new()),
             canceled: CancellationToken::new(),
+            tasks: tokio_util::task::TaskTracker::new(),
+            runtime: runtime.clone(),
             sequential,
             clock,
             client: reqwest::Client::builder()
@@ -50,7 +54,7 @@ impl Environment {
         });
         let weak = Arc::downgrade(&env);
         let canceled = env.canceled.clone();
-        runtime.spawn(async move {
+        env.tasks.spawn_on(async move {
             loop {
                 let future = tokio::select! { biased;
                     _ = canceled.cancelled() => break,
@@ -64,7 +68,7 @@ impl Environment {
                     _ = env.scope(future) => {},
                 }
             }
-        });
+        }, &runtime);
         Ok(env)
     }
     pub async fn scope<T>(self: &Arc<Self>, future: impl Future<Output = T>) -> T {
@@ -74,6 +78,14 @@ impl Environment {
     pub fn cancel(&self) {
         let _guard = self.storage.lock().unwrap_or_else(|e| e.into_inner());
         self.canceled.cancel();
+        self.tasks.close();
+    }
+    pub async fn cancelled(&self) {
+        self.canceled.cancelled().await;
+    }
+    pub async fn shutdown(&self) {
+        self.cancel();
+        self.tasks.wait().await;
     }
 }
 fn context() -> Result<Arc<Environment>, EnvError> {
@@ -241,14 +253,22 @@ fn spawn(future: impl Future<Output = ()> + Send + 'static, sequential: bool) {
     let Ok(env) = context() else {
         return;
     };
+    let Ok(guard) = env.storage.lock() else {
+        return;
+    };
+    if env.canceled.is_cancelled() {
+        return;
+    }
     if sequential {
-        // Enqueue synchronously: task scheduling must not reorder sequential effects.
-        if env.sequential.try_send(future.boxed()).is_err() {
+        let overflow = env.sequential.try_send(future.boxed()).is_err();
+        drop(guard);
+        if overflow {
             env.cancel();
         }
     } else {
-        tokio::spawn(async move {
-            tokio::select! { biased; _ = env.canceled.cancelled() => {}, _ = env.scope(future) => {} }
-        });
+        let scope = env.clone();
+        env.tasks.spawn_on(async move {
+            tokio::select! { biased; _ = scope.canceled.cancelled() => {}, _ = scope.scope(future) => {} }
+        }, &env.runtime);
     }
 }

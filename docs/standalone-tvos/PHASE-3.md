@@ -55,12 +55,12 @@ platform credential store before account mode is wired.
 
 Time is injectable per context. Construction outside an active runtime returns
 an error; its regression first reproduced an unwinding Tokio panic. Cancellation
-interrupts pending HTTP and scheduled effects. Joining all owned tasks and the
-FFI shutdown acknowledgement remain part of the next bridge slice.
+interrupts pending HTTP and scheduled effects. The Rust session now joins owned tasks on shutdown; the C ABI shutdown
+acknowledgement remains part of the next bridge slice.
 
 ## Evidence
 
-Seven native tests pass: real Core storage-schema migration, isolated storage and
+The initial seven native tests passed: real Core storage-schema migration, isolated storage and
 canceled writes, JSON HTTP, Content-Length rejection, chunked-body rejection,
 pending HTTP cancellation/redaction, FIFO effects with context preservation,
 runtime construction failure, and injected clock/storage-budget behavior (some
@@ -75,8 +75,8 @@ jobs for every branch push; manual qualification remains opt-in.
 
 ## Remaining Phase 3 acceptance
 
-- Drive real Core models/actions and asynchronous state effects through an owned
-  actor, with bounded events and ordered shutdown.
+- Extend the owned context/model actor beyond settings to the service operations
+  needed by browsing and account integration.
 - Add the versioned C ABI and Swift service; test malformed envelopes, ownership,
   stale callbacks and post-stop calls.
 - Persist guest state, version/recover storage and implement protected account
@@ -87,3 +87,35 @@ jobs for every branch push; manual qualification remains opt-in.
 - Keep account/add-on data and tokens out of user diagnostics and logs.
 
 Phases 4–7 remain required; this foundation does not narrow the original scope.
+
+
+## Owned model/action slice
+
+`CoreSession` owns the pinned Core's real `Ctx` model. Its first exposed operation
+validates and dispatches `ActionCtx::UpdateSettings`, then processes Core's actual
+internal messages and asynchronous storage effects. No replacement settings model
+or fake Android service is used. The guest model starts from Core's default profile
+and loads a stored profile only when it contains no account authentication data.
+
+Commands use a bounded 64-entry queue. Immediate message processing has a 1,024
+message budget; async effects use the environment's concurrent/FIFO scheduling.
+Snapshots coalesce through a watch channel rather than accumulating events, and
+expose revision, language, add-on count, pending work, stopped state and fixed error
+codes. They do not serialize the full profile or raw Core events.
+
+Stop cancels the context, joins the model owner and waits for tracked concurrent,
+sequential and queued effects to be dropped. Admission and cancellation share a
+lock, so work cannot be registered after the shutdown barrier. Failed model setup
+also closes its environment. The shutdown regression deliberately failed when the
+join was omitted, proving that cancellation alone does not satisfy its assertions.
+
+A storage-exhaustion test reproduced stale error state poisoning the next command.
+New actions now clear the prior error before processing; after freeing capacity,
+a subsequent real Core action successfully persists its profile. This is not yet
+a general automatic retry/sync policy (Phase 5).
+
+Current local evidence: 12 tests pass, including real model action → state → Core
+storage effect, model/storage isolation, post-stop rejection, failed startup,
+effect failure recovery and shutdown with blocked/queued work. Both tvOS target
+builds pass. Remaining bridge work includes failed-task/panic supervision, the C
+ABI/Swift boundary, action → HTTP → model state, durable storage and account flows.
