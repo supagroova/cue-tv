@@ -613,3 +613,9 @@ Bridge tests verify guest login rejection, snapshot redaction, fresh-store start
 NativeCoreService now selects an explicit guest/new-account/restored-account startup mode. Fresh accounts require persistence; Swift rejects login on other modes and copies credentials into the dedicated C entry. CoreService exposes login/logout admission, with authentication completion still observed separately. The existing restoration test retains identity-mismatch behavior.
 
 The real simulator bridge verifies fresh startup, malformed-credential rejection, logout admission, failure to restart a used store as fresh, and guest login rejection. Full Swift suite passes (`65879f77640a48899d234e75e5b009cd`); missing Swift API failure retained (`f38bb9ee2c744126905e60d170796040`). These tests do not authenticate a real account or prove the successful C/Swift login response path. Protected active selection, account coordination and user-facing login remain outstanding.
+
+### Protected active-account record
+
+CoreAccountSelection stores a versioned opaque namespace UUID and expected provider user ID in nonsynchronizing, AfterFirstUnlockThisDeviceOnly Keychain storage. It stores no password or auth token. Missing selection returns none; malformed/unknown-version or invalid identity records fail explicitly. A namespace-matched clear operation prevents a late sign-out from deleting a newer selection. Production coordination must use its shared actor and save only a verified native identity.
+
+Real simulator Keychain tests verify recreation, replacement, stale-sign-out protection, deletion, invalid records and accessibility/synchronization attributes. Full Swift suite passes (`6e3751db928b4a81a4ce2991938951a2`). Missing-type reproduction is retained (`aa677c94b53c476ca5756299cbf39d28`). The record is not yet wired into startup/login; account-directory deletion and successful C/Swift authentication still remain.

@@ -341,3 +341,35 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await guest.login(email: "fixture@example.test", password: "synthetic-password") }
     try await guest.stop()
 }
+
+@Test func activeAccountSelectionRoundTripsAndIgnoresStaleSignOut() async throws {
+    let label = "selection-test-" + UUID().uuidString
+    let store = CoreAccountSelection(keyAccount: label)
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: CoreStorage.keyService, kSecAttrAccount as String: label]
+    defer { SecItemDelete(query as CFDictionary) }
+    #expect(try await store.load() == nil)
+    let first = CoreAccountSelection.Account(namespace: UUID(), userID: "first-fixture-user")
+    let second = CoreAccountSelection.Account(namespace: UUID(), userID: "second-fixture-user")
+    try await store.save(first)
+    var attributesQuery = query
+    attributesQuery[kSecReturnAttributes as String] = true
+    var attributesResult: CFTypeRef?
+    #expect(SecItemCopyMatching(attributesQuery as CFDictionary, &attributesResult) == errSecSuccess)
+    let attributes = try #require(attributesResult as? [String: Any])
+    #expect(attributes[kSecAttrAccessible as String] as? String == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+    #expect(attributes[kSecAttrSynchronizable as String] as? Bool != true)
+    #expect(try await CoreAccountSelection(keyAccount: label).load() == first)
+    try await store.save(second)
+    #expect(try await store.clear(ifMatching: first.namespace) == false)
+    #expect(try await store.load() == second)
+    #expect(try await store.clear(ifMatching: second.namespace) == true)
+    #expect(try await store.load() == nil)
+    await #expect(throws: CoreAccountSelection.Failure.invalidRecord) {
+        try await store.save(.init(namespace: UUID(), userID: ""))
+    }
+    try await store.save(first)
+    let invalid = Data(#"{"version":99,"account":{"namespace":"00000000-0000-0000-0000-000000000000","userID":"fixture"}}"#.utf8)
+    #expect(SecItemUpdate(query as CFDictionary, [kSecValueData as String: invalid] as CFDictionary) == errSecSuccess)
+    await #expect(throws: CoreAccountSelection.Failure.invalidRecord) { try await store.load() }
+}
