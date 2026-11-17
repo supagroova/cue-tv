@@ -14,6 +14,7 @@ import Security
         state = try await service.snapshot()
     }
     #expect(state.status == .ready)
+    #expect(try await service.accountIdentity() == nil)
     #expect(state.model?.interfaceLanguage == "eng")
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.loadAddon("file:///private/manifest.json") }
     try await service.setInterfaceLanguage("fra")
@@ -30,6 +31,7 @@ import Security
     try await first
     try await second
     await #expect(throws: NativeCoreService.Failure.stopped) { try await service.setInterfaceLanguage("eng") }
+    await #expect(throws: NativeCoreService.Failure.stopped) { _ = try await service.accountIdentity() }
     try await service.start()
     #expect(try await service.snapshot().session != state.session)
     try await service.stop()

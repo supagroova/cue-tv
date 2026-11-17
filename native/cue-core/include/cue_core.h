@@ -37,6 +37,10 @@ uint64_t cue_core_restore_account(const uint8_t *path, size_t path_length, const
 // Source window: {"version":1,"action":"source_window","offset":N,"revision":N}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
 int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
+// Explicit private identity copy, only for protected active-account storage; never log.
+// Returns required UTF-8 bytes (at most 512), 0 if no identity, -1 invalid/stopping.
+// No NUL terminator. Short buffers untouched; NULL/0 queries size. No token/email returned.
+intptr_t cue_core_account_identity(uint64_t handle, uint8_t *output, size_t capacity);
 // Returns required byte count, or -1 for an invalid handle. No NUL terminator.
 // Writes only when capacity is sufficient. NULL with capacity 0 queries size.
 // Caller owns the buffer; pointers must refer to valid memory for the supplied size.

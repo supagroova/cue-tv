@@ -92,6 +92,7 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(session.snapshot().authenticated);
+    assert_eq!(session.account_identity().as_deref(), Some("fixture-user"));
     assert_eq!(
         session
             .login("other@example.test", "different-password")
@@ -118,6 +119,7 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         assert!(!published.contains(secret));
     }
     session.stop().await;
+    assert_eq!(session.account_identity(), None);
     drop(session);
     drop(env);
     let ciphertext = std::fs::read(directory.join("state.bin")).unwrap();
@@ -153,6 +155,7 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(!restored.snapshot().authenticated);
+    assert_eq!(restored.account_identity(), None);
     assert_eq!(
         restored.login("other@example.test", "password").await,
         Err("account_login_unavailable")

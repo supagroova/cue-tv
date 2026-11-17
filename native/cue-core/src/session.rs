@@ -94,6 +94,7 @@ pub struct CoreSession {
     environment: Arc<Environment>,
     commands: mpsc::Sender<Command>,
     state: watch::Receiver<Snapshot>,
+    identity: watch::Receiver<Option<String>>,
     owner: Option<tokio::task::JoinHandle<()>>,
 }
 impl CoreSession {
@@ -164,6 +165,7 @@ impl CoreSession {
             false,
             None,
         );
+        let (identity_publish, identity) = watch::channel(account_identity(&ctx));
         let (publish, state) = watch::channel(initial);
         let env = environment.clone();
         let outgoing = commands.clone();
@@ -175,10 +177,12 @@ impl CoreSession {
                 publish.clone(),
                 env.clone(),
                 allow_login,
+                identity_publish.clone(),
             )))
             .catch_unwind()
             .await;
             if result.is_err() {
+                identity_publish.send_replace(None);
                 env.fail();
                 let mut state = publish.borrow().clone();
                 state.stopped = true;
@@ -191,11 +195,16 @@ impl CoreSession {
             environment,
             commands,
             state,
+            identity,
             owner: Some(owner),
         })
     }
     pub fn snapshot(&self) -> Snapshot {
         self.state.borrow().clone()
+    }
+    /// Explicit private identity copy for protected account selection, never UI snapshots.
+    pub fn account_identity(&self) -> Option<String> {
+        self.identity.borrow().clone()
     }
     pub async fn logout(&self) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
@@ -443,6 +452,15 @@ fn snapshot(
         error,
     }
 }
+fn account_identity(ctx: &Ctx) -> Option<String> {
+    let auth = ctx.profile.auth.as_ref()?;
+    let id: &str = auth.user.id.as_ref();
+    if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
+        return None;
+    }
+    Some(id.to_owned())
+}
+
 async fn run(
     mut ctx: Ctx,
     mut inbox: mpsc::Receiver<Command>,
@@ -450,6 +468,7 @@ async fn run(
     publish: watch::Sender<Snapshot>,
     env: Arc<Environment>,
     mut allow_login: bool,
+    identity: watch::Sender<Option<String>>,
 ) {
     let mut addon = AddonDetails::default();
     let mut catalog = crate::catalog::Catalog::default();
@@ -962,6 +981,7 @@ async fn run(
                 }
             }
         }
+        identity.send_replace(account_identity(&ctx));
         publish.send_replace(snapshot(
             &ctx,
             &addon,
@@ -985,6 +1005,7 @@ async fn run(
         }
     }
     inbox.close();
+    identity.send_replace(None);
     publish.send_replace(snapshot(
         &ctx,
         &addon,
