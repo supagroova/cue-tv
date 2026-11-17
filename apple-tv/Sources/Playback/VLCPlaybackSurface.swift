@@ -16,6 +16,20 @@ struct VLCPlaybackSnapshot {
     func stop() { coordinator?.stop() }
 }
 
+@MainActor private final class VLCVideoContainer: UIView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // VLC attaches its rendering view after playback begins. Keep that view
+        // inside the drawable when asynchronous controls change available space.
+        for child in subviews { child.frame = bounds }
+    }
+    override func didAddSubview(_ subview: UIView) {
+        super.didAddSubview(subview)
+        subview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        subview.frame = bounds
+    }
+}
+
 struct VLCPlaybackSurface: UIViewRepresentable {
     var controller: VLCPlaybackController? = nil
     let url: URL
@@ -29,7 +43,7 @@ struct VLCPlaybackSurface: UIViewRepresentable {
     var progress: @MainActor (VLCPlaybackSnapshot) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = VLCVideoContainer()
         view.backgroundColor = .black
         view.accessibilityIdentifier = "vlc-video-surface"
         view.isAccessibilityElement = true

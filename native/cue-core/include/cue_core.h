@@ -50,6 +50,9 @@ intptr_t cue_core_snapshot(uint64_t handle, uint8_t *output, size_t capacity);
 uint64_t cue_core_request_torrent(uint64_t handle, size_t index, uint64_t revision);
 // HTTPS request uses the same exclusive slot, ticket validation and take/discard functions.
 uint64_t cue_core_request_https(uint64_t handle, size_t index, uint64_t revision);
+/* Bounded version-1 JSON identity {meta_id,video_id,kind}; shares take/discard.
+ * Discard cancels active discovery. Input is copied; zero is invalid/busy. */
+uint64_t cue_core_request_subtitles(uint64_t handle, const uint8_t *input, size_t length);
 // JSON v1 reply includes session, ticket, request or fixed error; at most 256 KiB.
 // Returns 0 pending, -1 invalid, or byte count. Only a full non-null copy consumes it.
 // NULL/0 queries length. Undersized buffers stay untouched. Stop discards the reply.

@@ -158,6 +158,22 @@ final class StandaloneModel {
     func prepare(index: Int, expectedRevision: UInt64? = nil) async -> CoreTorrentRequest? {
         await prepareSource(index: index, expectedRevision: expectedRevision) { try await $0.prepareTorrent(index: index, expectedRevision: $1) }
     }
+    func subtitleDiscovery(for request: CorePlaybackRequest) -> @MainActor () async throws -> CoreSubtitleDiscovery {
+        let owner = service
+        let token = generation
+        let identity: (String, String, String)
+        switch request {
+        case .torrent(let source): identity = (source.metaId, source.videoId, source.kind)
+        case .https(let source): identity = (source.metaId, source.videoId, source.kind)
+        }
+        return { [weak self] in
+            guard let self, self.generation == token, let owner else { throw CancellationError() }
+            let result = try await owner.discoverSubtitles(metaId: identity.0, videoId: identity.1, kind: identity.2)
+            try Task.checkCancellation()
+            guard self.generation == token else { throw CancellationError() }
+            return result
+        }
+    }
     func prepareHTTPS(index: Int, expectedRevision: UInt64? = nil) async -> CoreHTTPSRequest? {
         await prepareSource(index: index, expectedRevision: expectedRevision) { try await $0.prepareHTTPS(index: index, expectedRevision: $1) }
     }

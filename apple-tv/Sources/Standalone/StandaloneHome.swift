@@ -174,6 +174,6 @@ struct StandaloneHome: View {
                 onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },
                 onSuccess: { showSignIn = false; screen = .catalogs; restart = UUID() })
         }
-        .fullScreenCover(item: $selectedSource, onDismiss: { focusedRow = rememberedRows[.sources] }) { SourcePlaybackView(request: $0.request) }
+        .fullScreenCover(item: $selectedSource, onDismiss: { focusedRow = rememberedRows[.sources] }) { SourcePlaybackView(request: $0.request, discoverSubtitles: model.subtitleDiscovery(for: $0.request)) }
     }
 }

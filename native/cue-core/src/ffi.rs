@@ -16,8 +16,14 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Default)]
 struct Handoff {
+    cancellation: CancellationToken,
     ticket: u64,
     reply: Option<Vec<u8>>,
+}
+impl Drop for Handoff {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 struct Entry {
     identity: Mutex<Option<String>>,
@@ -296,6 +302,23 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::DiscoverSubtitles { ticket, identity, cancellation } => {
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("subtitle_discovery_cancelled"),
+                                    result = session.discover_subtitles(&identity.meta_id, &identity.video_id, &identity.kind, cancellation.clone()) => result,
+                                };
+                                let value = match result {
+                                    Ok(request) => json!({"version":1,"session":handle,"ticket":ticket,"request":request,"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
@@ -366,6 +389,12 @@ enum Command {
         index: usize,
         revision: u64,
     },
+    #[serde(skip)]
+    DiscoverSubtitles {
+        ticket: u64,
+        identity: SubtitleIdentity,
+        cancellation: CancellationToken,
+    },
     SetLanguage {
         version: u32,
         language: String,
@@ -423,7 +452,10 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::PrepareTorrent { .. } | Self::PrepareHttps { .. } | Self::Login { .. } => false,
+            Self::DiscoverSubtitles { .. }
+            | Self::PrepareTorrent { .. }
+            | Self::PrepareHttps { .. }
+            | Self::Login { .. } => false,
             Self::Logout { version } => *version == 1,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
@@ -728,4 +760,73 @@ pub extern "C" fn cue_core_discard_torrent(handle: u64, ticket: u64) -> i32 {
         1
     }))
     .unwrap_or(-1)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubtitleIdentity {
+    version: u32,
+    meta_id: String,
+    video_id: String,
+    kind: String,
+}
+/// Requests private subtitles in the shared handoff slot. Zero means invalid/busy.
+/// # Safety
+/// Input must be readable for length bytes; it is copied before returning.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_request_subtitles(
+    handle: u64,
+    input: *const u8,
+    length: usize,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if input.is_null() || length == 0 || length > 16384 {
+            return 0;
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(input, length) };
+        let Ok(identity) = serde_json::from_slice::<SubtitleIdentity>(bytes) else {
+            return 0;
+        };
+        if identity.version != 1
+            || identity.kind.len() > 64
+            || [&identity.meta_id, &identity.video_id, &identity.kind]
+                .iter()
+                .any(|value| {
+                    value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control)
+                })
+        {
+            return 0;
+        }
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::DiscoverSubtitles {
+                ticket,
+                identity,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
 }

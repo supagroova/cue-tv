@@ -2,7 +2,13 @@ import SwiftUI
 import VLCKit
 
 struct SourcePlaybackView: View {
+    private struct DiscoveryKey: Hashable { let generation: UUID?; let ready: Bool }
     let request: CorePlaybackRequest
+    var discoverSubtitles: (@MainActor () async throws -> CoreSubtitleDiscovery)? = nil
+    private var subtitleChoices: [CoreSubtitle] {
+        var seen = Set<String>()
+        return Array((request.subtitles + subtitles.discovered).filter { seen.insert($0.language + "\n" + $0.url).inserted }.prefix(32))
+    }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = SourcePlaybackModel()
@@ -25,6 +31,7 @@ struct SourcePlaybackView: View {
                 Text(failure.message).accessibilityIdentifier("source-playback-error")
                 Button("Retry source") { reset(); Task { guard await subtitles.stop() else { return }; subtitles = PlaybackSubtitlesModel(); await model.start(request) } }
             } else if let url = model.playbackURL {
+                GeometryReader { geometry in
                 VLCPlaybackSurface(controller: controller, url: url, audioIndex: audio, subtitleIndex: subtitle,
                     paused: paused, seekRequest: seekRequest, seekMilliseconds: seekTarget, externalSubtitleURL: subtitles.url, externalSubtitleID: subtitles.selectionID) { [token = model.generation] snapshot in
                     guard let token, token == model.generation else { return }
@@ -40,7 +47,8 @@ struct SourcePlaybackView: View {
                         model.coordinator.receive(.playing, generation: token)
                         model.coordinator.reportProgress(milliseconds: snapshot.milliseconds, generation: token)
                     }
-                }.id(url).frame(maxHeight: .infinity)
+                }.id(url).frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                }.frame(maxHeight: .infinity)
                 Text("\(milliseconds / 1000)s").monospacedDigit().accessibilityIdentifier("source-playback-time")
                 HStack {
                     Button(paused ? "Resume" : "Pause") { paused.toggle() }
@@ -65,16 +73,17 @@ struct SourcePlaybackView: View {
                     }
                 }
             } else { ProgressView("Preparing video…") }
-            if !request.subtitles.isEmpty, model.playbackURL != nil {
+            if !subtitleChoices.isEmpty, model.playbackURL != nil {
                 ScrollView(.horizontal) {
                     HStack {
                         Button("Subtitles off") { subtitles.disable(); subtitle = -1 }
-                        ForEach(Array(request.subtitles.prefix(32).enumerated()), id: \.offset) { _, track in
+                        ForEach(Array(subtitleChoices.enumerated()), id: \.offset) { _, track in
                             Button(track.label ?? track.language) { Task { await subtitles.choose(track) } }
                         }
                     }.padding(.vertical, 12)
                 }.frame(height: 90).focusSection()
             }
+            if let error = subtitles.discoveryError { Text(error).foregroundStyle(.orange) }
             if subtitles.loading { Text("Loading subtitles…") }
             if let error = subtitles.error { Text(error).foregroundStyle(.orange) }
             HStack {
@@ -89,6 +98,10 @@ struct SourcePlaybackView: View {
         .task {
             model.stopDecoder = { [controller] in controller.stop() }
             closeFocused = true; await model.start(request)
+        }
+        .task(id: DiscoveryKey(generation: model.generation, ready: model.playbackURL != nil)) {
+            guard model.playbackURL != nil, let discoverSubtitles else { return }
+            await subtitles.discover(using: discoverSubtitles)
         }
         .onChange(of: model.coordinator.state) { _, state in
             if case .failed = state { controller.stop() }

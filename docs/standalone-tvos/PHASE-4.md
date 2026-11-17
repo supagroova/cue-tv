@@ -161,3 +161,92 @@ The opt-in real-peer UI test checks actual caption pixels, not just a track labe
 This covers subtitles supplied inline with a selected stream. Separate add-on `subtitles` resource discovery is still outstanding: pinned Core's Player subtitle updater currently depends on a converted streaming-server source. The standalone path must use Core's add-on resource transport without inventing a server or weakening the direct-torrent requirement. Artwork, remaining browsing cases, live add-on/account checks, recovery and physical-device qualification also remain open.
 
 Final verification after selection-ID refinement: all three opt-in journey tests pass (`cf42ba4161f144cab8b7c5659ccab02b`, 78.91 seconds), including rendered on/off/on captions, preserved playback position and remote Back. Unsigned device compilation passes (`9e0025377cd947b89ea8d776e1317644`); all 15 portable harness checks pass. Later Core progress integration must treat the subtitle current-position refresh as a seek.
+
+
+### Installed add-on subtitle discovery
+
+Playback now discovers separate subtitle resources after the video URL is ready.
+Core's manifest planner filters providers by resource, video type and ID prefix.
+The selected title/video/type and source generation are checked by the owner
+before fetching and again before returning private results. No fabricated file
+hash or size hints are sent. Discovery uses Core's real HTTP transport, at most
+32 planned providers, four concurrent requests, three seconds per provider and
+four seconds overall. Successful partial results survive provider errors and
+are deduplicated and capped at 32 tracks.
+
+The versioned C request uses the existing bounded private reply slot; every slot
+owns a cancellation token canceled by take/discard/retirement. Swift shares the
+256-KiB/five-second reader with source preparation. Playback captures the Core
+owner/generation, independently starts discovery when ready, merges inline and
+discovered tracks, and shows provider errors separately from playback errors.
+Close cancels and joins discovery; late results cannot reopen the closed model.
+Retry identity includes playback generation even when its URL is unchanged.
+No new external dependencies or automatic extended tests were added.
+
+The owned fixture serves captions only from the selected episode's separate
+resource (`cue-owned-2:2:2`), with no inline fallback. The opt-in journey verifies
+peer playback, rendered caption pixels, off/on re-selection, playback-position
+preservation and remote-back focus restoration. Video bounds are explicit for
+dynamic controls. The pixel helper now uses a screen screenshot and its image
+scale: diagnostics proved XCTest sometimes returned a zero app frame and 1×1
+app screenshot despite a valid video surface. Pixel thresholds remain intact.
+
+Evidence (task `phase-4-ui`):
+
+- Missing planner red `7d7b9cdcc21a43e7ae05e38491093945`; compatible-provider
+  planning green `c6c9ba87997f413a80707fe57812513b`.
+- Real HTTP failure isolation/deduplication/socket-close cancellation
+  `ae4476ce1dbe4bc7af7116dbf40c2302`; fanout and total-deadline accounting
+  `ee2a533b1a9f45d1b1381f9f31f6f35f`.
+- Session/identity red `1f31485e2d9d47deae3a3cd2adf305f0`, green
+  `27632e65a87f4c4cbd05b94494f0e4c4`; C boundary red
+  `4c19234532f54993bc1e36c2e9bc8d8c`, green `04984566ae9a483bb292ef899dfedfa6`.
+- Missing UI choice red `d3b0138412e44614bb59bb1302256539`; rendered-caption
+  capture failures `2129bf7fc46d44c0b07b1830fe96091e` and
+  `dbb67f0cce414a0ab42ccf29fdaa77f0`; actual invalid screenshot/zero app frame
+  diagnostic `f0e16a70cd404b0eadb4185abc8fb101`; separate-resource journey green
+  `aa174083e6c04a9fb1ea40400d5dc5f4` (only evidence docs edited during run).
+- `4e146e09ae304384b4237e418f9a0258` selected zero tests due to a mistaken
+  target-prefixed selector and is explicitly NOT evidence of a passing journey.
+- Full pinned Core suite `647cfefad7454c25abc213275539458c`; final 59 Swift tests
+  `5a6ae060aa9249b3a1e656c7ddb79161`; unsigned device build
+  `6c48fb5b8d2344dca95e41abff66e1fc`.
+- Swift coverage includes real separate-resource success, cancellation closing a
+  stalled provider socket before its timeout, prompt native command-loop reuse,
+  close rejecting a late result, serialized replacement and partial success.
+  The first extended fixture run `d3d1ffc2fa0b4401b9551da96733df17` caught its
+  stale test revision after a language update; the test now refreshes that state.
+- Combined short regression `7f23e17225cc4dbba3a8a29883ad5aae` passes 59 Swift
+  tests and 12 existing playback UI tests (only evidence/status docs changed during
+  the run). `make check` passes all 15 portable harness tests.
+
+Limits: hash-dependent subtitle providers are not supported without known media
+hints. Live permitted add-on and physical-device validation remain open. A direct
+in-flight Core selection-change test is still needed beyond current wrong-ID
+and generation checks. Phase 4 and the overall implementation stack remain draft.
+
+
+#### Renderer resize and manual fixture follow-up
+
+Replay `354c69a3325d4ae1b8107db644a6077b` showed no caption despite a selected
+track. An attempted first-load position refresh did not resolve this reliably
+(`b8e22fe322c646e5b19576c71d88e7d0`) and was removed. The 12-second media also
+ended during remote assertions, so the manual runner now generates a separate
+approximately 36-second multi-file torrent by stream-copying the existing owned
+colors/audio three times. It checks actual duration, records file indices,
+checksums and generator version, and supplies the actual hash to the fixture
+add-on. The short automatic CI media remain unchanged.
+
+The longer-fixture failure `20c68a2a00a84848b6e59dd30358a38b` ruled out duration
+alone. VLC's attached rendering view now follows its container's bounds when
+asynchronous controls alter available space, keeping the caption area visible.
+Targeted verification `7c153156f5a5462486514afbadb0fd93` passes rendered on/off/on
+captions, position and remote navigation. The existing re-selection position
+refresh remains and must be represented as a seek in phase-five progress
+integration; nonseekable re-selection is still unqualified.
+
+Final combined regression `bfd7749ce1184870afa3790fccd8bf85` passes all 59 Swift
+and 12 existing UI tests after the renderer fix. Only manual-fixture metadata
+logging changed during that run, not application or test code. Python fixture
+scripts compile and portable checks pass. Final unsigned device build
+`05b9a8e5cce64336a300dd9c17c80cb7` passes.

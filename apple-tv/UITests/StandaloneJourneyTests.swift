@@ -104,8 +104,9 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         let surface = app.descendants(matching: .any)["vlc-video-surface"].firstMatch
         guard surface.exists else { return -1 }
         let frame = surface.frame
-        let image = try XCTUnwrap(app.screenshot().image.cgImage)
-        let scale = CGFloat(image.width) / app.frame.width
+        let screenshot = XCUIScreen.main.screenshot().image
+        let image = try XCTUnwrap(screenshot.cgImage)
+        let scale = screenshot.scale
         let rect = CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: frame.height * scale)
         let video = try XCTUnwrap(image.cropping(to: rect))
         let context = try XCTUnwrap(CGContext(data: nil, width: 480, height: 270, bitsPerComponent: 8, bytesPerRow: 1920,

@@ -4,6 +4,59 @@ import Testing
 @testable import SittingRoomTV
 
 @Suite struct SubtitleFilesTests {
+    @MainActor @Test func closeCancelsDiscoveryAndRejectsItsLateResult() async throws {
+        let model = PlaybackSubtitlesModel()
+        var started = false
+        var observedCancellation = false
+        let loading = Task {
+            await model.discover {
+                started = true
+                do { try await Task.sleep(for: .seconds(60)) }
+                catch { observedCancellation = Task.isCancelled }
+                return CoreSubtitleDiscovery(tracks: [CoreSubtitle(id: "late", language: "eng", label: nil, url: "https://fixture.test/late.vtt")], failedProviders: 0)
+            }
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !started, ContinuousClock.now < deadline { await Task.yield() }
+        try #require(started)
+        let closing = ContinuousClock.now
+        #expect(await model.stop())
+        await loading.value
+        #expect(closing.duration(to: .now) < .seconds(2))
+        #expect(observedCancellation)
+        #expect(model.discovered.isEmpty)
+        #expect(model.discoveryError == nil)
+        var calledAfterClose = false
+        await model.discover { calledAfterClose = true; return CoreSubtitleDiscovery(tracks: [], failedProviders: 0) }
+        #expect(!calledAfterClose)
+    }
+
+    @MainActor @Test func replacementDiscoveryRetiresOldQueryAndPreservesPartialSuccess() async throws {
+        let model = PlaybackSubtitlesModel()
+        var started = false
+        var retired = false
+        let old = Task {
+            await model.discover {
+                started = true
+                do { try await Task.sleep(for: .seconds(60)) } catch { }
+                retired = true
+                return CoreSubtitleDiscovery(tracks: [CoreSubtitle(id: "old", language: "eng", label: nil, url: "https://fixture.test/old.vtt")], failedProviders: 0)
+            }
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !started, ContinuousClock.now < deadline { await Task.yield() }
+        try #require(started)
+        await model.discover {
+            #expect(retired)
+            return CoreSubtitleDiscovery(tracks: [CoreSubtitle(id: "new", language: "fra", label: nil, url: "https://fixture.test/new.vtt")], failedProviders: 1)
+        }
+        await old.value
+        #expect(model.discovered.map(\.id) == ["new"])
+        #expect(model.discoveryError != nil)
+        #expect(model.error == nil)
+        #expect(await model.stop())
+    }
+
     @MainActor @Test func turningOffCancelsPendingSelectionAndCloseRemovesSelectedFile() async throws {
         let fixture = try await SubtitleHTTPFixture.start()
         defer { fixture.listener.cancel() }

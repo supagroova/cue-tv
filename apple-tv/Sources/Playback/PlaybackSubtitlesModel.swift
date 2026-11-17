@@ -7,6 +7,30 @@ final class PlaybackSubtitlesModel {
     private(set) var selectionID: UUID?
     private(set) var error: String?
     private(set) var loading = false
+    private(set) var discovered: [CoreSubtitle] = []
+    private(set) var discoveryError: String?
+    private var discovery: Task<CoreSubtitleDiscovery, any Error>?
+    private var discoveryGeneration = UUID()
+    func discover(using action: @escaping @MainActor () async throws -> CoreSubtitleDiscovery) async {
+        guard !closed else { return }
+        let token = UUID(); discoveryGeneration = token
+        let previous = discovery
+        previous?.cancel()
+        let task = Task {
+            _ = await previous?.result
+            try Task.checkCancellation()
+            return try await action()
+        }
+        discovery = task; discoveryError = nil
+        do {
+            let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            guard !closed, discoveryGeneration == token, !Task.isCancelled else { return }
+            discovered = Array(result.tracks.prefix(32))
+            if result.failedProviders > 0 { discoveryError = "Some subtitle providers did not respond." }
+        } catch {
+            if !closed, discoveryGeneration == token, !Task.isCancelled { discoveryError = "Subtitle discovery is unavailable for this video." }
+        }
+    }
     private var files: SubtitleFiles?
     private var generation = UUID()
     private var pending: Task<URL, any Error>?
@@ -43,6 +67,8 @@ final class PlaybackSubtitlesModel {
     }
     @discardableResult func stop() async -> Bool {
         closed = true; disable()
+        discoveryGeneration = UUID(); discovery?.cancel()
+        _ = await discovery?.result; discovery = nil; discovered = []; discoveryError = nil
         _ = await pending?.result; pending = nil
         do { try await files?.stop(); files = nil; return true }
         catch { self.error = "Subtitle cleanup could not finish. Retry Close."; return false }

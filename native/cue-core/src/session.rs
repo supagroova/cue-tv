@@ -61,7 +61,15 @@ pub struct Snapshot {
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
+type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    SubtitlePlan {
+        meta_id: String,
+        video_id: String,
+        kind: String,
+        generation: Option<u64>,
+        reply: oneshot::Sender<Result<SubtitlePlan, &'static str>>,
+    },
     Logout(oneshot::Sender<Result<(), &'static str>>),
     Login(AuthRequest, oneshot::Sender<Result<(), &'static str>>),
     Language(String, oneshot::Sender<Result<(), &'static str>>),
@@ -401,6 +409,50 @@ impl CoreSession {
             .try_send(Command::PrepareHttps(index, expected_revision, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
+    }
+    async fn subtitle_plan(
+        &self,
+        meta_id: &str,
+        video_id: &str,
+        kind: &str,
+        generation: Option<u64>,
+    ) -> Result<SubtitlePlan, &'static str> {
+        if [meta_id, video_id, kind].iter().any(|value| {
+            value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control)
+        }) {
+            return Err("invalid_subtitle_identity");
+        }
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::SubtitlePlan {
+                meta_id: meta_id.to_owned(),
+                video_id: video_id.to_owned(),
+                kind: kind.to_owned(),
+                generation,
+                reply,
+            })
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Fetch outside the Core owner loop; verify the selection generation again
+    /// before releasing private results to the caller.
+    pub async fn discover_subtitles(
+        &self,
+        meta_id: &str,
+        video_id: &str,
+        kind: &str,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<crate::subtitles::Discovery, &'static str> {
+        let (generation, requests) = self.subtitle_plan(meta_id, video_id, kind, None).await?;
+        let result =
+            crate::subtitles::discover(self.environment.clone(), requests, cancellation.clone())
+                .await?;
+        self.subtitle_plan(meta_id, video_id, kind, Some(generation))
+            .await?;
+        if cancellation.is_cancelled() {
+            return Err("subtitle_discovery_cancelled");
+        }
+        Ok(result)
     }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
@@ -770,6 +822,30 @@ async fn run(
                     details_generation,
                     source_generation,
                 )
+            }
+            Command::SubtitlePlan {
+                meta_id,
+                video_id,
+                kind,
+                generation,
+                reply,
+            } => {
+                let matches = details.selected.as_ref().is_some_and(|selected| {
+                    selected.meta_path.id == meta_id
+                        && selected.meta_path.r#type == kind
+                        && selected
+                            .stream_path
+                            .as_ref()
+                            .is_some_and(|path| path.id == video_id && path.r#type == kind)
+                }) && generation.is_none_or(|expected| expected == source_generation);
+                let result = if matches {
+                    crate::subtitles::plan(&ctx.profile.addons, &kind, &video_id)
+                        .map(|requests| (source_generation, requests))
+                } else {
+                    Err("stale_subtitle_identity")
+                };
+                let _ = reply.send(result);
+                continue;
             }
             Command::PrepareTorrent(index, expected, reply) => {
                 let result = if expected != revision {

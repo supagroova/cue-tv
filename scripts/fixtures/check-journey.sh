@@ -12,6 +12,7 @@ cleanup() {
   rm -rf -- "$journey_dir"
 }
 trap cleanup EXIT
+python3 scripts/fixtures/generate-journey.py "$journey_dir"
 cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example journey_seed --target-dir .agent-work/native-target
 .agent-work/native-target/debug/examples/journey_seed "$journey_dir" >"$journey_dir/peer.log" 2>&1 &
 peer_pid=$!
@@ -21,7 +22,7 @@ for _ in {1..50}; do
   sleep 0.1
 done
 rg -q 'Journey peer ready' "$journey_dir/peer.log"
-python3 scripts/fixtures/serve-addon.py &
+python3 scripts/fixtures/serve-addon.py --fixture-manifest "$journey_dir/manifest.json" &
 journey_pid=$!
 sleep 0.2
 kill -0 "$journey_pid"

@@ -260,3 +260,44 @@ fn https_handoff_uses_bounded_ticket_and_rejects_unavailable_sources() {
     assert_eq!(cue_core_request_https(handle, 0, revision), 0);
     assert_eq!(cue_core_release(handle), 1);
 }
+
+#[test]
+fn subtitle_handoff_validates_input_and_shares_the_private_ticket_slot() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    for input in [
+        r#"{"version":2,"meta_id":"tt1","video_id":"tt1:1:1","kind":"series"}"#,
+        r#"{"version":1,"meta_id":"","video_id":"tt1:1:1","kind":"series"}"#,
+        r#"{"version":1,"meta_id":"tt1","video_id":"tt1:1:1","kind":"series","token":"private"}"#,
+    ] {
+        assert_eq!(
+            unsafe { cue_core_request_subtitles(handle, input.as_ptr(), input.len()) },
+            0
+        );
+    }
+    assert_eq!(
+        unsafe { cue_core_request_subtitles(handle, std::ptr::null(), 1) },
+        0
+    );
+    let input = br#"{"version":1,"meta_id":"tt1","video_id":"tt1:1:1","kind":"series"}"#;
+    let ticket = unsafe { cue_core_request_subtitles(handle, input.as_ptr(), input.len()) };
+    assert_ne!(ticket, 0);
+    assert_eq!(cue_core_request_https(handle, 0, 0), 0);
+    until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
+    let mut bytes = vec![0; 4096];
+    let len = unsafe { cue_core_take_torrent(handle, ticket, bytes.as_mut_ptr(), bytes.len()) };
+    let reply: serde_json::Value = serde_json::from_slice(&bytes[..len as usize]).unwrap();
+    assert_eq!(reply["error"], "stale_subtitle_identity");
+    assert_eq!(reply["ticket"], ticket);
+    let cancelled = unsafe { cue_core_request_subtitles(handle, input.as_ptr(), input.len()) };
+    assert_ne!(cancelled, 0);
+    assert_eq!(cue_core_discard_torrent(handle, cancelled), 1);
+    assert_eq!(
+        unsafe { cue_core_take_torrent(handle, cancelled, std::ptr::null_mut(), 0) },
+        -1
+    );
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+}

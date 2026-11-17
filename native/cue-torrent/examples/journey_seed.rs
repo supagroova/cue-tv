@@ -4,20 +4,11 @@ use std::{path::PathBuf, time::Duration};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let directory = PathBuf::from(
         std::env::args()
             .nth(1)
             .ok_or_else(|| anyhow::anyhow!("owned output directory required"))?,
     );
-    let files = directory.as_path().join("CueTV-fixtures");
-    std::fs::create_dir(&files)?;
-    for name in ["episode01.mp4", "episode02.mp4", "tail-index.mp4"] {
-        std::fs::copy(
-            root.join("apple-tv/Resources/PlaybackLab").join(name),
-            files.join(name),
-        )?;
-    }
     let session = Session::new_with_opts(
         directory.as_path().to_owned(),
         SessionOptions {
@@ -32,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
         },
     )
     .await?;
-    let torrent = std::fs::read(root.join("fixtures/torrents/multi-episode.torrent"))?;
+    let torrent = std::fs::read(directory.join("journey.torrent"))?;
     let handle = session
         .add_torrent(
             AddTorrent::from_bytes(torrent),

@@ -50,6 +50,11 @@ nonisolated struct CoreSubtitle: Decodable, Sendable {
     let url: String
 }
 
+nonisolated struct CoreSubtitleDiscovery: Decodable, Sendable {
+    let tracks: [CoreSubtitle]
+    let failedProviders: Int
+}
+
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
     var subtitles: [CoreSubtitle] = []
     let metaId: String
@@ -119,6 +124,7 @@ nonisolated protocol CoreService: Sendable {
     func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
+    func discoverSubtitles(metaId: String, videoId: String, kind: String) async throws -> CoreSubtitleDiscovery
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest
     func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest
     func stop() async throws
@@ -296,11 +302,22 @@ actor NativeCoreService: CoreService {
     func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest {
         try await prepareSource(index: index, expectedRevision: expectedRevision, https: true)
     }
+    func discoverSubtitles(metaId: String, videoId: String, kind: String) async throws -> CoreSubtitleDiscovery {
+        try Task.checkCancellation()
+        guard [metaId, videoId, kind].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 && $0.rangeOfCharacter(from: .controlCharacters) == nil }), kind.utf8.count <= 64 else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "meta_id": metaId, "video_id": videoId, "kind": kind])
+        let ticket = data.withUnsafeBytes { cue_core_request_subtitles(handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count) }
+        return try await readPrivateReply(handle: handle, ticket: ticket)
+    }
     private func prepareSource<Request: Decodable & Sendable>(index: Int, expectedRevision: UInt64, https: Bool) async throws -> Request {
         try Task.checkCancellation()
         guard index >= 0 else { throw Failure.invalidRequest }
         guard let handle, retirement == nil else { throw Failure.stopped }
         let ticket = https ? cue_core_request_https(handle, index, expectedRevision) : cue_core_request_torrent(handle, index, expectedRevision)
+        return try await readPrivateReply(handle: handle, ticket: ticket)
+    }
+    private func readPrivateReply<Request: Decodable & Sendable>(handle: UInt64, ticket: UInt64) async throws -> Request {
         guard ticket != 0 else { throw Failure.busy }
         defer { _ = cue_core_discard_torrent(handle, ticket) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))

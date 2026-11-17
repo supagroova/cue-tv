@@ -150,6 +150,33 @@ import Security
     #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
+    let discovered = try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind)
+    #expect(discovered.tracks.map(\.id) == ["owned-resource"])
+    #expect(discovered.failedProviders == 0)
+    let stalled = Task { try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind) }
+    let reachedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await fixture.subtitles.requests < 2, ContinuousClock.now < reachedDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    try #require(await fixture.subtitles.requests == 2)
+    let cancelStarted = ContinuousClock.now
+    stalled.cancel()
+    await #expect(throws: CancellationError.self) { try await stalled.value }
+    let closedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !(await fixture.subtitles.closed), ContinuousClock.now < closedDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    #expect(await fixture.subtitles.closed)
+    #expect(cancelStarted.duration(to: .now) < .seconds(2))
+    // A canceled HTTP query must release the serial C command owner promptly.
+    try await service.setInterfaceLanguage("fra")
+    var afterCancel = try await service.snapshot()
+    for _ in 0..<100 where afterCancel.model?.interfaceLanguage != "fra" {
+        try await Task.sleep(for: .milliseconds(10)); afterCancel = try await service.snapshot()
+    }
+    #expect(afterCancel.model?.interfaceLanguage == "fra")
+    state = afterCancel
+
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_subtitle_identity")) {
+        try await service.discoverSubtitles(metaId: handoff.metaId, videoId: "wrong-episode", kind: handoff.kind)
+    }
+
     let https = try await service.prepareHTTPS(index: 30, expectedRevision: try #require(state.model?.revision))
     #expect(https.url == "https://media.example.test/video.mkv?signature=synthetic%2Bvalue")
     #expect(https.metaId == "cue-fixture")
@@ -244,16 +271,40 @@ import Security
 }
 
 
+private actor SubtitleResourceProbe {
+    var requests = 0
+    var closed = false
+    func arrived() -> Int { requests += 1; return requests }
+    func disconnected() { closed = true }
+}
+
 nonisolated private final class CoreHTTPFixture: Sendable {
     let listener: NWListener
     let port: UInt16
-    init(listener: NWListener, port: UInt16) { self.listener = listener; self.port = port }
+    let subtitles: SubtitleResourceProbe
+    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe) { self.listener = listener; self.port = port; self.subtitles = subtitles }
     static func start() async throws -> CoreHTTPFixture {
         let listener = try NWListener(using: .tcp, on: .any)
+        let subtitles = SubtitleResourceProbe()
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
                 let requestText = request.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                if requestText.contains("/subtitles/movie/cue-fixture") {
+                    Task {
+                        if await subtitles.arrived() == 1 {
+                            let body = #"{"subtitles":[{"id":"owned-resource","lang":"eng","url":"https://fixture.test/captions.vtt"}]}"#
+                            let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                            connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                        } else {
+                            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, complete, error in
+                                if complete || error != nil { Task { await subtitles.disconnected() } }
+                                connection.cancel()
+                            }
+                        }
+                    }
+                    return
+                }
                 let isMetadata = requestText.contains("/meta/movie/cue-fixture.json")
                 let isCatalog = requestText.contains("/catalog/movie/fixture")
                 let range = requestText.contains("skip=30") ? 30..<30 : requestText.contains("skip=27") ? 27..<30 : 0..<27
@@ -266,7 +317,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
                 let body = requestText.contains("/stream/movie/") ? sourceBody : isCatalog
                     ? catalogBody
                     : isMetadata ? metadataBody
-                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"stream","types":["movie"],"idPrefixes":["cue-"]},{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"},{"name":"search"}]}]}"#
+                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"subtitles","types":["movie"],"idPrefixes":["cue-"]},{"name":"stream","types":["movie"],"idPrefixes":["cue-"]},{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"},{"name":"search"}]}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
             }
@@ -286,7 +337,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
             }
             listener.start(queue: .global())
         }
-        return CoreHTTPFixture(listener: listener, port: port)
+        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles)
     }
 }
 
