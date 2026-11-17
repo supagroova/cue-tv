@@ -12,7 +12,7 @@ use stremio_core::{
     },
     runtime::{
         Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
-        msg::{Action, ActionCtx, ActionLoad, Event, Msg},
+        msg::{Action, ActionCtx, ActionLoad, Event, Internal, Msg},
     },
     types::{notifications::NotificationsBucket, profile::Profile, server_urls::ServerUrlsBucket},
 };
@@ -55,7 +55,7 @@ pub struct Snapshot {
 enum Command {
     Language(String, oneshot::Sender<Result<(), &'static str>>),
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
-    Effect(Msg),
+    Effect(Msg, u64),
 }
 pub struct CoreSession {
     environment: Arc<Environment>,
@@ -215,6 +215,7 @@ async fn run(
     env: Arc<Environment>,
 ) {
     let mut addon = AddonDetails::default();
+    let mut addon_generation = 0u64;
     let mut revision = 0;
     let mut pending = 0usize;
     let mut error = None;
@@ -223,7 +224,7 @@ async fn run(
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
         };
-        let (message, reply) = match command {
+        let (message, reply, origin) = match command {
             Command::Language(language, reply) => {
                 error = None;
                 let mut settings = ctx.profile.settings.clone();
@@ -231,18 +232,32 @@ async fn run(
                 (
                     Msg::Action(Action::Ctx(ActionCtx::UpdateSettings(settings))),
                     Some(reply),
+                    addon_generation,
                 )
             }
             Command::Addon(selected, reply) => {
                 error = None;
+                if addon.selected.as_ref() != Some(&selected)
+                    || addon
+                        .remote_addon
+                        .as_ref()
+                        .is_some_and(|value| value.content.is_err())
+                {
+                    let Some(next) = addon_generation.checked_add(1) else {
+                        env.fail();
+                        break;
+                    };
+                    addon_generation = next;
+                }
                 (
                     Msg::Action(Action::Load(ActionLoad::AddonDetails(selected))),
                     Some(reply),
+                    addon_generation,
                 )
             }
-            Command::Effect(message) => {
+            Command::Effect(message, generation) => {
                 pending = pending.saturating_sub(1);
-                (message, None)
+                (message, None, generation)
             }
         };
         let mut messages = VecDeque::from([message]);
@@ -262,13 +277,31 @@ async fn run(
             }
             // Core caches a failed descriptor by URL. Explicit reselection permits
             // retry without unloading an in-flight request or a successful preview.
-            let retry = if matches!(&message, Msg::Action(Action::Load(ActionLoad::AddonDetails(_))))
-                && addon.remote_addon.as_ref().is_some_and(|value| value.content.is_err()) {
-                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &Msg::Action(Action::Unload), &ctx)
-            } else { Effects::none().unchanged() };
-            let effects = retry.join(<Ctx as Update<NativeEnv>>::update(&mut ctx, &message)).join(
-                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &message, &ctx),
-            );
+            let retry = if matches!(
+                &message,
+                Msg::Action(Action::Load(ActionLoad::AddonDetails(_)))
+            ) && addon
+                .remote_addon
+                .as_ref()
+                .is_some_and(|value| value.content.is_err())
+            {
+                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(
+                    &mut addon,
+                    &Msg::Action(Action::Unload),
+                    &ctx,
+                )
+            } else {
+                Effects::none().unchanged()
+            };
+            let context_effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message);
+            let stale_manifest = origin != addon_generation
+                && matches!(&message, Msg::Internal(Internal::ManifestRequestResult(..)));
+            let addon_effects = if stale_manifest {
+                Effects::none().unchanged()
+            } else {
+                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &message, &ctx)
+            };
+            let effects = retry.join(context_effects).join(addon_effects);
             if effects.has_changed {
                 revision += 1;
             }
@@ -281,12 +314,16 @@ async fn run(
                         match future {
                             EffectFuture::Concurrent(future) => {
                                 NativeEnv::exec_concurrent(async move {
-                                    let _ = sender.send(Command::Effect(future.await)).await;
+                                    let _ = sender
+                                        .send(Command::Effect(future.await, addon_generation))
+                                        .await;
                                 })
                             }
                             EffectFuture::Sequential(future) => {
                                 NativeEnv::exec_sequential(async move {
-                                    let _ = sender.send(Command::Effect(future.await)).await;
+                                    let _ = sender
+                                        .send(Command::Effect(future.await, addon_generation))
+                                        .await;
                                 })
                             }
                         }

@@ -193,14 +193,17 @@ async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
 async fn stale_manifest_failure_cannot_replace_newer_selection() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let old_url = format!("http://{}/old-secret/manifest.json", old.local_addr().unwrap());
+    let old_url = format!(
+        "http://{}/old-secret/manifest.json",
+        old.local_addr().unwrap()
+    );
     let new = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let new_url = format!("http://{}/manifest.json", new.local_addr().unwrap());
     let (started, ready) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let first = tokio::spawn(async move {
         let (mut socket, _) = old.accept().await.unwrap();
-        let mut request = [0;4096];
+        let mut request = [0; 4096];
         socket.read(&mut request).await.unwrap();
         started.send(()).unwrap();
         released.await.unwrap();
@@ -208,26 +211,55 @@ async fn stale_manifest_failure_cannot_replace_newer_selection() {
     });
     let second = tokio::spawn(async move {
         let (mut socket, _) = new.accept().await.unwrap();
-        let mut request = [0;4096];
+        let mut request = [0; 4096];
         socket.read(&mut request).await.unwrap();
         let body = r#"{"id":"new","version":"1.0.0","name":"New selection","description":"Fixture","resources":[],"types":[],"catalogs":[]}"#;
-        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
     });
-    let mut session = CoreSession::guest(Environment::new().unwrap()).await.unwrap();
+    let mut session = CoreSession::guest(Environment::new().unwrap())
+        .await
+        .unwrap();
     session.load_addon(&old_url).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(2), ready).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), ready)
+        .await
+        .unwrap()
+        .unwrap();
     session.load_addon(&new_url).await.unwrap();
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            if session.snapshot().addon.as_ref().and_then(|a| a.id.as_deref()) == Some("new") { break; }
+            if session
+                .snapshot()
+                .addon
+                .as_ref()
+                .and_then(|a| a.id.as_deref())
+                == Some("new")
+            {
+                break;
+            }
             tokio::task::yield_now().await;
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     release.send(()).unwrap();
-    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(state.addon.as_ref().unwrap().id.as_deref(), Some("new"));
     assert!(!serde_json::to_string(&state).unwrap().contains("secret"));
-    first.await.unwrap(); second.await.unwrap();
+    first.await.unwrap();
+    second.await.unwrap();
     session.stop().await;
 }
 
@@ -239,19 +271,111 @@ async fn failed_addon_can_be_retried_at_the_same_url() {
     let server = tokio::spawn(async move {
         for success in [false, true] {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0;4096];
+            let mut request = [0; 4096];
             socket.read(&mut request).await.unwrap();
-            let body = if success { r#"{"id":"retry","name":"Recovered","version":"1.0.0","description":"Fixture","resources":[],"types":[],"catalogs":[]}"# } else { "invalid JSON" };
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+            let body = if success {
+                r#"{"id":"retry","name":"Recovered","version":"1.0.0","description":"Fixture","resources":[],"types":[],"catalogs":[]}"#
+            } else {
+                "invalid JSON"
+            };
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
         }
     });
-    let mut session = CoreSession::guest(Environment::new().unwrap()).await.unwrap();
+    let mut session = CoreSession::guest(Environment::new().unwrap())
+        .await
+        .unwrap();
     session.load_addon(&url).await.unwrap();
-    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(state.addon.unwrap().status, "failed");
     session.load_addon(&url).await.unwrap();
-    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(state.addon.unwrap().name.as_deref(), Some("Recovered"));
+    server.await.unwrap();
+    session.stop().await;
+}
+
+#[tokio::test]
+async fn returning_to_a_url_does_not_admit_its_previous_request() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (ready, mut started) = tokio::sync::mpsc::channel(3);
+    let mut release = Vec::new();
+    let mut gates = Vec::new();
+    for _ in 0..3 {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        release.push(send);
+        gates.push(receive);
+    }
+    let server = tokio::spawn(async move {
+        let mut workers = Vec::new();
+        for (index, gate) in gates.into_iter().enumerate() {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let ready = ready.clone();
+            workers.push(tokio::spawn(async move {
+                let mut request = [0;4096];
+                socket.read(&mut request).await.unwrap();
+                ready.send(index).await.unwrap();
+                gate.await.unwrap();
+                let body = if index == 2 { r#"{"id":"new-a","name":"Current A","version":"1.0.0","description":"Fixture","resources":[],"types":[],"catalogs":[]}"# } else { "old invalid response" };
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+            }));
+        }
+        for worker in workers {
+            worker.await.unwrap();
+        }
+    });
+    let mut session = CoreSession::guest(Environment::new().unwrap())
+        .await
+        .unwrap();
+    for (index, path) in ["a", "b", "a"].into_iter().enumerate() {
+        session
+            .load_addon(&format!("http://{address}/{path}/manifest.json"))
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), started.recv())
+                .await
+                .unwrap(),
+            Some(index)
+        );
+    }
+    release.remove(0).send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while session.snapshot().pending_effects != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        session.snapshot().addon.unwrap().status,
+        "loading",
+        "old A must not fail current A"
+    );
+    release.pop().unwrap().send(()).unwrap();
+    release.pop().unwrap().send(()).unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.addon.unwrap().id.as_deref(), Some("new-a"));
     server.await.unwrap();
     session.stop().await;
 }

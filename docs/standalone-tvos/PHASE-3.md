@@ -210,5 +210,20 @@ A host regression reproduced Core retaining a failed manifest when the user
 reselected its URL. Explicit loading now unloads a failed preview before retrying;
 it does not discard a successful preview or duplicate the same in-flight load.
 The test first returns invalid JSON, then a valid manifest from the same URL and
-observes recovery. All 17 native tests pass. Further rapid A→B→A selection stress,
-durable guest state and account/browsing operations remain required.
+observes recovery. All 17 native tests pass. Durable guest state and account/browsing operations remain required.
+
+
+## Request generation isolation
+
+A controlled A→B→A regression reproduced the first A request's late failure
+changing the second A preview to failed. URL equality alone did not identify the
+active request. The owner now tags asynchronous effects with the current add-on
+request generation. Selection changes and failed-preview retries advance it;
+reselecting the same in-flight/successful preview does not. Stale manifest results
+still finish their pending-work accounting and reach the context model, but cannot
+update the current add-on preview. No upstream Core source was modified.
+
+The regression passes with the old response deliberately released before the new
+response. All 18 native tests, the device app build and 24 simulator unit tests
+pass. The physical Apple TV gate and remaining Phase 3 service/persistence/account
+requirements are still open.
