@@ -20,10 +20,11 @@ const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const STORAGE_LIMIT: usize = 16 * 1024 * 1024;
 tokio::task_local! { static CONTEXT: Arc<Environment>; }
 
-/// One context per Core session. The initial backend is deliberately memory-only:
-/// no credential-bearing profile is written to plaintext files.
+/// One context per Core session. The default is memory-only; optional persistence
+/// encrypts the entire state before writing to the app-owned directory.
 pub struct Environment {
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
+    persistence: Option<crate::persistence::EncryptedStore>,
     canceled: CancellationToken,
     failed: AtomicBool,
     tasks: tokio_util::task::TaskTracker,
@@ -39,12 +40,26 @@ impl Environment {
     pub fn with_clock(
         clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
     ) -> Result<Arc<Self>, EnvError> {
+        Self::configured(clock, BTreeMap::new(), None)
+    }
+    /// Blocking initialization for an app-owned encrypted directory, off the UI actor.
+    pub fn persistent(directory: &std::path::Path, key: &[u8; 32]) -> Result<Arc<Self>, EnvError> {
+        let (store, values) = crate::persistence::EncryptedStore::open(directory, key)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        Self::configured(Arc::new(Utc::now), values, Some(store))
+    }
+    fn configured(
+        clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
+        values: BTreeMap<String, Vec<u8>>,
+        persistence: Option<crate::persistence::EncryptedStore>,
+    ) -> Result<Arc<Self>, EnvError> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| EnvError::Other("Core runtime unavailable".into()))?;
         let (sequential, mut queue) =
             tokio::sync::mpsc::channel::<futures::future::BoxFuture<'static, ()>>(128);
         let env = Arc::new(Self {
-            storage: Mutex::new(BTreeMap::new()),
+            storage: Mutex::new(values),
+            persistence,
             canceled: CancellationToken::new(),
             failed: AtomicBool::new(false),
             tasks: tokio_util::task::TaskTracker::new(),
@@ -226,7 +241,18 @@ impl Env for NativeEnv {
                     "Storage budget exceeded".into(),
                 ));
             }
-            if let Some(value) = value {
+            if let Some(persistence) = &env.persistence {
+                let mut next = store.clone();
+                if let Some(value) = value {
+                    next.insert(key, value);
+                } else {
+                    next.remove(&key);
+                }
+                persistence.save(&next).map_err(|_| {
+                    EnvError::StorageWriteError("Encrypted storage write failed".into())
+                })?;
+                *store = next;
+            } else if let Some(value) = value {
                 store.insert(key, value);
             } else {
                 store.remove(&key);

@@ -220,6 +220,7 @@ dependencies = [
  "futures",
  "http",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "stremio-core",

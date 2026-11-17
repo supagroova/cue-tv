@@ -227,3 +227,35 @@ The regression passes with the old response deliberately released before the new
 response. All 18 native tests, the device app build and 24 simulator unit tests
 pass. The physical Apple TV gate and remaining Phase 3 service/persistence/account
 requirements are still open.
+
+## Encrypted native persistence foundation
+
+`Environment::persistent` can now restore and commit Core storage in an app-owned
+directory. The default and the current Swift/C creation path remain memory-only.
+A real Core guest test changes a setting, joins shutdown, opens a new environment
+and observes the stored setting. This is native restart evidence, not yet an app
+relaunch or Keychain claim.
+
+The versioned `CUECORE1` envelope uses AES-256-GCM with a fresh random 96-bit nonce
+for each write and an authenticated header. `ring` is a direct exact `0.17.14`
+dependency (already present transitively); no dependency versions changed, and its
+license notices are retained. Keys are supplied by the caller and are never stored
+beside the ciphertext. Core JSON values and configured URLs are encrypted together.
+
+Writes enforce a 16 MiB serialized-state limit, create a mode-0600 temporary file,
+flush it and atomically rename it. Rename is the commit point; directory sync is
+best-effort, so sudden-power-loss durability is not claimed. Failed pre-commit
+writes preserve the prior in-memory and on-disk state. Wrong keys, authenticated
+data corruption, unsupported versions and oversized files fail closed without
+resetting or overwriting existing data. Filesystem work is blocking and must run
+off the UI actor. Callers must exclusively own and serialize access to the
+app-owned directory; cross-session/path leases are required before exposing this
+through the application bridge. Missing files start empty. Corrupt files require
+an explicit recovery policy rather than silent deletion.
+
+All 22 native tests pass, including fresh ciphertext, wrong-key/tamper rejection,
+quota preservation, write-failure consistency and real Core guest restart. Both
+tvOS library targets compile. Remaining integration: platform Keychain keys,
+exclusive storage ownership, C/Swift configuration, app relaunch/recovery tests,
+identity scoping and account lifecycle. Large-state write latency and shutdown
+responsiveness also need measurement before enabling this backend in the app.
