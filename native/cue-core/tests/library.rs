@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 async fn selected_library_membership_is_revision_guarded_and_survives_encrypted_reopen() {
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        membership_roundtrip(false),
+        membership_roundtrip(false, false),
     )
     .await
     .unwrap();
@@ -23,13 +23,23 @@ async fn selected_library_membership_is_revision_guarded_and_survives_encrypted_
 async fn selected_library_removal_persists_a_tombstone() {
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        membership_roundtrip(true),
+        membership_roundtrip(true, false),
     )
     .await
     .unwrap();
 }
 
-async fn membership_roundtrip(remove: bool) {
+#[tokio::test]
+async fn failed_library_write_remains_failed_until_retry_is_durable() {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        membership_roundtrip(false, true),
+    )
+    .await
+    .unwrap();
+}
+
+async fn membership_roundtrip(remove: bool, fail_write: bool) {
     let directory = std::env::temp_dir().join(format!(
         "cue-library-{}-{}",
         std::process::id(),
@@ -95,7 +105,29 @@ async fn membership_roundtrip(remove: bool) {
     server.await.unwrap();
     assert_eq!(session.snapshot().details_in_library, Some(false));
     let stale = session.snapshot().revision;
-    session.set_details_library(true, stale).await.unwrap();
+    if fail_write {
+        let unavailable = directory.with_extension("unavailable");
+        std::fs::rename(&directory, &unavailable).unwrap();
+        session.set_details_library(true, stale).await.unwrap();
+        assert_eq!(
+            session.settled().await.unwrap().error,
+            Some("core_effect_failed")
+        );
+        // Retrying an already-updated in-memory item must attempt persistence again.
+        session
+            .set_details_library(true, session.snapshot().revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            session.settled().await.unwrap().error,
+            Some("core_effect_failed")
+        );
+        std::fs::rename(unavailable, &directory).unwrap();
+    }
+    session
+        .set_details_library(true, session.snapshot().revision)
+        .await
+        .unwrap();
     let added = session.settled().await.unwrap();
     assert!(added.error.is_none());
     assert_eq!(added.details_in_library, Some(true));

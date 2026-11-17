@@ -33,3 +33,20 @@ account synchronization/manual watched policy is not established by these tests.
 
 Next: expose the operation through FFI and the Swift service, with an acknowledged
 save state, then add user-facing library controls and continue decision 003.
+
+## Failed-write retry correctness
+
+Before exposing membership to Swift, a failure-injection test found a false-success
+case: Core updates its library in memory even when encrypted persistence fails.
+Repeating the same action suppresses the unchanged item update, clearing the
+error without retrying disk storage. Red: `8da9ca6ecccb4400be2fd5438288a987`.
+The test temporarily moves its own isolated storage directory, fails two attempts,
+restores the directory and verifies a successful retry survives encrypted reopen.
+
+Reasserting an already-matching membership now invokes Core's
+`Internal::LibraryChanged(false)` persistence effect. It does not fabricate an
+item modification or force a remote upload. All three library cases pass
+(`2e1240a1009e42d583f6d06af0ab7275`); the complete native suite passes
+(`72dee7cbb2844c639d93ca0e1346b9d4`), as do the 15 portable checks.
+The FFI/Swift operation and acknowledged save state remain next; no UI currently
+claims this operation has been durably saved. Remote retry remains Phase 5 sync work.

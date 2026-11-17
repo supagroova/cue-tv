@@ -44,3 +44,8 @@ Phase 5 native membership actions now pass the full Core suite (record
 `ff81794c3261435dbdb4d1793429466d` in this worktree's phase-5-library task).
 Add/remove encrypted reopen tests pass; next is FFI/Swift integration and truthful
 save acknowledgement. Root Phase 4 remains untouched. PR7 is now all green.
+
+Membership retry now re-persists unchanged Core state after disk failure. Full
+native suite passes (`72dee7cbb2844c639d93ca0e1346b9d4`). FFI/Swift save receipt is
+still pending. PR8 Android Build run44168259064 failed on Maven HTTP429 and its
+failed job was rerun; Apple TV jobs were left intact.

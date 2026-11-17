@@ -617,14 +617,26 @@ async fn run(
                     let _ = reply.send(Ok(()));
                     continue;
                 }
-                let action = if member {
-                    ActionCtx::AddToLibrary(meta.clone())
+                // Core suppresses unchanged updates, including after a failed disk write.
+                // Reasserting membership must still persist the current library.
+                let message = if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.removed == !member && !item.temp)
+                {
+                    Msg::Internal(Internal::LibraryChanged(false))
                 } else {
-                    ActionCtx::RemoveFromLibrary(meta.id.clone())
+                    let action = if member {
+                        ActionCtx::AddToLibrary(meta.clone())
+                    } else {
+                        ActionCtx::RemoveFromLibrary(meta.id.clone())
+                    };
+                    Msg::Action(Action::Ctx(action))
                 };
                 error = None;
                 (
-                    Msg::Action(Action::Ctx(action)),
+                    message,
                     Some(reply),
                     addon_generation,
                     catalog_generation,
