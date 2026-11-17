@@ -103,7 +103,7 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
 pub(crate) fn prepare(
     model: &MetaDetails,
     index: usize,
-) -> Result<crate::playback_source::TorrentRequest, &'static str> {
+) -> Result<crate::playback_source::PreparedTorrent, &'static str> {
     let stream = model
         .meta_streams
         .iter()
@@ -112,5 +112,12 @@ pub(crate) fn prepare(
         .flatten()
         .nth(index)
         .ok_or("invalid_source")?;
-    crate::playback_source::torrent(stream)
+    let selected = model.selected.as_ref().ok_or("invalid_source")?;
+    let video = selected.stream_path.as_ref().ok_or("invalid_source")?;
+    Ok(crate::playback_source::PreparedTorrent {
+        meta_id: selected.meta_path.id.clone(),
+        video_id: video.id.clone(),
+        kind: selected.meta_path.r#type.clone(),
+        torrent: crate::playback_source::torrent(stream)?,
+    })
 }

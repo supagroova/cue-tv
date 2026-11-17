@@ -376,9 +376,13 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     );
     let revision = session.snapshot().revision;
     let playback = session.prepare_torrent(0, revision).await.unwrap();
-    assert_eq!(playback.file_index, Some(0));
+    assert_eq!(playback.torrent.file_index, Some(0));
+    assert_eq!(playback.meta_id, "film-0");
+    assert_eq!(playback.video_id, "film-0");
+    assert_eq!(playback.kind, "movie");
     assert!(
         playback
+            .torrent
             .magnet
             .contains("0123456789abcdef0123456789abcdef01234567")
     );

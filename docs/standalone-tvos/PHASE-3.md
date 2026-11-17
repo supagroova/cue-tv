@@ -483,3 +483,9 @@ The bridge now provides request/take/discard functions for prepared torrent data
 Swift's `prepareTorrent` checks session/ticket/version identity, bounds reply copies to 256 KiB, and discards pending data on cancellation/error/timeout. It returns typed preparation errors and preserves a missing file index as nil. The simulator HTTP journey now retrieves a prepared torrent from the final source window and rejects a stale revision.
 
 All 35 native tests pass (fa40ca62f07648639b14027fe9560bf5.log). The extended boundary test verifies busy slots, untouched short buffers, consumed/discarded tickets, and stop retirement (fdb0afb1aaca4c75ba38928f66cfce96.log). All 25 simulator unit tests pass (db15f4b882f24caba6779e453ad7d946.log), and the device app builds (619d1637361e4d46bfd13c9c7843856c.log). Playback identity, missing-index metadata resolution/file choice, and production coordinator wiring remain pending; this is a service handoff, not completed playback.
+
+### Playback identity captured with source selection
+
+Prepared handoffs now include the selected metadata ID, video ID and content type. The Core owner captures these owned strings alongside source conversion under the same revision check, rather than requiring Swift to read a potentially newer snapshot afterward. The C reply keeps the existing torrent fields and adds these identity fields; Swift decodes them as required values. Native and simulator HTTP fixtures assert the exact movie/episode identity in the returned handoff.
+
+All 35 native tests pass (20cc1107084d464d91fa53a016fbce9a.log), all 25 simulator unit tests pass (2591b3ae34e54727823a3db6d2164fab.log), and the device app builds (dd898d2ffbb34ea3b2da0e2ae6154644.log). Metadata resolution/file choice for unknown indexes and the production playback adapter are still required.

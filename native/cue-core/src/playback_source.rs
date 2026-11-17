@@ -101,3 +101,13 @@ pub fn torrent(stream: &Stream) -> Result<TorrentRequest, &'static str> {
     }
     Ok(request)
 }
+
+/// Identity is captured by the Core owner alongside source validation.
+#[derive(serde::Serialize)]
+pub struct PreparedTorrent {
+    pub meta_id: String,
+    pub video_id: String,
+    pub kind: String,
+    #[serde(flatten)]
+    pub torrent: TorrentRequest,
+}

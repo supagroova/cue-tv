@@ -43,6 +43,9 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
 }
 
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    let metaId: String
+    let videoId: String
+    let kind: String
     let magnet: String
     let fileIndex: UInt16?
     let fileMustInclude: [String]

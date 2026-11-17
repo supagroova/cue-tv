@@ -117,6 +117,9 @@ import Security
     #expect(state.model?.sources?.items.last?.name == "Source 29")
     let handoff = try await service.prepareTorrent(index: 29, expectedRevision: try #require(state.model?.revision))
     #expect(handoff.magnet.contains("0123456789abcdef0123456789abcdef01234567"))
+    #expect(handoff.metaId == "cue-fixture")
+    #expect(handoff.videoId == "cue-fixture:30")
+    #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
     await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {

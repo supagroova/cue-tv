@@ -78,7 +78,7 @@ enum Command {
     PrepareTorrent(
         usize,
         u64,
-        oneshot::Sender<Result<crate::playback_source::TorrentRequest, &'static str>>,
+        oneshot::Sender<Result<crate::playback_source::PreparedTorrent, &'static str>>,
     ),
     Effect(Msg, u64, u64, u64, u64),
 }
@@ -272,7 +272,7 @@ impl CoreSession {
         &self,
         index: usize,
         expected_revision: u64,
-    ) -> Result<crate::playback_source::TorrentRequest, &'static str> {
+    ) -> Result<crate::playback_source::PreparedTorrent, &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
             .try_send(Command::PrepareTorrent(index, expected_revision, reply))
