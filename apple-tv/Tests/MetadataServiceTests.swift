@@ -25,3 +25,34 @@ import Testing
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
     }
 }
+
+import CueTorrent
+
+@Test func adoptedPlaybackHandleJoinsConcurrentStops() async throws {
+    let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: output) }
+    let torrent = try #require(Bundle.main.url(forResource: "single", withExtension: "torrent"))
+    let input = try JSONSerialization.data(withJSONObject: [
+        "api_version": 1, "torrent_path": torrent.path, "output": output.path,
+        "file_index": 0, "initial_peers": []
+    ])
+    let text = try #require(String(data: input, encoding: .utf8))
+    let handle = text.withCString { cue_torrent_start($0) }
+    #expect(handle != 0)
+    let service = NativePlaybackService(adopting: handle)
+    var value = try await service.snapshot()
+    for _ in 0..<100 where value.state == "starting" {
+        try await Task.sleep(for: .milliseconds(10))
+        value = try await service.snapshot()
+    }
+    #expect(value.state == "ready")
+    #expect(value.sessionId == handle)
+    async let first: Void = service.stop()
+    async let second: Void = service.stop()
+    try await first
+    try await second
+    try await service.stop()
+    await #expect(throws: NativePlaybackService.Failure.self) { try await service.snapshot() }
+    #expect(cue_torrent_stop_ticket(handle) == 0)
+}

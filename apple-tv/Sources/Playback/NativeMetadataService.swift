@@ -50,6 +50,21 @@ actor NativeMetadataService {
         return value
     }
 
+    /// Ownership transfers synchronously; a failed selection leaves metadata available.
+    func play(fileIndex: Int, output: URL, cacheRoot: URL) throws -> NativePlaybackService {
+        guard let handle, retirement == nil else { throw Failure.unavailable }
+        guard fileIndex >= 0, output.isFileURL, cacheRoot.isFileURL else { throw Failure.invalidRequest }
+        let input = try JSONSerialization.data(withJSONObject: [
+            "api_version": 1, "output": output.path, "cache_root": cacheRoot.path
+        ])
+        let playback = input.withUnsafeBytes {
+            cue_metadata_play(handle, fileIndex, $0.bindMemory(to: UInt8.self).baseAddress, $0.count)
+        }
+        guard playback != 0 else { throw Failure.invalidRequest }
+        self.handle = nil
+        return NativePlaybackService(adopting: playback)
+    }
+
     func stop() async throws {
         guard let handle else { return }
         let task: Task<Void, any Error>

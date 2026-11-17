@@ -523,3 +523,7 @@ Added length-delimited metadata-start input (24 KiB maximum), eight-handle admis
 ### C metadata-to-playback transfer
 
 `cue_metadata_play` validates an explicit file index and transfers native metadata/seen peers into a normal playback handle. Successful transfer invalidates the metadata handle; ordinary validation failures retain it for retry. Playback output/cache-root settings are copied from a bounded versioned envelope. Both original torrent starts and resolved starts share the same playback owner and stop-ticket lifecycle. Native library tests pass (`0b7646198a974276a70dae1de319956e`), including invalid-choice retry, one-time transfer, ready playback and acknowledged shutdown. Swift ownership transfer and production coordinator wiring remain pending; Apple builds for this latest handoff are not yet rerun.
+
+### Swift playback ownership transfer
+
+Metadata selection now returns a `NativePlaybackService` actor while synchronously clearing the metadata owner's consumed handle. The playback actor validates snapshot identity, shares concurrent stop work, retains shutdown tickets for retry after timeout, and allows cache deletion only after successful stop. Its native-handle adoption test covers readiness, concurrent/repeated stop and post-stop rejection. Simulator tests pass (`ef8676331b4344b992a81ad6f4886e00`). The metadata selection method compiles against the real new C export, but a successful complete Swift metadata-discovery-to-playback test and production coordinator integration are still required.
