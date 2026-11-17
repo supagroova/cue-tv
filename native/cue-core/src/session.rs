@@ -13,7 +13,10 @@ use stremio_core::{
     },
     runtime::{
         Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
-        msg::{Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, Event, Internal, Msg},
+        msg::{
+            Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, ActionMetaDetails, Event,
+            Internal, Msg,
+        },
     },
     types::{api::AuthRequest, profile::Profile},
 };
@@ -65,6 +68,12 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    DetailsWatched(
+        Option<String>,
+        bool,
+        u64,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
     DetailsLibrary(bool, u64, oneshot::Sender<Result<(), &'static str>>),
     SubtitlePlan {
         meta_id: String,
@@ -349,6 +358,24 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Acknowledges admission; callers must await settled persistence before success.
+    pub async fn set_details_watched(
+        &self,
+        video_id: Option<String>,
+        watched: bool,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsWatched(
+                video_id,
+                watched,
+                expected_revision,
+                reply,
+            ))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn show_library(
         &self,
         offset: usize,
@@ -622,6 +649,80 @@ async fn run(
         };
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
+            Command::DetailsWatched(video_id, watched, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let Some(meta) = crate::details::selected_preview(&details) else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.r#type != meta.r#type)
+                {
+                    let _ = reply.send(Err("library_identity_conflict"));
+                    continue;
+                }
+                let Some(item) = details
+                    .library_item
+                    .as_ref()
+                    .filter(|item| item.id == meta.id && item.r#type == meta.r#type)
+                else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                let (action, unchanged) = match video_id {
+                    None if meta.r#type == "movie" => (
+                        ActionMetaDetails::MarkAsWatched(watched),
+                        item.watched() == watched,
+                    ),
+                    Some(id) if meta.r#type == "series" => {
+                        let video = details
+                            .meta_items
+                            .iter()
+                            .filter_map(|page| page.content.as_ref()?.ready())
+                            .find(|ready| {
+                                ready.preview.id == meta.id && ready.preview.r#type == meta.r#type
+                            })
+                            .and_then(|ready| {
+                                ready.videos.iter().find(|video| {
+                                    video.id == id && !id.is_empty() && id.len() <= 512
+                                })
+                            });
+                        let (Some(video), Some(bits)) = (video, details.watched.as_ref()) else {
+                            let _ = reply.send(Err("invalid_video"));
+                            continue;
+                        };
+                        (
+                            ActionMetaDetails::MarkVideoAsWatched(video.clone(), watched),
+                            bits.get_video(&id) == watched,
+                        )
+                    }
+                    _ => {
+                        let _ = reply.send(Err("invalid_video"));
+                        continue;
+                    }
+                };
+                // Repeated intent retries disk persistence without increasing play count.
+                let message = if unchanged {
+                    Msg::Internal(Internal::LibraryChanged(false))
+                } else {
+                    Msg::Action(Action::MetaDetails(action))
+                };
+                error = None;
+                (
+                    message,
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
             Command::DetailsLibrary(member, expected, reply) => {
                 if expected != revision {
                     let _ = reply.send(Err("stale_details"));

@@ -98,3 +98,18 @@ Next: revision-guarded Core watched actions, durable receipts and reopen tests,
 then Swift controls and manual-override integration with Core Player.
 PR13 Apple run44174360266 jobs134361659661/134361661187 were queued with no
 runner at 21:00 UTC; Android and portable checks passed. PR7 remains fully green.
+
+CoreSession now admits revision-guarded film/episode watched changes using Core
+MetaDetails actions. Invalid video identities and conflicting library types are
+rejected; retries flush storage without incrementing a film's completed count.
+Owned HTTP tests cover both watched values, unchanged membership, separate episode
+bits, two failed writes followed by recovery, disk contents before any membership
+write, and encrypted reopen. Missing API red: 72a58da8bc504293a2fb09684ba5c3ac.
+Removing idempotence fails with count4 instead of1 (06778f90da2b44b5898af63bbb078ba3).
+Restored full native suite passes (5fdcd20735474fb8b989e4f8a0a266c1); additional
+pre-membership disk assertions pass (a6583a2088f34191a59a5a0e31f7430a).
+Next: bounded cancellable FFI watched receipts, Swift/UI, then Core Player manual
+precedence and checkpoints. These session actions acknowledge admission only;
+settled/error must be inspected before reporting durable success. Remote sync
+retry remains unimplemented. PR13 Apple jobs are now executing; no review threads
+were present on open stack PRs at 21:03 UTC. Local watched work is not yet pushed.
