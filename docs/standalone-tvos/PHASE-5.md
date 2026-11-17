@@ -12,7 +12,7 @@ The contract and ordered implementation gates are in
 relying on those unchanged would leave resume and conflict requirements unproven.
 
 Branch: `codex/tvos-phase-5`, stacked on `codex/tvos-phase-4` at `0bbecfa`.
-Next: integrate Core Player and acknowledged checkpoints, and cover UI failed-save
+Next: bridge Core Player progress and acknowledged checkpoints, and cover UI failed-save
 retry/disappearance and multi-page library navigation. Device
 qualification is deferred until the Apple TV is available; simulator work continues.
 
@@ -219,3 +219,20 @@ and still pass, including encrypted persistence and retry. Full native tests,
 60 Swift tests, unsigned tvOS build and15 harness tests pass; records are in HANDOFF.
 This is scoped to add-on activity reporting. Direct authenticated Player rating and
 premium intro/outro effects remain under review before Player progress is enabled.
+
+## Native Core Player accounting
+
+CoreSession owns one Core Player behind a single-use prepared-source token. The
+native API distinguishes seek, played progress and pause; it rejects retired-owner
+callbacks and a second active owner. Existing ready metadata initializes the model.
+Core's accounting rules produce the library item; automatic Player effects are not
+executed. Content retrieval remains with the established source/subtitle owners,
+and durability must use the forthcoming acknowledged checkpoint path.
+
+Real-session tests cover strict >70% watched-time completion, seeking without
+viewing credit, pause, unknown duration, backward-position rejection, clamping,
+owner replacement and stale callbacks. A mutation that routes Seek as TimeChanged
+fails with false completion; restored native tests and the unsigned tvOS build pass.
+Evidence is recorded in HANDOFF. These APIs are not wired to Swift playback yet;
+manual override, local checkpoint persistence, resume UI and lifecycle barriers
+remain incomplete. Retiring this accounting model currently makes no durability claim.

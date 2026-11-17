@@ -24,3 +24,5 @@ mod auth_tests;
 pub mod library;
 
 mod addon_transport;
+
+pub mod player;

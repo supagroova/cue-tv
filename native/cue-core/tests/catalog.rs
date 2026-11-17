@@ -400,6 +400,184 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
         Err("stale_playback")
     );
 
+    use cue_core::player::{PlaybackEvent, Progress};
+    let playing = session.prepare_torrent(0, revision).await.unwrap();
+    session
+        .start_playback(playing.playback_token)
+        .await
+        .unwrap();
+    let seek = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::Seek {
+                time: 800,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        seek,
+        Progress {
+            time: 800,
+            duration: 1000,
+            time_watched: 0,
+            watched: false
+        }
+    );
+    let played = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 900,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(played.time_watched, 100);
+    assert!(
+        !played.watched,
+        "Seeking to credits must not count skipped content"
+    );
+    session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::Seek {
+                time: 100,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    let threshold = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 700,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(threshold.time_watched, 700);
+    assert!(
+        !threshold.watched,
+        "Core threshold is strictly greater than 70 percent"
+    );
+    assert!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::TimeChanged {
+                    time: 701,
+                    duration: 1000
+                }
+            )
+            .await
+            .unwrap()
+            .watched
+    );
+    session
+        .playback_event(playing.playback_token, PlaybackEvent::Paused(true))
+        .await
+        .unwrap();
+    let paused = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 999,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(paused.time, 701);
+    assert_eq!(paused.time_watched, 701);
+    let next_owner = session.prepare_torrent(0, revision).await.unwrap();
+    assert_eq!(
+        session.start_playback(next_owner.playback_token).await,
+        Err("playback_busy")
+    );
+    assert_eq!(
+        session.retire_playback(next_owner.playback_token).await,
+        Err("stale_playback")
+    );
+    session
+        .retire_playback(playing.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::Seek {
+                    time: 0,
+                    duration: 1000
+                }
+            )
+            .await,
+        Err("stale_playback")
+    );
+    session
+        .start_playback(next_owner.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::Seek {
+                    time: 0,
+                    duration: 1000
+                }
+            )
+            .await,
+        Err("stale_playback")
+    );
+    let unknown = session
+        .playback_event(
+            next_owner.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 1000,
+                duration: 0,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown.time, 1000);
+    assert!(
+        !unknown.watched,
+        "Unknown duration must not automatically complete"
+    );
+    assert_eq!(
+        session
+            .playback_event(
+                next_owner.playback_token,
+                PlaybackEvent::TimeChanged {
+                    time: 500,
+                    duration: 0
+                }
+            )
+            .await,
+        Err("playback_requires_seek")
+    );
+    let clamped = session
+        .playback_event(
+            next_owner.playback_token,
+            PlaybackEvent::Seek {
+                time: 2000,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(clamped.time, 1000);
+    assert!(!clamped.watched);
+    session
+        .retire_playback(next_owner.playback_token)
+        .await
+        .unwrap();
     let cancellation = tokio_util::sync::CancellationToken::new();
     let subtitles = session
         .discover_subtitles("film-0", "film-0", "movie", cancellation.clone())

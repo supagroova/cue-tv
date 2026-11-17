@@ -204,3 +204,28 @@ b039912e01c040d8bc879b502f5eedf0. Unsigned device build:
 a67bcc95982a4d7db8e3a66b144c5d7b. Fifteen harness tests pass.
 PR13 remote remains ab91481; simulator job134375797739 remains queued, native/device
 and Android passed. Recheck that live job before pushing the accumulated native work.
+
+CoreSession now owns an optional token-bound Core Player accounting model
+(native/cue-core/src/player.rs). start_playback consumes the prepared selection;
+one active owner is allowed. playback_event accepts Seek/TimeChanged/Paused and
+returns only position/duration/watched counters. retire_playback retires accounting;
+it does NOT yet persist a close checkpoint. No C/Swift progress bridge is exposed.
+Loaded Core metadata primes Player. Its returned effects are deliberately dropped:
+explicit source/subtitle code owns retrieval, and future acknowledged local
+checkpoints/sync must own persistence. Thus implicit Player rating, intro/outro,
+stream-history and event futures are not executed. This is not a working resume UI.
+
+Real-session tests prove seek adds no viewing time, strict >70% completion,
+paused callbacks are ignored, backwards TimeChanged requires Seek, unknown duration
+cannot complete, positions clamp to duration, replacement is busy until retirement,
+and old tokens cannot mutate a replacement. Missing-API red:
+2164048748af4c6abe8e6eefb48238cb. Full native suite passes:
+f1b60a52e054472cae5619717cc62e7f. Seek-as-played mutation fails with800watched/true
+instead of0/false (e9e6e8e84c0640c4ba57e2d3895edf34); restored catalog tests pass
+(e651cc2491124e0d8bbf7106f9b857ed). Device build passes
+48b403920b824edeb23dcd5737e10074 and15harness tests pass. Swift tests were not rerun
+for this native-only, unexposed API; previous60 passed before this slice.
+Next: manual watched override precedence and acknowledged local checkpoint pipeline,
+then bridge token/events/lifecycle to the existing playback model. No automatic
+network writes every5seconds; library checkpoint/journal must remain identity-scoped.
+PR13ab91481sim134375797739 is now running, not queued; other checks pass.

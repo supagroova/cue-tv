@@ -68,6 +68,13 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    StartPlayback(u64, oneshot::Sender<Result<(), &'static str>>),
+    PlaybackEvent(
+        u64,
+        crate::player::PlaybackEvent,
+        oneshot::Sender<Result<crate::player::Progress, &'static str>>,
+    ),
+    RetirePlayback(u64, oneshot::Sender<Result<(), &'static str>>),
     ClaimPlayback(
         u64,
         oneshot::Sender<Result<stremio_core::models::player::Selected, &'static str>>,
@@ -481,6 +488,32 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn start_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::StartPlayback(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn playback_event(
+        &self,
+        token: u64,
+        event: crate::player::PlaybackEvent,
+    ) -> Result<crate::player::Progress, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::PlaybackEvent(token, event, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Retires accounting only. Durable close barriers are not yet exposed to Swift.
+    pub async fn retire_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::RetirePlayback(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn prepare_https(
         &self,
         index: usize,
@@ -674,6 +707,7 @@ async fn run(
     let mut details_generation = 0u64;
     let mut source_generation = 0u64;
     let mut pending_playback: Option<PendingPlayback> = None;
+    let mut playback: Option<crate::player::Playback> = None;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -827,6 +861,7 @@ async fn run(
                 details_generation += 1;
                 source_generation += 1;
                 pending_playback = None;
+                playback = None;
                 addon = AddonDetails::default();
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
@@ -1121,6 +1156,42 @@ async fn run(
                         .map(|requests| (source_generation, requests))
                 } else {
                     Err("stale_subtitle_identity")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::StartPlayback(token, reply) => {
+                let result = if playback.is_some() {
+                    Err("playback_busy")
+                } else if pending_playback.as_ref().is_some_and(|pending| {
+                    pending.token == token && pending.source_generation == source_generation
+                }) {
+                    let pending = pending_playback.take().expect("checked pending selection");
+                    crate::player::Playback::new(token, pending.selection, &details, &ctx).map(
+                        |owner| {
+                            playback = Some(owner);
+                        },
+                    )
+                } else {
+                    Err("stale_playback")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::PlaybackEvent(token, event, reply) => {
+                let result = match playback.as_mut().filter(|owner| owner.token == token) {
+                    Some(owner) => owner.event(event, &ctx),
+                    None => Err("stale_playback"),
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::RetirePlayback(token, reply) => {
+                let result = if playback.as_ref().is_some_and(|owner| owner.token == token) {
+                    playback = None;
+                    Ok(())
+                } else {
+                    Err("stale_playback")
                 };
                 let _ = reply.send(result);
                 continue;
