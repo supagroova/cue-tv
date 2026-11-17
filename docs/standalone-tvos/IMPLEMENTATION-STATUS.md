@@ -14,4 +14,4 @@ PR #2 was merged by the user into the planning branch. Its merge commit is inclu
 
 See PHASE-0.md, PHASE-1.md and decisions/001-torrent-proof.md for commands, measured evidence and limits. The original PRD and implementation plan still define the complete scope; this status does not replace their acceptance criteria.
 
-Remote CI currently cannot start some jobs: GitHub Actions annotations report failed account payments or a spending limit. Local verification continues; the stack is not claimed green. The account owner needs to restore Actions billing before final remote qualification.
+The repository was transferred to public supagroova/cue-tv by its owner. The local origin now uses that canonical address. Earlier GitHub Actions jobs failed before starting because of billing/spending limits; after the transfer, harness CI passes and build jobs start again. The complete stack is not yet verified green.

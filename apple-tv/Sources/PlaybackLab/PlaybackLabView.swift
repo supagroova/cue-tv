@@ -32,7 +32,7 @@ struct PlaybackLabView: View {
                     }
                 }
                 if player == nil {
-                    Button("Stream torrent fixture") { stop(); torrent.start() }
+                    Button("Stream torrent fixture") { stop(); Task { await torrent.start() } }
                     Text(torrent.status)
                 }
                 Text(selected.map { "Selected fixture: \($0)" } ?? "Select a generated fixture")

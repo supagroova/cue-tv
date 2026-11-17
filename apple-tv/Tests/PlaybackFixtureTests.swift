@@ -20,14 +20,14 @@ import Testing
 
 @Test @MainActor func torrentCleanupDoesNotDeleteReplacementSession() async throws {
     let session = TorrentLabSession()
-    session.start()
+    await session.start()
     let first = try #require(session.cacheDirectory)
     for _ in 0..<100 where session.url == nil {
         try await Task.sleep(for: .milliseconds(50))
     }
     #expect(session.url != nil)
     #expect(FileManager.default.fileExists(atPath: first.path))
-    session.start()
+    await session.start()
     let second = try #require(session.cacheDirectory)
     #expect(second != first)
     for _ in 0..<100 where session.pendingCleanups > 0 || session.url == nil {
@@ -106,4 +106,52 @@ import Testing
     for _ in 0..<100 where releases == 0 { await Task.yield() }
     #expect(coordinator.state == .failed(.invalidMetadata))
     #expect(releases == 1)
+}
+
+@Test func cacheRecoveryRemovesAbandonedSessionsButProtectsActiveLease() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let abandoned = root.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: abandoned, withIntermediateDirectories: true)
+    try Data("abandoned".utf8).write(to: abandoned.appendingPathComponent("piece"))
+    let store = TorrentCacheStore(root: root)
+    let active = try await store.acquire()
+    #expect(!FileManager.default.fileExists(atPath: abandoned.path))
+    do {
+        _ = try await store.acquire()
+        Issue.record("must not allocate while another cache lease is active")
+    } catch {}
+    #expect(FileManager.default.fileExists(atPath: active.path))
+    try await store.release(active)
+    #expect(!FileManager.default.fileExists(atPath: active.path))
+}
+
+@Test func cacheRecoveryDoesNotFollowSessionSymlinks() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("cache")
+    let outside = base.appendingPathComponent("outside")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    let marker = outside.appendingPathComponent("keep")
+    try Data("keep".utf8).write(to: marker)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent(UUID().uuidString), withDestinationURL: outside)
+    let store = TorrentCacheStore(root: root)
+    let lease = try await store.acquire()
+    #expect(FileManager.default.fileExists(atPath: marker.path))
+    try await store.release(lease)
+}
+
+@Test func cacheRecoveryPreservesUnrecognizedFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("not-a-session")
+    try Data("preserve".utf8).write(to: file)
+    let store = TorrentCacheStore(root: root)
+    do {
+        _ = try await store.acquire()
+        Issue.record("unrecognized content must prevent recovery")
+    } catch {}
+    #expect(try Data(contentsOf: file) == Data("preserve".utf8))
 }

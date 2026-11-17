@@ -93,7 +93,7 @@ struct VLCPlaybackLabView: View {
             token = next
             if torrentSource {
                 lifecycle.receive(.discovering, generation: next)
-                torrent.start()
+                await torrent.start()
             } else {
                 let fixture = ProcessInfo.processInfo.environment["CUE_VLC_MATRIX"] == "1" ? "hevc-tracks" : "episode01"
                 url = Bundle.main.url(forResource: fixture, withExtension: "mkv")

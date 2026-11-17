@@ -16,18 +16,35 @@ final class TorrentLabSession {
     private var generation = UUID()
     private var polling: Task<Void, Never>?
 
-    func start() {
+    func start() async {
         stop()
+        let requestedGeneration = generation
+        while pendingCleanups > 0 { try? await Task.sleep(for: .milliseconds(50)) }
+        guard generation == requestedGeneration else { return }
         let fixture = ProcessInfo.processInfo.environment["CUE_LONG_TORRENT"] == "1" ? "long" : "single"
         guard let torrent = Bundle.main.url(forResource: fixture, withExtension: "torrent") else {
             status = "Missing torrent fixture"; return
         }
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent("cue-torrent-\(UUID().uuidString)")
+        let output: URL
+        do { output = try await TorrentCacheStore.shared.acquire() }
+        catch {
+            guard generation == requestedGeneration else { return }
+            status = "Media cache is unavailable; previous cleanup may be incomplete"; return
+        }
+        guard generation == requestedGeneration else {
+            try? await TorrentCacheStore.shared.release(output)
+            return
+        }
         let config: [String: Any] = ["api_version": 1, "torrent_path": torrent.path, "output": output.path,
                                    "file_index": 0, "initial_peers": ["127.0.0.1:42424"]]
-        guard let data = try? JSONSerialization.data(withJSONObject: config), let json = String(data: data, encoding: .utf8) else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: config), let json = String(data: data, encoding: .utf8) else {
+            try? await TorrentCacheStore.shared.release(output); return
+        }
         handle = json.withCString { cue_torrent_start($0) }
-        guard handle != 0 else { status = "Engine rejected configuration"; return }
+        guard handle != 0 else {
+            try? await TorrentCacheStore.shared.release(output)
+            status = "Engine rejected configuration"; return
+        }
         cacheDirectory = output
         status = "Connecting to fixture peer"
         let current = generation
@@ -70,9 +87,7 @@ final class TorrentLabSession {
                     if state == 1 {
                         guard let directory else { return true }
                         do {
-                            if FileManager.default.fileExists(atPath: directory.path) {
-                                try FileManager.default.removeItem(at: directory)
-                            }
+                            try await TorrentCacheStore.shared.release(directory)
                             return true
                         } catch { return false }
                     }
