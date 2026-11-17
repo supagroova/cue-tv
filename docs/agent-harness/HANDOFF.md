@@ -39,3 +39,8 @@ contract is in `docs/standalone-tvos/decisions/003-resume-library-sync.md`; impl
 status and next slice are in `docs/standalone-tvos/PHASE-5.md`. This is a separate
 worktree under `.agent-work/phase5`; the root worktree remains Phase 4 with its two
 unrelated unstaged documentation additions preserved. No Phase 5 runtime claim.
+
+Phase 5 native membership actions now pass the full Core suite (record
+`ff81794c3261435dbdb4d1793429466d` in this worktree's phase-5-library task).
+Add/remove encrypted reopen tests pass; next is FFI/Swift integration and truthful
+save acknowledgement. Root Phase 4 remains untouched. PR7 is now all green.

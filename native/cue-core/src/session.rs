@@ -58,11 +58,13 @@ pub struct Snapshot {
     pub addon: Option<AddonSnapshot>,
     pub details: Option<crate::details::View>,
     pub sources: Option<crate::sources::View>,
+    pub details_in_library: Option<bool>,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    DetailsLibrary(bool, u64, oneshot::Sender<Result<(), &'static str>>),
     SubtitlePlan {
         meta_id: String,
         video_id: String,
@@ -332,6 +334,18 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Acknowledges admission; settled state reports asynchronous persistence errors.
+    pub async fn set_details_library(
+        &self,
+        member: bool,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsLibrary(member, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn load_details(
         &self,
         index: usize,
@@ -496,6 +510,12 @@ fn snapshot(
 ) -> Snapshot {
     let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
+        details_in_library: crate::details::selected_preview(details).map(|meta| {
+            ctx.library
+                .items
+                .get(&meta.id)
+                .is_some_and(|item| item.r#type == meta.r#type && !item.removed && !item.temp)
+        }),
         authenticated: ctx.profile.auth.is_some(),
         catalogs,
         catalog_choices_offset,
@@ -574,6 +594,44 @@ async fn run(
         };
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
+            Command::DetailsLibrary(member, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let Some(meta) = crate::details::selected_preview(&details) else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                // Core keys library records by ID. Never mutate a conflicting type.
+                if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.r#type != meta.r#type)
+                {
+                    let _ = reply.send(Err("library_identity_conflict"));
+                    continue;
+                }
+                if !member && !ctx.library.items.contains_key(&meta.id) {
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
+                let action = if member {
+                    ActionCtx::AddToLibrary(meta.clone())
+                } else {
+                    ActionCtx::RemoveFromLibrary(meta.id.clone())
+                };
+                error = None;
+                (
+                    Msg::Action(Action::Ctx(action)),
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
             Command::Logout(reply) => {
                 if matches!(ctx.status, CtxStatus::Loading(_)) {
                     let _ = reply.send(Err("account_busy"));

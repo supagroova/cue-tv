@@ -90,3 +90,22 @@ pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) ->
             .map(|text| text.chars().take(4096).collect()),
     })
 }
+
+/// Only the selected, successfully loaded metadata can authorize library changes.
+pub fn selected_preview(
+    model: &MetaDetails,
+) -> Option<&stremio_core::types::resource::MetaItemPreview> {
+    let selected = model.selected.as_ref()?;
+    model
+        .meta_items
+        .iter()
+        .filter_map(|page| page.content.as_ref()?.ready())
+        .map(|item| &item.preview)
+        .find(|item| {
+            item.id == selected.meta_path.id
+                && item.r#type == selected.meta_path.r#type
+                && !item.id.is_empty()
+                && item.id.len() <= 512
+                && item.r#type.len() <= 64
+        })
+}
