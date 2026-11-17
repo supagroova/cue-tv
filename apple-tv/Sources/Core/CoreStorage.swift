@@ -9,7 +9,7 @@ nonisolated struct CorePersistenceConfiguration: Sendable {
 /// Filesystem and Keychain work run off the UI actor. Account storage remains separate.
 actor CoreStorage {
     enum Failure: Error, Equatable {
-        case unavailable, missingKey, invalidKey, unsafeDirectory
+        case unavailable, missingKey, missingState, invalidKey, unsafeDirectory
         case keychain(OSStatus)
     }
     static let keyService = "com.cue-tv.stremio-core.storage-v1"
@@ -53,6 +53,13 @@ actor CoreStorage {
             kSecAttrService as String: Self.keyService, kSecAttrAccount as String: keyAccount]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.keychain(status) }
+    }
+
+    func prepareExistingAccount() throws -> CorePersistenceConfiguration {
+        guard removableAccount else { throw Failure.unsafeDirectory }
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("state.bin").path)
+        else { throw Failure.missingState }
+        return try prepare()
     }
 
     func prepare() throws -> CorePersistenceConfiguration {

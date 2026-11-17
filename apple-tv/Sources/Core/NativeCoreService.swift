@@ -98,6 +98,11 @@ actor NativeCoreService: CoreService {
         let configuration = try await CoreStorage.shared.prepare()
         return NativeCoreService(persistence: configuration)
     }
+    nonisolated static func selected(selection: CoreAccountSelection = .shared, accountRoot: URL? = nil) async throws -> NativeCoreService {
+        guard let account = try await selection.load() else { return try await guest() }
+        let configuration = try await CoreStorage.account(id: account.namespace, root: accountRoot).prepareExistingAccount()
+        return NativeCoreService(persistence: configuration, startup: .restoreAccount(account.userID))
+    }
     private var retiringAccount = false
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?

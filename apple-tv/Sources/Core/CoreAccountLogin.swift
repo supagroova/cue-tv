@@ -8,6 +8,7 @@ actor CoreAccountLogin {
     private let selection: CoreAccountSelection
     private var service: NativeCoreService?
     private var operation: Task<NativeCoreService, any Error>?
+    private var cancelled = false
     private var used = false
     private var handedOff = false
     private var preparationStarted = false
@@ -21,6 +22,7 @@ actor CoreAccountLogin {
 
     func signIn(email: String, password: String) async throws -> NativeCoreService {
         try Task.checkCancellation()
+        guard !cancelled else { throw CancellationError() }
         guard !used else { throw Failure.busy }
         used = true
         let task = Task { try await self.authenticate(email: email, password: password) }
@@ -81,6 +83,7 @@ actor CoreAccountLogin {
     /// Explicit cleanup retry remains available if a prior shutdown or Keychain operation failed.
     func cancel() async throws {
         guard !handedOff else { throw Failure.busy }
+        cancelled = true
         if let operation {
             operation.cancel()
             _ = try? await operation.value

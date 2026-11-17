@@ -429,3 +429,31 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     #expect(SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecItemNotFound)
     try await attempt.cancel()
 }
+
+@Test func savedAccountWithoutCiphertextFailsWithoutGuestFallback() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let label = "missing-selection-" + UUID().uuidString
+    let selection = CoreAccountSelection(keyAccount: label)
+    let account = CoreAccountSelection.Account(namespace: UUID(), userID: "fixture-user")
+    defer {
+        for key in [label, "account-v1:" + account.namespace.uuidString.lowercased()] {
+            SecItemDelete([kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:CoreStorage.keyService,
+                kSecAttrAccount as String:key] as CFDictionary)
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+    try await selection.save(account)
+    await #expect(throws: CoreStorage.Failure.missingState) { _ = try await NativeCoreService.selected(selection: selection, accountRoot: root) }
+    #expect(try await selection.load() == account)
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+}
+
+@Test func cancelledLoginAttemptCannotStartLater() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let selection = CoreAccountSelection(keyAccount: "cancel-selection-" + UUID().uuidString)
+    let attempt = CoreAccountLogin(root: root, selection: selection)
+    try await attempt.cancel()
+    await #expect(throws: CancellationError.self) { _ = try await attempt.signIn(email: "", password: "synthetic-password") }
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+    #expect(try await selection.load() == nil)
+}
