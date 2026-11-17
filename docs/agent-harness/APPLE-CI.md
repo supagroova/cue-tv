@@ -5,7 +5,7 @@ The workflow keeps native host tests, unsigned tvOS device compilation, simulato
 ## Independent jobs
 
 - **Native tests and tvOS device build** runs the Core and torrent host suites, then `make apple-build`. The app's pre-build scripts compile both native libraries for the device target.
-- **Apple TV simulator tests** starts simulator boot before cache/tool setup, builds the fixture seeder, and runs `make apple-ci-test`. One Xcode invocation builds both native libraries for the simulator and runs the unit target plus `PlaybackLabTests`.
+- **Apple TV simulator tests** starts simulator boot after cache/tool setup, builds the fixture seeder, and runs `make apple-ci-test`. One Xcode invocation builds both native libraries for the simulator and runs the unit target plus `PlaybackLabTests`.
 - **build-and-test** preserves the existing aggregate check name. It passes only when both jobs succeed; a failed, skipped or cancelled job cannot produce a green aggregate.
 
 The jobs use separate runners, output directories, artifact names and cache keys. Both may restore the previous combined cache once, but discard the unused tvOS architecture before saving their own cache. The first run can still spend time creating those caches. External Action revisions, XcodeGen archive/checksum and Rust versions stay pinned. Cargo resolution stays locked.
@@ -43,4 +43,18 @@ Local validation on branch `codex/apple-ci-speed`, based on `614b74d`:
 - All 12 portable harness tests pass. Workflow/composite YAML parses, `bash -n` passes, and pinned `actionlint` 1.7.12 passes (ShellCheck integration disabled because it was unavailable locally).
 - Local task evidence: `apple-ci-speed`, combined run log `1571562255ff47d384cee3006a5af131.log`; actionlint log `885bc261e7204d438fd9824f53321104.log`. An initial isolated-worktree run failed because a shallow Git repository cannot serve as a submodule reference; a normal pinned submodule clone fixed that setup issue before the successful run.
 
-No product assertions were removed or relaxed. These checks do not replace physical Apple TV qualification. The split workflow itself still requires a remote run after integration.
+No product assertions were removed or relaxed. These checks do not replace physical Apple TV qualification. Remote verification is recorded below.
+
+
+## Remote measurements and deferred-boot experiment
+
+| Run | Native/device | Simulator | Workflow elapsed including queues |
+| --- | ---: | ---: | ---: |
+| [First split run](https://github.com/supagroova/cue-tv/actions/runs/44109834691) | 4m43s | 11m57s | 17m45s |
+| [Warm role-cache run](https://github.com/supagroova/cue-tv/actions/runs/44113416860) | 4m13s | 8m52s | 9m02s |
+
+Both runs passed every required lane. The first restored the legacy 1.85 GB cache and created separate role caches. The second hit those exact role caches (approximately 1.59 GB simulator and 1.61 GB device), skipping cache saves. Its simulator run passed 28 unit tests and 10 short UI tests; the test-count increase came from product work. Both runners started within four seconds of workflow creation on the warm run, compared with queue delays of 5m40s and 10m39s on the first run.
+
+The original 6–7 minute estimate was not achieved. Simulator setup took 186s then 115s, compared with 55s then 50s on the native lane. In the warm run, the simulator cache-hit message appeared about 47s after setup began; cache download/extraction then took about 45s, versus 34s on the native lane. This repeated slowdown supports testing whether simulator boot competes with setup for CPU and disk resources, but does not prove causation.
+
+The next experiment moves only simulator boot after cache/tool setup, retaining overlap with fixture seeder compilation and the existing readiness gate. All required tests, pinning and optional sustained playback remain intact. Workflow lint and portable checks validate the change locally; another remote run is needed to measure its effect. No speedup is claimed for this ordering change yet.

@@ -96,11 +96,11 @@ jobs:
               env.write(f"SIMULATOR_UDID={device['udid']}\n")
           PY
           xcrun simctl list devices available
-      - name: Start simulator boot while tools and caches load
-        run: xcrun simctl boot "$SIMULATOR_UDID"
       - uses: ./.github/actions/setup-apple
         with:
           cache-role: simulator-tests
+      - name: Start simulator boot while fixture seeder builds
+        run: xcrun simctl boot "$SIMULATOR_UDID"
       - name: Install optional media generator
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         run: brew install ffmpeg
