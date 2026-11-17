@@ -47,7 +47,7 @@ Keep process proportional. Reuse accepted requirements; do not ask for another s
 | Harness files/links/skill aliases are intact | `make check` locally and harness CI | Does not validate product behavior |
 | Sensitive file paths are not staged | `make staged-check`, optional pre-commit hook | Path guard, not a complete secret scanner |
 | Task verification records command, tree identity and outcome | `scripts/agent/task.py` | Passing command is evidence, not automatic task acceptance |
-| Apple target compiles and unit tests run | `make apple-build`, `make apple-test` | macOS/Xcode; no physical playback claim |
+| Apple target compiles and unit tests run | `make apple-build`, `make apple-test`, Apple TV CI | macOS/Xcode; no physical playback claim |
 | Physical playback works | Device proof report + reviewer | Manual evidence gate; no hardware CI currently |
 | Authorization, test quality and review judgments | Skills + human/agent review | Not claimed to be runtime-enforced |
 

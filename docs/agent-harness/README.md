@@ -42,7 +42,7 @@ A start creates an immutable task identity and records Git HEAD or snapshot stat
 
 ## Review and CI
 
-Harness CI checks portable logic with read-only repository permission, no secrets and no PR-target execution. It runs only for harness-related changes and does not invoke upstream Android deployment. Existing upstream CI is left unchanged. macOS application checks are explicit local commands until a separately validated macOS CI toolchain is chosen. Adding a required branch-protection check or paid/scheduled AI reviewer is a separate repository setting change.
+Harness CI checks portable logic with read-only repository permission, no secrets and no PR-target execution. It runs only for harness-related changes and does not invoke upstream Android deployment. Existing upstream CI is left unchanged. The Apple TV workflow runs on every push and pull request, and supports manual dispatch. It uses macOS 26 with Xcode 26.6, installs XcodeGen, builds unsigned through `make apple-build`, selects and boots an available tvOS simulator, then runs the existing unit tests through `make apple-test`. Missing simulator/runtime or test failures fail the job. Logs and xcresult bundles are retained as CI artifacts for seven days. UI tests needing a backend and physical-device playback are separate gates. Adding a required branch-protection check or paid/scheduled AI reviewer is a separate repository setting change.
 
 Reviews assess correctness/security, ownership/maintainability, verification and rollback. Physical tests include real torrent transfer, no web-seed/debrid substitution, first frame before full download, uncached seek and cleanup. [Device evidence template](templates/device-proof.md) separates proposed thresholds from measured results.
 
