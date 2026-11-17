@@ -8,6 +8,7 @@ uint32_t cue_core_abi_version(void);
 // Starts an isolated guest session asynchronously; 0 means unavailable/capacity.
 uint64_t cue_core_create(void);
 // Copies input before return. JSON v1: {"version":1,"action":"set_language","language":"fra"}.
+// Or {"version":1,"action":"load_addon","url":"https://host/manifest.json"}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
 int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
 // Returns required byte count, or -1 for an invalid handle. No NUL terminator.

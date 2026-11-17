@@ -141,3 +141,92 @@ async fn failed_effect_stops_its_session_without_stranding_waiters() {
             .unwrap();
     }
 }
+
+#[tokio::test]
+async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET /private-config/manifest.json")
+        );
+        let body = r#"{"id":"org.cue.fixture","version":"1.0.0","name":"Fixture Addon","description":"Owned test fixture","resources":["catalog"],"types":["movie"],"catalogs":[]}"#;
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+    });
+    let mut session = CoreSession::guest(Environment::new().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        session
+            .load_addon("file:///private/manifest.json")
+            .await
+            .is_err()
+    );
+    session
+        .load_addon(&format!("http://{address}/private-config/manifest.json"))
+        .await
+        .unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    let addon = state.addon.as_ref().unwrap();
+    assert_eq!(addon.status, "ready");
+    assert_eq!(addon.name.as_deref(), Some("Fixture Addon"));
+    assert_eq!(addon.id.as_deref(), Some("org.cue.fixture"));
+    assert!(
+        !serde_json::to_string(&state)
+            .unwrap()
+            .contains("private-config")
+    );
+    server.await.unwrap();
+    session.stop().await;
+}
+
+#[tokio::test]
+async fn stale_manifest_failure_cannot_replace_newer_selection() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let old_url = format!("http://{}/old-secret/manifest.json", old.local_addr().unwrap());
+    let new = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let new_url = format!("http://{}/manifest.json", new.local_addr().unwrap());
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let first = tokio::spawn(async move {
+        let (mut socket, _) = old.accept().await.unwrap();
+        let mut request = [0;4096];
+        socket.read(&mut request).await.unwrap();
+        started.send(()).unwrap();
+        released.await.unwrap();
+        socket.write_all(b"HTTP/1.1 500 Error\r\nContent-Length: 14\r\nConnection: close\r\n\r\nprivate-secret").await.unwrap();
+    });
+    let second = tokio::spawn(async move {
+        let (mut socket, _) = new.accept().await.unwrap();
+        let mut request = [0;4096];
+        socket.read(&mut request).await.unwrap();
+        let body = r#"{"id":"new","version":"1.0.0","name":"New selection","description":"Fixture","resources":[],"types":[],"catalogs":[]}"#;
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+    });
+    let mut session = CoreSession::guest(Environment::new().unwrap()).await.unwrap();
+    session.load_addon(&old_url).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), ready).await.unwrap().unwrap();
+    session.load_addon(&new_url).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if session.snapshot().addon.as_ref().and_then(|a| a.id.as_deref()) == Some("new") { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    release.send(()).unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    assert_eq!(state.addon.as_ref().unwrap().id.as_deref(), Some("new"));
+    assert!(!serde_json::to_string(&state).unwrap().contains("secret"));
+    first.await.unwrap(); second.await.unwrap();
+    session.stop().await;
+}

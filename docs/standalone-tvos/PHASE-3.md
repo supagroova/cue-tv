@@ -77,8 +77,8 @@ jobs for every branch push; manual qualification remains opt-in.
 
 - Extend the owned context/model actor beyond settings to the service operations
   needed by browsing and account integration.
-- Add the versioned C ABI and Swift service; test malformed envelopes, ownership,
-  stale callbacks and post-stop calls.
+- Extend the versioned C ABI and Swift service beyond settings/add-on preview;
+  preserve ownership, malformed-envelope and post-stop guarantees.
 - Persist guest state, version/recover storage and implement protected account
   secrets, identity changes and queued-write cancellation.
 - Verify and implement the pinned upstream authentication/sign-out flow; no
@@ -177,3 +177,23 @@ add-ons, sources, account/library operations and durable storage remain required
 
 All 23 simulator unit tests pass after restoring delivery (2.659 seconds of test
 execution). These checks do not establish physical-device behavior.
+
+
+## Network-driven add-on model
+
+The owner now includes Core's actual `AddonDetails` model and combines its effects
+with `Ctx` effects. `load_addon` travels from the Swift service protocol through
+strict C JSON admission to Core's load action and HTTP transport. HTTP(S) manifest
+URLs (including normalized Stremio URLs) are validated before dispatch; local
+file URLs, credentials, fragments and oversized inputs are rejected. Configured
+URL paths/query strings stay inside Core. Snapshots expose only bounded ID/name
+and loading/ready/failed state, never transport URLs or raw network errors.
+
+A controlled HTTP test proves action → real Core manifest request → parsed model
+state. A second test holds an old request open, loads a newer selection, then
+releases the old request with a failure; Core ignores that stale result and keeps
+the new selection. Native tests total 16 and pass. The device application build
+and all 23 simulator unit tests pass; Swift also verifies local-file add-on URLs
+are rejected. The successful network round trip is currently host-native evidence,
+not yet simulator/device network qualification. Add-on installation, catalogue,
+metadata, search, sources, same-URL retry policy and account operations remain.

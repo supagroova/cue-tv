@@ -5,26 +5,56 @@ use serde::Serialize;
 use std::{collections::VecDeque, sync::Arc};
 use stremio_core::{
     constants::PROFILE_STORAGE_KEY,
-    models::ctx::Ctx,
+    models::{
+        addon_details::{AddonDetails, Selected as AddonSelected},
+        common::Loadable,
+        ctx::Ctx,
+    },
     runtime::{
-        Effect, EffectFuture, Env, EnvError, Update,
-        msg::{Action, ActionCtx, Event, Msg},
+        Effect, EffectFuture, Env, EnvError, Update, UpdateWithCtx,
+        msg::{Action, ActionCtx, ActionLoad, Event, Msg},
     },
     types::{notifications::NotificationsBucket, profile::Profile, server_urls::ServerUrlsBucket},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Clone, Debug, Serialize)]
+pub struct AddonSnapshot {
+    pub status: &'static str,
+    pub id: Option<String>,
+    pub name: Option<String>,
+}
+pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static str> {
+    if url.len() > 2048 {
+        return Err("invalid_addon_url");
+    }
+    let selected: AddonSelected = serde_json::from_value(serde_json::json!({"transportUrl":url}))
+        .map_err(|_| "invalid_addon_url")?;
+    let url = &selected.transport_url;
+    if !matches!(url.scheme(), "https" | "http")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || !url.path().ends_with("/manifest.json")
+    {
+        return Err("invalid_addon_url");
+    }
+    Ok(selected)
+}
+#[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
     pub revision: u64,
     pub stopped: bool,
     pub interface_language: String,
     pub addon_count: usize,
+    pub addon: Option<AddonSnapshot>,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
 enum Command {
     Language(String, oneshot::Sender<Result<(), &'static str>>),
+    Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
     Effect(Msg),
 }
 pub struct CoreSession {
@@ -64,7 +94,7 @@ impl CoreSession {
             }
         };
         let (commands, inbox) = mpsc::channel(64);
-        let initial = snapshot(&ctx, 0, 0, false, None);
+        let initial = snapshot(&ctx, &AddonDetails::default(), 0, 0, false, None);
         let (publish, state) = watch::channel(initial);
         let env = environment.clone();
         let outgoing = commands.clone();
@@ -107,6 +137,14 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn load_addon(&self, url: &str) -> Result<(), &'static str> {
+        let selected = validate_addon_url(url)?;
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Addon(selected, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -134,6 +172,7 @@ impl Drop for CoreSession {
 }
 fn snapshot(
     ctx: &Ctx,
+    addon: &AddonDetails,
     revision: u64,
     pending_effects: usize,
     stopped: bool,
@@ -144,6 +183,26 @@ fn snapshot(
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
         addon_count: ctx.profile.addons.len(),
+        addon: addon
+            .remote_addon
+            .as_ref()
+            .map(|addon| match &addon.content {
+                Loadable::Loading => AddonSnapshot {
+                    status: "loading",
+                    id: None,
+                    name: None,
+                },
+                Loadable::Err(_) => AddonSnapshot {
+                    status: "failed",
+                    id: None,
+                    name: None,
+                },
+                Loadable::Ready(value) => AddonSnapshot {
+                    status: "ready",
+                    id: Some(value.manifest.id.chars().take(256).collect()),
+                    name: Some(value.manifest.name.chars().take(256).collect()),
+                },
+            }),
         pending_effects,
         error,
     }
@@ -155,6 +214,7 @@ async fn run(
     publish: watch::Sender<Snapshot>,
     env: Arc<Environment>,
 ) {
+    let mut addon = AddonDetails::default();
     let mut revision = 0;
     let mut pending = 0usize;
     let mut error = None;
@@ -170,6 +230,13 @@ async fn run(
                 settings.interface_language = language;
                 (
                     Msg::Action(Action::Ctx(ActionCtx::UpdateSettings(settings))),
+                    Some(reply),
+                )
+            }
+            Command::Addon(selected, reply) => {
+                error = None;
+                (
+                    Msg::Action(Action::Load(ActionLoad::AddonDetails(selected))),
                     Some(reply),
                 )
             }
@@ -193,7 +260,9 @@ async fn run(
                 }
                 continue;
             }
-            let effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message);
+            let effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message).join(
+                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &message, &ctx),
+            );
             if effects.has_changed {
                 revision += 1;
             }
@@ -219,7 +288,7 @@ async fn run(
                 }
             }
         }
-        publish.send_replace(snapshot(&ctx, revision, pending, false, error));
+        publish.send_replace(snapshot(&ctx, &addon, revision, pending, false, error));
         if let Some(reply) = reply {
             let _ = reply.send(if error.is_none() {
                 Ok(())
@@ -229,5 +298,12 @@ async fn run(
         }
     }
     inbox.close();
-    publish.send_replace(snapshot(&ctx, revision, 0, true, env.failure().or(error)));
+    publish.send_replace(snapshot(
+        &ctx,
+        &addon,
+        revision,
+        0,
+        true,
+        env.failure().or(error),
+    ));
 }

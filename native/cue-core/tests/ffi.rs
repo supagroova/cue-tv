@@ -60,11 +60,14 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     assert_eq!(cue_core_release(next), 1);
     let handles: Vec<_> = (0..8).map(|_| cue_core_create()).collect();
     assert!(handles.iter().all(|handle| *handle != 0));
-    assert_eq!(cue_core_create(), 0, "unreleased sessions must remain bounded");
+    assert_eq!(
+        cue_core_create(),
+        0,
+        "unreleased sessions must remain bounded"
+    );
     for handle in handles {
         cue_core_stop(handle);
         until(|| cue_core_stop_status(handle) == 1);
         assert_eq!(cue_core_release(handle), 1);
     }
-
 }

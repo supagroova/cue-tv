@@ -3,11 +3,18 @@ import CueCore
 
 nonisolated struct CoreSnapshot: Decodable, Sendable {
     enum Status: String, Decodable, Sendable { case starting, ready, stopped }
+    struct Addon: Decodable, Sendable {
+        enum Status: String, Decodable, Sendable { case loading, ready, failed }
+        let status: Status
+        let id: String?
+        let name: String?
+    }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
         let interfaceLanguage: String
         let addonCount: Int
+        let addon: Addon?
         let pendingEffects: Int
         let error: String?
     }
@@ -18,8 +25,16 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     let error: String?
 }
 
+nonisolated protocol CoreService: Sendable {
+    func start() async throws
+    func snapshot() async throws -> CoreSnapshot
+    func setInterfaceLanguage(_ language: String) async throws
+    func loadAddon(_ manifestURL: String) async throws
+    func stop() async throws
+}
+
 /// Serializes native admission off the UI actor. No account data crosses this initial service.
-actor NativeCoreService {
+actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout }
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?
@@ -46,8 +61,16 @@ actor NativeCoreService {
     }
 
     func setInterfaceLanguage(_ language: String) throws {
+        try dispatch(["version": 1, "action": "set_language", "language": language])
+    }
+
+    func loadAddon(_ manifestURL: String) throws {
+        try dispatch(["version": 1, "action": "load_addon", "url": manifestURL])
+    }
+
+    private func dispatch(_ command: [String: Any]) throws {
         guard let handle, retirement == nil else { throw Failure.stopped }
-        let bytes = try JSONSerialization.data(withJSONObject: ["version": 1, "action": "set_language", "language": language])
+        let bytes = try JSONSerialization.data(withJSONObject: command)
         let result = bytes.withUnsafeBytes { cue_core_dispatch(handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count) }
         switch result {
         case 0: return

@@ -13,6 +13,7 @@ import Testing
     }
     #expect(state.status == .ready)
     #expect(state.model?.interfaceLanguage == "eng")
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.loadAddon("file:///private/manifest.json") }
     try await service.setInterfaceLanguage("fra")
     for _ in 0..<100 {
         state = try await service.snapshot()

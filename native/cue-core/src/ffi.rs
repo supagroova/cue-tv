@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 struct Entry {
-    commands: mpsc::Sender<String>,
+    commands: mpsc::Sender<Command>,
     snapshot: Mutex<Vec<u8>>,
     stop: CancellationToken,
     stopped: AtomicBool,
@@ -89,7 +89,7 @@ pub extern "C" fn cue_core_create() -> u64 {
     }))
     .unwrap_or(0)
 }
-async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<String>) {
+async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<Command>) {
     let env = match Environment::new() {
         Ok(env) => env,
         Err(_) => {
@@ -118,10 +118,13 @@ async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<String>) 
                 _ = entry.stop.cancelled() => break,
                 _ = env.cancelled() => break,
                 command = inbox.recv() => {
-                    let Some(language) = command else { break; };
+                    let Some(command) = command else { break; };
                     tokio::select! { biased;
                         _ = entry.stop.cancelled() => break,
-                        result = session.set_interface_language(&language) => {
+                        result = async { match command {
+                            Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
+                            Command::LoadAddon { url, .. } => session.load_addon(&url).await,
+                        }} => {
                             if result.is_err() { break; }
                         }
                     }
@@ -152,11 +155,24 @@ async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<String>) 
     entry.stopped.store(true, Ordering::Release);
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Command {
-    version: u32,
-    action: String,
-    language: String,
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+enum Command {
+    SetLanguage { version: u32, language: String },
+    LoadAddon { version: u32, url: String },
+}
+impl Command {
+    fn valid(&self) -> bool {
+        match self {
+            Self::SetLanguage { version, language } => {
+                *version == 1
+                    && language.len() == 3
+                    && language.bytes().all(|b| b.is_ascii_lowercase())
+            }
+            Self::LoadAddon { version, url } => {
+                *version == 1 && crate::session::validate_addon_url(url).is_ok()
+            }
+        }
+    }
 }
 /// # Safety
 /// A non-null input must be readable for `length` bytes for this call.
@@ -171,11 +187,7 @@ pub unsafe extern "C" fn cue_core_dispatch(handle: u64, bytes: *const u8, length
         else {
             return -2;
         };
-        if command.version != 1
-            || command.action != "set_language"
-            || command.language.len() != 3
-            || !command.language.bytes().all(|b| b.is_ascii_lowercase())
-        {
+        if !command.valid() {
             return -2;
         }
         let Some(entry) = lookup(handle) else {
@@ -184,7 +196,7 @@ pub unsafe extern "C" fn cue_core_dispatch(handle: u64, bytes: *const u8, length
         if entry.stop.is_cancelled() {
             return -1;
         }
-        match entry.commands.try_send(command.language) {
+        match entry.commands.try_send(command) {
             Ok(()) => 0,
             Err(mpsc::error::TrySendError::Full(_)) => -3,
             Err(_) => -1,
