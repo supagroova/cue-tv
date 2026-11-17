@@ -67,6 +67,29 @@ import Testing
         #expect(await recorder.calls.map(\.action) == [.start, .retire])
     }
 
+    @Test @MainActor func closeRetryDoesNotReplayAnAlreadyAdmittedSampleTwice() async {
+        let gate = AccountingReplayGate()
+        let owner = PlaybackAccountingOwner { action, time, _ in try await gate.execute(action, time) }
+        #expect(await owner.start())
+        let decoder = UUID()
+        owner.activateDecoder(decoder)
+        #expect(owner.sample(time: 100, duration: 2000, state: .playing, decoder: decoder))
+        while !(await gate.entered) { await Task.yield() }
+        // Distinct backward seeks are barriers and cannot coalesce into one slot.
+        var rejected = false
+        for time in stride(from: 99, through: 1, by: -1) {
+            if !owner.sample(time: time, duration: 2000, state: .playing, decoder: decoder) {
+                await gate.failOnce(at: UInt64(time)); rejected = true; break
+            }
+        }
+        #expect(rejected)
+        await gate.release()
+        #expect(!(await owner.close()))
+        #expect(await owner.close())
+        #expect(await gate.targetAttempts == 2) // One failed attempt and its retry only.
+        #expect(await gate.closes == 1)
+    }
+
     @Test @MainActor func seekPauseAndPeriodicSaveKeepTheirOrder() async {
         let recorder = AccountingRecorder()
         var clock = ContinuousClock.now
@@ -118,5 +141,27 @@ private actor AccountingStartGate {
             await withCheckedContinuation { continuation = $0 }
         }
     }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+private actor AccountingReplayGate {
+    private(set) var entered = false
+    private(set) var targetAttempts = 0
+    private(set) var closes = 0
+    private var target: UInt64?
+    private var continuation: CheckedContinuation<Void, Never>?
+    enum Failure: Error { case write }
+    func execute(_ action: CorePlaybackAction, _ time: UInt64) async throws {
+        if action == .unpause {
+            entered = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+        if action == .seek, time == target {
+            targetAttempts += 1
+            if targetAttempts == 1 { throw Failure.write }
+        }
+        if action == .close { closes += 1 }
+    }
+    func failOnce(at time: UInt64) { target = time }
     func release() { continuation?.resume(); continuation = nil }
 }

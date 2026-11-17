@@ -432,3 +432,17 @@ including the existing seek/pause/periodic-save/durable-close ordering test.
 Fifteen portable harness tests pass. Full simulator suite now passes all 68 tests (30bcc6708e4b4850917ae1ad3b7ff703);
 unsigned tvOS device build passes (35750d6679c04c75a4e3d898276fafb4). Parent retention and resume choice still
 required as described above.
+
+
+### Phase 5 — buffered observation retry ownership
+
+A blocked native operation can fill the bounded accounting queue. Close admits the
+retained decoder observation after draining. If execution then fails, the queue
+already retains it; keeping a second copy in PlaybackAccountingOwner caused a
+second successful seek/checkpoint after retry. Transfer ownership at admission,
+before awaiting the result. Regression fills the real queue using distinct seeks,
+fails the retained seek once, then verifies exactly two attempts (failure + retry)
+and one durable Close. Red fa99e8d747c84f26a86cdcd267b41cee failed only the attempt
+count. Green 4d7e495960b4499ca2d0b352bd3fde31 passes all five accounting owner tests.
+This does not resolve ambiguous native timeouts; production integration still needs
+receipt reconciliation, parent retention and Resume/Restart choice.

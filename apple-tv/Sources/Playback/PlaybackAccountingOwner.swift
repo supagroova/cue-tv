@@ -97,9 +97,12 @@ final class PlaybackAccountingOwner {
         if queue.failed, !(await queue.retry()) { return false }
         guard await queue.flush() else { return false }
         if let rejected {
-            guard queue.enqueue(rejected), await queue.flush() else { return false }
+            guard queue.enqueue(rejected) else { return false }
             if !rejected.isEmpty { hasObservation = true }
             self.rejected = nil
+            // Once admitted, the queue owns retries; retaining another copy would
+            // replay the same seek/save group after a failed execution.
+            guard await queue.flush() else { return false }
         }
         // Repeated close observes the sealed queue; it never starts another owner.
         // An owner started only to inspect resume must not overwrite that record.
