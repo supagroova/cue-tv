@@ -18,7 +18,7 @@ async fn rejected_login_keeps_guest_identity_and_redacts_server_errors() {
         ));
         Ok(serde_json::to_vec(&json!({"error":{"code":1,"message":"synthetic-password fixture@example.test rejected"}})).unwrap())
     }));
-    let mut session = CoreSession::guest(env.clone()).await.unwrap();
+    let mut session = CoreSession::new_account(env.clone()).await.unwrap();
     session
         .login("fixture@example.test", "synthetic-password")
         .await
@@ -76,7 +76,7 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         };
         Ok(serde_json::to_vec(&result).unwrap())
     }));
-    let mut session = CoreSession::guest(env.clone()).await.unwrap();
+    let mut session = CoreSession::new_account(env.clone()).await.unwrap();
     assert_eq!(
         session.login("", "password").await,
         Err("invalid_credentials")
@@ -141,6 +141,10 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         .await
         .unwrap();
     assert!(restored.snapshot().authenticated);
+    assert_eq!(
+        restored.login("other@example.test", "password").await,
+        Err("account_login_unavailable")
+    );
     restored.logout().await.unwrap();
     for _ in 0..200 {
         if !restored.snapshot().authenticated && restored.snapshot().pending_effects == 0 {
@@ -149,6 +153,10 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(!restored.snapshot().authenticated);
+    assert_eq!(
+        restored.login("other@example.test", "password").await,
+        Err("account_login_unavailable")
+    );
     let profile = restored_env
         .scope(async { NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY).await })
         .await
@@ -186,6 +194,11 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         .await
         .is_err()
     );
+    assert!(
+        CoreSession::new_account(Environment::persistent(&directory, &key).unwrap())
+            .await
+            .is_err()
+    );
     let mut guest = CoreSession::guest(Environment::persistent(&directory, &key).unwrap())
         .await
         .unwrap();
@@ -193,4 +206,20 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
     guest.stop().await;
     drop(guest);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn guest_cannot_admit_account_credentials() {
+    let env = Environment::new().unwrap();
+    *env.test_http.lock().unwrap() =
+        Some(Arc::new(|_, _| panic!("Guest must not send login traffic")));
+    let mut guest = CoreSession::guest(env).await.unwrap();
+    assert_eq!(
+        guest
+            .login("fixture@example.test", "synthetic-password")
+            .await,
+        Err("account_login_unavailable")
+    );
+    assert!(!guest.snapshot().authenticated);
+    guest.stop().await;
 }

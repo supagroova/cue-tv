@@ -97,9 +97,9 @@ pub struct CoreSession {
     owner: Option<tokio::task::JoinHandle<()>>,
 }
 impl CoreSession {
-    /// Guest-only entry until protected account storage and authentication are integrated.
+    /// Guest startup never accepts account credentials.
     pub async fn guest(environment: Arc<Environment>) -> Result<Self, EnvError> {
-        Self::restore(environment, None).await
+        Self::restore(environment, None, false).await
     }
     /// Restore only the account identity selected by protected app storage.
     /// This does not authenticate a new account or validate token freshness.
@@ -110,11 +110,20 @@ impl CoreSession {
         if expected_user.is_empty() || expected_user.len() > 512 {
             return Err(EnvError::StorageUnavailable);
         }
-        Self::restore(environment, Some(expected_user)).await
+        Self::restore(environment, Some(expected_user), false).await
+    }
+    /// A new login requires an empty dedicated account store.
+    pub async fn new_account(environment: Arc<Environment>) -> Result<Self, EnvError> {
+        if !environment.storage_is_empty()? {
+            environment.shutdown().await;
+            return Err(EnvError::StorageUnavailable);
+        }
+        Self::restore(environment, None, true).await
     }
     async fn restore(
         environment: Arc<Environment>,
         expected_user: Option<&str>,
+        allow_login: bool,
     ) -> Result<Self, EnvError> {
         let setup = environment
             .scope(async {
@@ -165,6 +174,7 @@ impl CoreSession {
                 outgoing,
                 publish.clone(),
                 env.clone(),
+                allow_login,
             )))
             .catch_unwind()
             .await;
@@ -439,6 +449,7 @@ async fn run(
     outgoing: mpsc::Sender<Command>,
     publish: watch::Sender<Snapshot>,
     env: Arc<Environment>,
+    mut allow_login: bool,
 ) {
     let mut addon = AddonDetails::default();
     let mut catalog = crate::catalog::Catalog::default();
@@ -466,6 +477,7 @@ async fn run(
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
+                allow_login = false;
                 error = None;
                 addon_generation += 1;
                 catalog_generation += 1;
@@ -489,6 +501,10 @@ async fn run(
                 )
             }
             Command::Login(request, reply) => {
+                if !allow_login {
+                    let _ = reply.send(Err("account_login_unavailable"));
+                    continue;
+                }
                 if ctx.profile.auth.is_some() || matches!(ctx.status, CtxStatus::Loading(_)) {
                     let _ = reply.send(Err("account_busy"));
                     continue;
