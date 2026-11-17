@@ -317,3 +317,19 @@ Swift tests, full native tests and the unsigned tvOS build pass. An existing sig
 startup exceeded its one-second wait; it now waits until ready with a three-second
 deadline and retains the same readiness assertion. Decoder callbacks, lifecycle
 controls, periodic coalescing and resume UI remain unconnected.
+
+## Bounded Swift accounting queue
+
+PlaybackAccountingQueue serializes native operations with a default 32-operation
+bound including the in-flight operation. Adjacent unsent played samples coalesce;
+seek, pause, checkpoint and close boundaries do not. Close seals admission only
+when accepted. Capacity rejection preserves prior intent and is returned to the
+caller. An operation failure retains the failed operation and all pending work;
+flush reports failure and explicit retry resumes the queue. No automatic replay
+is claimed safe after an ambiguous timeout; caller reconciliation remains required.
+
+Tests hold the operation boundary while submitting 1000 progress samples, then
+verify the exact played/seek/save/close order. They also cover failed-close retry
+and capacity rejection without eviction or falsely sealing Close. This queue is
+not yet connected to the VLC callbacks or lifecycle controls. All 63 Swift tests,
+the unsigned tvOS build and 15 harness tests pass.

@@ -329,3 +329,21 @@ test but existing initial account startup missed its1s polling budget
 Unsigned device build passes354f38d2acd84f92934f6dc884f8c6fb;15 harness tests pass.
 Next: connect a single Swift playback accounting owner to decoder callbacks and
 queued lifecycle barriers; keep seek/reposition separate from played progress.
+
+### Phase 5 bounded Swift callback queue
+
+Added PlaybackAccountingQueue: one asynchronous worker, bounded32 operations
+including in-flight work, adjacent unsent played-sample coalescing, ordered explicit
+barriers, sealed accepted Close, retained failure queue and explicit retry/flush.
+Tests use a held external operation boundary, not mocked Core accounting. Missing
+class red6a8575a2b99f499bbc50b52796f51d84; first62 Swift tests green
+ce5120378e2a41faae6aaf636dea1dc0. Added capacity rejection/Close admission coverage;
+all63 Swift tests pass008a7f5be1f247839f7f334a33e00373;15 harness tests pass.
+Unsigned device build passes05519bd99ed74c8e8e9d3afd2f4ecdd8. Production UI integration
+still outstanding. In particular, native timeout may have admitted an operation;
+retry must not infer durable Close success from a stale token.
+
+CI helper confirmed PR13 at18ca94a passed: simulator11m24, native/device3m49.
+Native and Swift dependency caches hit, exact native artifact cache missed on
+changed inputs. Slower compilation/UI execution explains most of the difference
+from9m05; no failure or retry. Local checkpoint/Close/bridge commits remain to push.
