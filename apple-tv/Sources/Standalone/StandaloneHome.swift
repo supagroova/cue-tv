@@ -24,11 +24,11 @@ struct StandaloneHome: View {
                                 Button("\(catalog.name) · \(catalog.kind)") {
                                     let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
                                     Task {
-                                        await model.perform { service, revision in
+                                        let admitted = await model.perform { service, revision in
                                             if query.isEmpty { try await service.loadCatalog(index: catalog.index, expectedRevision: revision) }
                                             else { try await service.searchCatalog(index: catalog.index, query: query, expectedRevision: revision) }
                                         }
-                                        screen = .titles
+                                        if admitted { screen = .titles }
                                     }
                                 }.disabled(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !catalog.searchable)
                             }
@@ -43,7 +43,7 @@ struct StandaloneHome: View {
                         case .titles:
                             if let catalog = state.catalog {
                                 ForEach(Array(catalog.items.enumerated()), id: \.offset) { index, title in
-                                    Button(title.name) { Task { await model.perform { try await $0.loadDetails(index: index, expectedRevision: $1) }; screen = .details } }
+                                    Button(title.name) { Task { if await model.perform({ try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
                                 }
                                 if catalog.status == .loading { ProgressView() }
                                 if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
@@ -55,9 +55,9 @@ struct StandaloneHome: View {
                                 if let description = details.description { Text(description) }
                                 if details.status == .loading { ProgressView() }
                                 ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                    Button(video.title) { Task { await model.perform { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }; screen = .sources } }
+                                    Button(video.title) { Task { if await model.perform({ try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
                                 }
-                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { await model.perform { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }; screen = .sources } } }
+                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { if await model.perform({ try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } } }
                                 if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
                                 if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
                             }

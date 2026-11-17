@@ -43,14 +43,18 @@ final class StandaloneModel {
         if let service { try? await service.stop() }
     }
 
-    func perform(_ action: @Sendable (any CoreService, UInt64) async throws -> Void) async {
-        guard let service, let revision = snapshot?.model?.revision else { return }
+    @discardableResult
+    func perform(_ action: @Sendable (any CoreService, UInt64) async throws -> Void) async -> Bool {
+        guard let service, let revision = snapshot?.model?.revision else { return false }
         let token = generation
         error = nil
-        do { try await action(service, revision) }
-        catch {
-            guard generation == token else { return }
+        do {
+            try await action(service, revision)
+            return generation == token && !Task.isCancelled
+        } catch {
+            guard generation == token, !Task.isCancelled else { return false }
             self.error = "That selection is no longer available. Please try again."
+            return false
         }
     }
 

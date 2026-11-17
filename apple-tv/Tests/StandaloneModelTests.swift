@@ -75,3 +75,19 @@ private actor ActionGate {
     func wait() async { await withCheckedContinuation { continuation = $0 } }
     func open() { continuation?.resume(); continuation = nil }
 }
+
+@Test @MainActor func commandAdmissionRejectsUnavailableAndInvalidSelections() async throws {
+    let model = StandaloneModel(service: NativeCoreService())
+    let unavailable = await model.perform { _, _ in Issue.record("Unavailable session must not dispatch") }
+    #expect(!unavailable)
+    let run = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let rejected = await model.perform { service, revision in try await service.loadCatalog(index: -1, expectedRevision: revision) }
+    #expect(!rejected)
+    #expect(model.error != nil)
+    let accepted = await model.perform { service, _ in try await service.setInterfaceLanguage("fra") }
+    #expect(accepted)
+    #expect(model.error == nil)
+    run.cancel()
+    await run.value
+}
