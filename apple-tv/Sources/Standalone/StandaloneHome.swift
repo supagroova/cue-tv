@@ -94,8 +94,20 @@ struct StandaloneHome: View {
                                 Text(details.name ?? "Title").font(.title)
                                 if let description = details.description { Text(description) }
                                 if details.status == .loading { ProgressView() }
+                                if !details.seasons.isEmpty {
+                                    ScrollView(.horizontal) {
+                                        HStack {
+                                            Button("All episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.selectDetailsSeason(nil, expectedRevision: $1) } } }
+                                                .disabled(details.selectedSeason == nil)
+                                            ForEach(details.seasons, id: \.self) { season in
+                                                Button(season == 0 ? "Specials" : "Season \(season)") { Task { await model.perform(expectedRevision: state.revision) { try await $0.selectDetailsSeason(season, expectedRevision: $1) } } }
+                                                    .disabled(details.selectedSeason == season)
+                                            }
+                                        }.padding(.vertical, 12)
+                                    }
+                                }
                                 ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                    Button(video.title) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                    Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
                                 }
                                 if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } } }
                                 if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }

@@ -13,7 +13,15 @@ pub fn selection(
     video_offset: usize,
     index: Option<usize>,
 ) -> Option<Selected> {
-    let view = crate::details::view(model, video_offset)?;
+    selection_filtered(model, video_offset, index, None)
+}
+pub fn selection_filtered(
+    model: &MetaDetails,
+    video_offset: usize,
+    index: Option<usize>,
+    season: Option<u32>,
+) -> Option<Selected> {
+    let view = crate::details::view_filtered(model, video_offset, season)?;
     if view.status != "ready" {
         return None;
     }

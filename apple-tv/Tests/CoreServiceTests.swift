@@ -98,6 +98,24 @@ import Security
     #expect(state.model?.details?.description == "Owned title details")
     #expect(state.model?.details?.videoTotal == 30)
     #expect(state.model?.details?.videos.count == 24)
+    #expect(state.model?.details?.seasons == [1, 2])
+    try await service.selectDetailsSeason(2, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.selectedSeason == 2 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.selectedSeason == 2)
+    #expect(state.model?.details?.videoTotal == 15)
+    #expect(state.model?.details?.videos.first?.id == "cue-fixture:16")
+    #expect(state.model?.details?.videos.last?.id == "cue-fixture:30")
+    try await service.selectDetailsSeason(nil, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.selectedSeason == nil { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.videoTotal == 30)
     try await service.showDetailsVideos(offset: 24, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {
         state = try await service.snapshot()
@@ -230,7 +248,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
                 let range = requestText.contains("skip=30") ? 30..<30 : requestText.contains("skip=27") ? 27..<30 : 0..<27
                 let metas = range.map { index in ["id": index == 0 ? "cue-fixture" : "cue-fixture-\(index)", "name": index == 0 ? (requestText.contains("search=needle") ? "Search result" : "Simulator film") : "Film \(index)", "type": "movie"] }
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
-                let videos = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)"] }
+                let videos: [[String: Any]] = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)", "season": $0 <= 15 ? 1 : 2, "episode": ($0 - 1) % 15 + 1] }
                 let metadataBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["meta": ["id": "cue-fixture", "type": "movie", "name": "Detailed simulator film", "description": "Owned title details", "videos": videos]]), as: UTF8.self)
                 let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] }
                 let sourceBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["streams": streams]), as: UTF8.self)

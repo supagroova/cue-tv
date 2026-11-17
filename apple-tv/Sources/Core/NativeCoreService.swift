@@ -14,7 +14,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
-    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int }
+    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
     struct Source: Decodable, Sendable {
         enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
         let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
@@ -69,6 +69,7 @@ nonisolated protocol CoreService: Sendable {
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
+    func selectDetailsSeason(_ season: UInt32?, expectedRevision: UInt64) async throws
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
@@ -200,6 +201,10 @@ actor NativeCoreService: CoreService {
 
     func installAddon(expectedRevision: UInt64) throws {
         try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
+    }
+
+    func selectDetailsSeason(_ season: UInt32?, expectedRevision: UInt64) throws {
+        try dispatch(["version": 1, "action": "details_season", "season": season.map { $0 as Any } ?? NSNull(), "revision": expectedRevision])
     }
 
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) throws {

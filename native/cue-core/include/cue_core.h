@@ -31,6 +31,7 @@ uint64_t cue_core_restore_account(const uint8_t *path, size_t path_length, const
 // Catalogue-choice window: {"version":1,"action":"catalog_choices","offset":N,"revision":N}.
 // Content window, fetching the next Core page when needed: {"version":1,"action":"catalog_items","offset":N,"revision":N}.
 // Title details from an index in the displayed content window: {"version":1,"action":"load_details","index":N,"revision":N}.
+// Select season (null means all); resets video offset: {"version":1,"action":"details_season","season":N,"revision":N}.
 // Episode/video window: {"version":1,"action":"details_videos","offset":N,"revision":N}.
 // Load sources for a displayed video index (null for a movie without videos): {"version":1,"action":"load_sources","index":N,"revision":N}.
 // Sign out: {"version":1,"action":"logout"}; wait for state/effects before retiring storage.

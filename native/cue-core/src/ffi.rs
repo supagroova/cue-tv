@@ -287,6 +287,7 @@ async fn own(
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
                             Command::DetailsVideos { offset, revision, .. } => session.show_details_videos(offset, revision).await,
+                            Command::DetailsSeason { season, revision, .. } => session.select_details_season(season, revision).await,
                             Command::LoadSources { index, revision, .. } => session.load_sources(index, revision).await,
                             Command::SourceWindow { offset, revision, .. } => session.show_sources(offset, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
@@ -358,6 +359,11 @@ enum Command {
         version: u32,
         revision: u64,
     },
+    DetailsSeason {
+        version: u32,
+        season: Option<u32>,
+        revision: u64,
+    },
     DetailsVideos {
         version: u32,
         offset: usize,
@@ -401,6 +407,7 @@ impl Command {
             Self::PrepareTorrent { .. } | Self::Login { .. } => false,
             Self::Logout { version } => *version == 1,
             Self::InstallAddon { version, .. }
+            | Self::DetailsSeason { version, .. }
             | Self::DetailsVideos { version, .. }
             | Self::LoadSources { version, .. }
             | Self::SourceWindow { version, .. }

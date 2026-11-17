@@ -82,3 +82,39 @@ fn an_empty_provider_does_not_hide_other_pending_source_results() {
     assert!(!empty.loading);
     assert!(empty.items.is_empty());
 }
+
+#[test]
+fn season_filter_pages_and_selects_only_the_requested_season() {
+    let mut model = series();
+    let Some(Loadable::Ready(meta)) = model.meta_items[0].content.as_mut() else {
+        panic!("fixture")
+    };
+    let videos: Vec<_> = (1..=30).flat_map(|episode| [1, 2].map(move |season|
+        serde_json::json!({"id":format!("owned-series:{season}:{episode}"), "title":"Same title", "season":season, "episode":episode})
+    )).collect();
+    meta.videos = serde_json::from_value(serde_json::json!(videos)).unwrap();
+    let first = cue_core::details::view_filtered(&model, 0, Some(2)).unwrap();
+    assert_eq!(first.seasons, vec![1, 2]);
+    assert_eq!(first.selected_season, Some(2));
+    assert_eq!(first.video_total, 30);
+    assert_eq!(first.videos.len(), 24);
+    assert_eq!(first.videos[0].id, "owned-series:2:1");
+    let last = cue_core::details::view_filtered(&model, 24, Some(2)).unwrap();
+    assert_eq!(last.videos.len(), 6);
+    assert_eq!(last.videos[5].id, "owned-series:2:30");
+    let selected = cue_core::sources::selection_filtered(&model, 24, Some(5), Some(2)).unwrap();
+    assert_eq!(selected.stream_path.unwrap().id, "owned-series:2:30");
+    assert!(cue_core::sources::selection_filtered(&model, 24, Some(6), Some(2)).is_none());
+    assert_eq!(
+        cue_core::details::view_filtered(&model, 0, None)
+            .unwrap()
+            .video_total,
+        60
+    );
+    assert!(
+        cue_core::details::view_filtered(&model, 0, Some(99))
+            .unwrap()
+            .videos
+            .is_empty()
+    );
+}

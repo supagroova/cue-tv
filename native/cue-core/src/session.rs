@@ -77,6 +77,7 @@ enum Command {
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    DetailsSeason(Option<u32>, u64, oneshot::Sender<Result<(), &'static str>>),
     Sources(
         Option<usize>,
         u64,
@@ -157,6 +158,7 @@ impl CoreSession {
             &crate::catalog::Catalog::default(),
             &MetaDetails::default(),
             0,
+            None,
             0,
             0,
             0,
@@ -339,6 +341,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn select_details_season(
+        &self,
+        season: Option<u32>,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsSeason(season, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn load_sources(
         &self,
         index: Option<usize>,
@@ -404,6 +417,7 @@ fn snapshot(
     catalog: &crate::catalog::Catalog,
     details: &MetaDetails,
     video_offset: usize,
+    selected_season: Option<u32>,
     source_offset: usize,
     catalog_choices_offset: usize,
     catalog_item_offset: usize,
@@ -419,7 +433,7 @@ fn snapshot(
         catalog_choices_offset,
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
-        details: crate::details::view(details, video_offset),
+        details: crate::details::view_filtered(details, video_offset, selected_season),
         sources: crate::sources::view(details, source_offset),
         revision,
         stopped,
@@ -477,6 +491,7 @@ async fn run(
     let mut details_generation = 0u64;
     let mut source_generation = 0u64;
     let mut video_offset = 0usize;
+    let mut selected_season = None;
     let mut source_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
     let mut catalog_item_offset = 0usize;
@@ -508,6 +523,7 @@ async fn run(
                 catalog_choices_offset = 0;
                 catalog_item_offset = 0;
                 video_offset = 0;
+                selected_season = None;
                 source_offset = 0;
                 revision += 1;
                 (
@@ -659,6 +675,7 @@ async fn run(
                         &catalog,
                         &details,
                         video_offset,
+                        selected_season,
                         source_offset,
                         catalog_choices_offset,
                         catalog_item_offset,
@@ -694,6 +711,7 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -710,8 +728,12 @@ async fn run(
                     let _ = reply.send(Err("stale_details"));
                     continue;
                 }
-                let Some(selected) = crate::sources::selection(&details, video_offset, index)
-                else {
+                let Some(selected) = crate::sources::selection_filtered(
+                    &details,
+                    video_offset,
+                    index,
+                    selected_season,
+                ) else {
                     let _ = reply.send(Err("invalid_video"));
                     continue;
                 };
@@ -765,6 +787,7 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -781,7 +804,7 @@ async fn run(
                     let _ = reply.send(Err("stale_details"));
                     continue;
                 }
-                let view = crate::details::view(&details, 0);
+                let view = crate::details::view_filtered(&details, 0, selected_season);
                 if !view.is_some_and(|view| {
                     view.status == "ready" && (offset == 0 || offset < view.video_total)
                 }) {
@@ -796,6 +819,40 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
+                    source_offset,
+                    catalog_choices_offset,
+                    catalog_item_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::DetailsSeason(season, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let view = crate::details::view_filtered(&details, 0, season);
+                if !view.is_some_and(|view| {
+                    view.status == "ready" && (season.is_none() || view.video_total > 0)
+                }) {
+                    let _ = reply.send(Err("invalid_season"));
+                    continue;
+                }
+                video_offset = 0;
+                selected_season = season;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    &details,
+                    video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -831,6 +888,7 @@ async fn run(
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
                 video_offset = 0;
+                selected_season = None;
                 source_offset = 0;
                 error = None;
                 let selected = DetailsSelected {
@@ -988,6 +1046,7 @@ async fn run(
             &catalog,
             &details,
             video_offset,
+            selected_season,
             source_offset,
             catalog_choices_offset,
             catalog_item_offset,
@@ -1012,6 +1071,7 @@ async fn run(
         &catalog,
         &details,
         video_offset,
+        selected_season,
         source_offset,
         catalog_choices_offset,
         catalog_item_offset,
