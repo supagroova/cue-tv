@@ -5,10 +5,13 @@ import Observation
 /// samples coalesce; seek/pause/save/close remain barriers. Failures retain intent.
 @MainActor @Observable
 final class PlaybackAccountingQueue {
-    private struct Operation {
+    struct Operation {
         let action: CorePlaybackAction
         let time: UInt64
         let duration: UInt64
+        init(_ action: CorePlaybackAction, time: UInt64 = 0, duration: UInt64 = 0) {
+            self.action = action; self.time = time; self.duration = duration
+        }
     }
     private let capacity: Int
     private let execute: @Sendable (CorePlaybackAction, UInt64, UInt64) async throws -> Void
@@ -29,16 +32,26 @@ final class PlaybackAccountingQueue {
     /// existing operation is evicted to make room for a lifecycle barrier.
     @discardableResult
     func enqueue(_ action: CorePlaybackAction, time: UInt64 = 0, duration: UInt64 = 0) -> Bool {
-        guard !sealed, !failed, time <= UInt64(Int64.max), duration <= UInt64(Int64.max),
-              action == .seek || action == .played || (time == 0 && duration == 0) else { return false }
-        let operation = Operation(action: action, time: time, duration: duration)
-        if action == .played, pending.last?.action == .played {
-            pending[pending.count - 1] = operation
-        } else {
-            guard pendingCount < capacity else { return false }
-            pending.append(operation)
+        enqueue([Operation(action, time: time, duration: duration)])
+    }
+
+    /// A callback can require a seek/pause/save group. Admit the entire group or
+    /// preserve the original queue, so capacity cannot split a lifecycle event.
+    @discardableResult
+    func enqueue(_ operations: [Operation]) -> Bool {
+        guard !sealed, !failed else { return false }
+        var next = pending
+        var nextSealed = false
+        for operation in operations {
+            let action = operation.action
+            guard !nextSealed, operation.time <= UInt64(Int64.max), operation.duration <= UInt64(Int64.max),
+                  action == .seek || action == .played || (operation.time == 0 && operation.duration == 0) else { return false }
+            if action == .played, next.last?.action == .played { next[next.count - 1] = operation }
+            else { next.append(operation) }
+            guard next.count + (inFlight ? 1 : 0) <= capacity else { return false }
+            if action == .close || action == .retire { nextSealed = true }
         }
-        if action == .close || action == .retire { sealed = true }
+        pending = next; sealed = nextSealed
         startWorker()
         return true
     }

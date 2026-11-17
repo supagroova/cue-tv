@@ -34,6 +34,7 @@ import Testing
         while !(await gate.entered) { await Task.yield() }
         #expect(queue.enqueue(.seek, time: 500, duration: 1000))
         #expect(!queue.enqueue(.close))
+        #expect(!queue.enqueue([.init(.pause), .init(.checkpoint)]))
         #expect(queue.pendingCount == 2)
         await gate.release()
         #expect(await queue.flush())
@@ -42,6 +43,22 @@ import Testing
         let calls = await gate.calls
         #expect(calls.map(\.action) == [.start, .seek, .close])
         #expect(calls.map(\.time) == [0, 500, 0])
+    }
+
+    @Test @MainActor func callbackBatchCannotPartiallyFit() async {
+        let gate = AccountingGate()
+        let queue = PlaybackAccountingQueue(capacity: 2) { action, time, duration in
+            try await gate.execute(action, time, duration)
+        }
+        #expect(queue.enqueue(.start))
+        while !(await gate.entered) { await Task.yield() }
+        #expect(!queue.enqueue([.init(.seek, time: 500, duration: 1000), .init(.checkpoint)]))
+        #expect(queue.pendingCount == 1)
+        #expect(queue.enqueue(.close))
+        await gate.release()
+        #expect(await queue.flush())
+        let calls = await gate.calls
+        #expect(calls.map(\.action) == [.start, .close])
     }
 
     @Test @MainActor func failedCloseRetainsIntentAndRetryMustFinishBeforeSuccess() async {

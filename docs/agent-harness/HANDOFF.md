@@ -347,3 +347,33 @@ CI helper confirmed PR13 at18ca94a passed: simulator11m24, native/device3m49.
 Native and Swift dependency caches hit, exact native artifact cache missed on
 changed inputs. Slower compilation/UI execution explains most of the difference
 from9m05; no failure or retry. Local checkpoint/Close/bridge commits remain to push.
+
+### Phase 5 decoder accounting adapter — local verification
+
+Added PlaybackAccountingOwner and PlaybackReposition. Explicit decoder activation
+rejects stale sample generations. It classifies initial/resumed/backward/reposition
+clocks as Seek, ordinary playback as played, pause as seek+pause+checkpoint, and
+uses a five-second monotonic deadline. Reposition samples wait within500ms of the
+clamped target; actual VLC callback integration still needs validation. Callback
+groups use atomic queue admission; capacity cannot leave half a seek/save operation.
+Owner close drains queued work and retained rejected work before durable Close.
+
+Missing-class red9686db785a8947b399c915f0fdcf6e9d; initial64 tests green
+039a93045ccd44da956309d10e9e6331. Stale-generation regression reproduced
+6b767993f3d24818a0cad34e45af9ef3 (late callback added unwanted unpause/seek/save).
+Explicit activation fix and partial-batch test: all65 Swift tests green
+e0b21d6ee8ba49d8a772fef6d9c15d90. Device build passes
+85332a6854d2452bba6acd1f91024fb0;15 harness tests pass. No native changes in this slice.
+
+UI integration findings: SourcePlaybackView polls VLC at100ms, tears transfer down
+immediately on Close and currently lacks duration/reposition metadata. Add duration
+and seek markers in VLCPlaybackSurface, including caption-refresh repositioning.
+Retain accounting owner in StandaloneModel (not only view State): a disappeared
+view whose close fails must not lose the token and leave the next source permanently
+busy. Before new prepare, close the old owner and revalidate selection/revision.
+Source retry should explicitly activate a new decoder generation on the same Core
+owner. Avoid implicit generation switching from callbacks. Concurrent start calls
+and async view disappearance need tests before wiring; current start reports false
+while another start is pending. Resume choice/initial-position retrieval must precede
+resetting an existing resume offset with a new decoder's zero position. Existing
+C/Swift operation cancellation does not undo already admitted native actions.

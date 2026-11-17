@@ -333,3 +333,20 @@ verify the exact played/seek/save/close order. They also cover failed-close retr
 and capacity rejection without eviction or falsely sealing Close. This queue is
 not yet connected to the VLC callbacks or lifecycle controls. All 63 Swift tests,
 the unsigned tvOS build and 15 harness tests pass.
+
+## Decoder accounting adapter
+
+PlaybackAccountingOwner classifies explicit decoder generations and reposition
+markers before queueing Core operations. Initial/resumed decoder position, backward
+movement and confirmed repositioning become Seek; ordinary played progress remains
+TimeChanged. A requested reposition waits for the observed clock within 500ms of
+the bounded target. Pause/seek completion checkpoint immediately, and playing
+samples checkpoint at a five-second monotonic-clock cadence. Close stops admission
+and drains accepted work before its durable barrier. Unknown decoder duration is 0.
+
+Only activateDecoder may change generation; stale callbacks are rejected. Callback
+groups enter the bounded queue atomically, preserving seek/pause/save as a unit on
+capacity rejection. Tests cover ordered classification/cadence, stale generations
+and no partial batch admission. All 65 Swift tests, the unsigned tvOS build and 15 harness tests pass. Real VLC duration/seek
+markers, retained parent ownership, resume choice and lifecycle UI are not wired yet;
+this is not proof of end-to-end resume or physical suspension behavior.
