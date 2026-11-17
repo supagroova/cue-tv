@@ -217,6 +217,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= 3 }, evaluatedWith: nil)
             waitForExpectations(timeout: 20)
             XCTAssertFalse(app.staticTexts["source-playback-error"].exists)
+            XCTAssertEqual(clock.value as? String, "Duration: 36 seconds", "Duration must come from the selected decoded fixture")
             let screenshot = app.screenshot()
             // Owned media encode episode one blue, episode two green, and the tail-index file red.
             // Inspect decoded pixels, independently of source labels and the requested file index.

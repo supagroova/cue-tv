@@ -350,3 +350,18 @@ capacity rejection. Tests cover ordered classification/cadence, stale generation
 and no partial batch admission. All 65 Swift tests, the unsigned tvOS build and 15 harness tests pass. Real VLC duration/seek
 markers, retained parent ownership, resume choice and lifecycle UI are not wired yet;
 this is not proof of end-to-end resume or physical suspension behavior.
+
+## VLC observations and startup coordination
+
+VLC snapshots now carry the media's current duration and persistent reposition
+markers for remote seeks and caption-refresh seeks. Requested positions are
+clamped to VLC's supported integer range. The player clock exposes duration to
+accessibility without changing its elapsed-time label. The owned peer journey
+verifies the selected 36-second episode's duration, decoded green frame and Close.
+This does not yet connect the snapshots to Core checkpoint accounting.
+
+Repeated accounting Start calls wait for the same native receipt. Close during
+Start waits for startup, then retires before a decoder can be activated. Tests hold
+the native operation boundary and assert that neither the second Start nor Close
+returns early. All 67 Swift tests, the unsigned tvOS build and 15 harness tests pass; strengthened assertions also pass in the
+three-test accounting suite. Parent ownership and Resume/Restart UI remain required.

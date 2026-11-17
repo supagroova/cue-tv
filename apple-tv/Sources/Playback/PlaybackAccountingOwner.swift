@@ -32,9 +32,11 @@ final class PlaybackAccountingOwner {
         queue = PlaybackAccountingQueue(execute: execute)
     }
     func start() async -> Bool {
-        if started { return ready && !closing }
-        started = true
-        guard queue.enqueue(.start), await queue.flush() else { return false }
+        if !started {
+            started = true
+            guard queue.enqueue(.start) else { return false }
+        }
+        guard await queue.flush() else { return false }
         ready = true
         return !closing
     }

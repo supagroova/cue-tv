@@ -20,6 +20,7 @@ struct SourcePlaybackView: View {
     @State private var audioCount = 0
     @State private var subtitleCount = 0
     @State private var milliseconds = 0
+    @State private var durationMilliseconds = 0
     @State private var seekRequest: UUID?
     @State private var seekTarget = 0
     @State private var hasPlayed = false
@@ -37,6 +38,7 @@ struct SourcePlaybackView: View {
                     guard let token, token == model.generation else { return }
                     if let rejected = snapshot.failedSubtitleSelection { subtitles.decoderFailed(selectionID: rejected) }
                     milliseconds = snapshot.milliseconds
+                    durationMilliseconds = snapshot.durationMilliseconds
                     audioCount = snapshot.audioTracks; subtitleCount = snapshot.subtitleTracks
                     if snapshot.state == .error { controller.stop(); model.coordinator.receive(.failed(.decoder), generation: token) }
                     else if snapshot.state == .stopped, hasPlayed { stopAndClose() }
@@ -50,6 +52,7 @@ struct SourcePlaybackView: View {
                 }.id(url).frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 }.frame(maxHeight: .infinity)
                 Text("\(milliseconds / 1000)s").monospacedDigit().accessibilityIdentifier("source-playback-time")
+                    .accessibilityValue(durationMilliseconds > 0 ? "Duration: \(durationMilliseconds / 1000) seconds" : "Duration unknown")
                 HStack {
                     Button(paused ? "Resume" : "Pause") { paused.toggle() }
                     Button("Back 10 seconds") { seek(to: max(0, milliseconds - 10000)) }
@@ -111,7 +114,7 @@ struct SourcePlaybackView: View {
     }
     private func reset() {
         controller.stop(); paused = false; audio = 0; subtitle = -1
-        milliseconds = 0; hasPlayed = false; seekRequest = nil
+        milliseconds = 0; durationMilliseconds = 0; hasPlayed = false; seekRequest = nil
     }
     private func seek(to target: Int) {
         guard let token = model.generation else { return }

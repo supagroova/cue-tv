@@ -377,3 +377,28 @@ and async view disappearance need tests before wiring; current start reports fal
 while another start is pending. Resume choice/initial-position retrieval must precede
 resetting an existing resume offset with a new decoder's zero position. Existing
 C/Swift operation cancellation does not undo already admitted native actions.
+
+### Phase 5 VLC timing and concurrent startup
+
+Fixed the previously documented concurrent-start race. Held Start reproduced the
+second caller's false result332ffc3e9b7c47b2aa73e062c466e090. Both callers now await
+the one queued Start; first green b8e340a2ae2e416fb6caa3580098d728. Added Close
+during Start and explicit not-finished-before-release assertions. All67 Swift tests
+pass8f695640ef5a423d9188fc5cea013baf; final three targeted owner tests pass
+3caa0e3223584656a119e5ca5374451b. The first targeted invocation omitted pinned
+Cargo environment and failed build d6a9446d187a44e5963155a3102eacf7; rerun included
+the documented CARGO_HOME/RUSTUP_HOME/PATH. This was not an application failure.
+
+VLCPlaybackSnapshot now carries durationMilliseconds and PlaybackReposition.
+Explicit remote seek uses its request UUID; subtitle-refresh reposition gets a new
+UUID. SourcePlaybackView publishes duration as the elapsed clock's accessibility
+value. New36-second duration assertion failed before implementation
+b3170b6731274aa7a988b9454db91d27 and passes the real owned peer journey
+e4c1dfb66d18483fa1849b89ee309734 (decoded green frame and Close also retained).
+No Core accounting callback wiring yet. Unsigned device build passes
+e3427e8cb80b49a9bf1a26b45edcd2b7;15 harness tests pass.
+Next still requires retained parent accounting ownership, generation activation,
+resume-position retrieval/choice before decoder starts, then actual callback/lifecycle
+integration. A service pause receipt can inspect the newly started Core position
+without adding watched time; verify same-video versus different-episode restoration
+before using it for Resume. No library journal or physical qualification completed.
