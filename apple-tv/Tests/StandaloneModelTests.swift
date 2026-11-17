@@ -43,3 +43,35 @@ import Testing
     second.cancel()
     await second.value
 }
+
+@Test @MainActor func retiredActionCannotOverwriteRestartedGuestState() async throws {
+    let service = NativeCoreService()
+    let model = StandaloneModel(service: service)
+    let first = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let oldSession = model.snapshot?.session
+    let gate = ActionGate()
+    let action = Task { await model.perform { _, _ in
+        await gate.wait()
+        throw NativeCoreService.Failure.stopped
+    } }
+    for _ in 0..<100 where !(await gate.waiting) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await gate.waiting)
+    first.cancel()
+    let second = Task { await model.run() }
+    await first.value
+    for _ in 0..<100 where model.snapshot?.status != .ready || model.snapshot?.session == oldSession { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.session != oldSession)
+    await gate.open()
+    await action.value
+    #expect(model.error == nil)
+    second.cancel()
+    await second.value
+}
+
+private actor ActionGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    var waiting: Bool { continuation != nil }
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func open() { continuation?.resume(); continuation = nil }
+}

@@ -45,14 +45,26 @@ final class StandaloneModel {
 
     func perform(_ action: @Sendable (any CoreService, UInt64) async throws -> Void) async {
         guard let service, let revision = snapshot?.model?.revision else { return }
+        let token = generation
         error = nil
         do { try await action(service, revision) }
-        catch { self.error = "That selection is no longer available. Please try again." }
+        catch {
+            guard generation == token else { return }
+            self.error = "That selection is no longer available. Please try again."
+        }
     }
 
     func prepare(index: Int) async -> CoreTorrentRequest? {
         guard let service, let revision = snapshot?.model?.revision else { return nil }
-        do { return try await service.prepareTorrent(index: index, expectedRevision: revision) }
-        catch { self.error = "This source could not be prepared. Select it again or choose another source."; return nil }
+        let token = generation
+        do {
+            let request = try await service.prepareTorrent(index: index, expectedRevision: revision)
+            guard generation == token, !Task.isCancelled else { return nil }
+            return request
+        } catch {
+            guard generation == token, !Task.isCancelled else { return nil }
+            self.error = "This source could not be prepared. Select it again or choose another source."
+            return nil
+        }
     }
 }
