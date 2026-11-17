@@ -98,3 +98,23 @@ core = 100%). These are debug simulator process samples on the Mac, including
 startup and seeking, with synthetic low-bitrate video. They are not physical
 memory/energy budgets, peak allocation tracking, hardware-decode confirmation,
 or proof of realistic 1080p throughput.
+
+### Playback-stall watchdog
+
+A new coordinator regression reproduced the absence of a timeout after entering
+`playing`. The coordinator now fails with the read category and retires resources
+after 30 seconds without advancing decoder time. Duplicate time values, backward
+values, stale generation callbacks and repeated `playing` state notifications do
+not refresh the deadline. Pause cancels it; resuming starts a fresh deadline.
+VLC supplies observed decoder time to this contract. Injected-clock tests cover
+failure/cleanup, pause, progress refresh and canceled-timer rejection. The manual
+minute-and-distant-seek test also passed with the watchdog active. This does not
+detect a frozen video frame while the decoder's clock continues to advance.
+
+The owned 12-second VLC fixture also exposed missing natural-end cleanup. A
+remote-driven test first failed because the player never returned to fixture
+selection. Observing VLC's stopped state after actual playback now retires the
+session immediately; the same test passes without waiting for the stall deadline.
+Verification for this change: 21 unit tests, the six existing short UI tests,
+the new natural-end UI regression, and the separate manual minute-and-seek run
+passed. The latter remains excluded from automatic CI.

@@ -16,6 +16,7 @@ final class PlaybackSessionCoordinator {
     private var teardown: (@MainActor () async -> Void)?
     private var retirement: Task<Void, Never>?
     private var deadline: Task<Void, Never>?
+    private var lastProgress: Int?
     private let wait: (Duration) async throws -> Void
 
     init(wait: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
@@ -42,6 +43,16 @@ final class PlaybackSessionCoordinator {
             _ = retire()
         }
         state = next
+        lastProgress = nil
+        armDeadline()
+    }
+
+    /// Only advancing decoder time refreshes the playing deadline; repeated
+    /// polling, stale callbacks and byte downloads do not prove playback progress.
+    func reportProgress(milliseconds: Int, generation token: UUID) {
+        guard token == generation, teardown != nil, state == .playing,
+              milliseconds >= 0, milliseconds > (lastProgress ?? -1) else { return }
+        lastProgress = milliseconds
         armDeadline()
     }
 
@@ -61,11 +72,13 @@ final class PlaybackSessionCoordinator {
         case .discovering: duration = .seconds(30); failure = .discovery
         case .buffering: duration = .seconds(30); failure = .buffering
         case .seeking: duration = .seconds(15); failure = .read
+        case .playing: duration = .seconds(30); failure = .read
         default: deadline = nil; return
         }
         let token = generation
         let expected = state
         deadline = Task { [weak self, wait] in
+            guard !Task.isCancelled else { return }
             do { try await wait(duration) } catch { return }
             guard !Task.isCancelled, let self, self.generation == token, self.state == expected else { return }
             self.receive(.failed(failure), generation: token)
@@ -74,6 +87,7 @@ final class PlaybackSessionCoordinator {
 
     private func retire() -> UUID {
         deadline?.cancel(); deadline = nil
+        lastProgress = nil
         generation = UUID()
         let previous = retirement
         let release = teardown

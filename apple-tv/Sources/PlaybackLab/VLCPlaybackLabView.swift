@@ -19,6 +19,7 @@ struct VLCPlaybackLabView: View {
     @State private var seekRequest: UUID?
     @State private var seeking = false
     @State private var firstProgress: String?
+    @State private var hasPlayed = false
     private var seekMilliseconds: Int { ProcessInfo.processInfo.environment["CUE_VLC_LONG_SEEK"] == "1" ? 600000 : 8000 }
     @State private var lifecycle = PlaybackSessionCoordinator()
     @State private var token: UUID?
@@ -29,7 +30,9 @@ struct VLCPlaybackLabView: View {
                 VLCFixtureSurface(url: url, audioIndex: requestedAudio, subtitleIndex: requestedSubtitle,
                                   paused: requestedPause, seekRequest: seekRequest, seekMilliseconds: seekMilliseconds) { [generation = token] snapshot in
                     guard let generation, generation == token else { return }
+                    if snapshot.state == .stopped, hasPlayed { stop(); return }
                     milliseconds = snapshot.milliseconds
+                    if milliseconds > 500 { hasPlayed = true }
                     if firstProgress == nil, milliseconds > 500, torrent.totalBytes > 0 {
                         firstProgress = "VLC first progress: \(torrent.verifiedBytes)/\(torrent.totalBytes)"
                     }
@@ -40,7 +43,10 @@ struct VLCPlaybackLabView: View {
                     if seeking, snapshot.milliseconds < seekMilliseconds - 500 { return }
                     seeking = false
                     if paused { lifecycle.receive(.paused, generation: generation) }
-                    else if snapshot.milliseconds > 500 { lifecycle.receive(.playing, generation: generation) }
+                    else if snapshot.milliseconds > 500 {
+                        lifecycle.receive(.playing, generation: generation)
+                        lifecycle.reportProgress(milliseconds: snapshot.milliseconds, generation: generation)
+                    }
                 }
                     .id(url).frame(height: 360)
                 Text(paused ? "VLC paused" : "VLC active")
@@ -87,7 +93,7 @@ struct VLCPlaybackLabView: View {
         url = nil; milliseconds = 0; token = nil
         requestedAudio = 0; requestedSubtitle = 0
         requestedPause = false; paused = false; seekRequest = nil; seeking = false
-        firstProgress = nil
+        firstProgress = nil; hasPlayed = false
         Task {
             let next = await lifecycle.begin {
                 url = nil; milliseconds = 0; token = nil

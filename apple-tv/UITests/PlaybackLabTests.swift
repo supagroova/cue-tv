@@ -2,6 +2,21 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testVLCNaturalEndReleasesPlayback() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
+        app.launchEnvironment["CUE_VLC_LAB"] = "1"
+        app.launch()
+        let play = app.buttons["Play MKV with VLC"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
+        // The owned fixture is 12 seconds; completion must not wait for a stall timeout.
+        XCTAssertTrue(play.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Playback failed: read"].exists)
+    }
+
+    @MainActor
     func testVLCPauseSeekAndResume() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"

@@ -209,3 +209,56 @@ import Testing
     try FileManager.default.moveItem(at: backup, to: root)
     try await store.release(lease)
 }
+
+@Test @MainActor func stalledPlaybackTimesOutAndReleasesResources() async throws {
+    let coordinator = PlaybackSessionCoordinator(wait: { _ in })
+    var releases = 0
+    let token = try #require(await coordinator.begin { releases += 1 })
+    coordinator.receive(.playing, generation: token)
+    for _ in 0..<100 where releases == 0 { await Task.yield() }
+    #expect(coordinator.state == .failed(.read))
+    #expect(releases == 1)
+}
+
+@Test @MainActor func pausedPlaybackDoesNotRunStallDeadline() async throws {
+    let coordinator = PlaybackSessionCoordinator(wait: { _ in })
+    var releases = 0
+    let token = try #require(await coordinator.begin { releases += 1 })
+    coordinator.receive(.playing, generation: token)
+    coordinator.receive(.paused, generation: token)
+    for _ in 0..<100 { await Task.yield() }
+    #expect(coordinator.state == .paused)
+    #expect(releases == 0)
+    await coordinator.stop()
+}
+
+@Test @MainActor func onlyAdvancingCurrentPlaybackRefreshesStallDeadline() async throws {
+    var timers: [CheckedContinuation<Void, Never>] = []
+    defer { for timer in timers { timer.resume() } }
+    let coordinator = PlaybackSessionCoordinator(wait: { duration in
+        guard duration == .seconds(30) else { throw CancellationError() }
+        await withCheckedContinuation { timers.append($0) }
+    })
+    let token = try #require(await coordinator.begin {})
+    coordinator.receive(.playing, generation: token)
+    coordinator.reportProgress(milliseconds: 1000, generation: token)
+    for _ in 0..<100 where timers.count < 1 { await Task.yield() }
+    try #require(timers.count == 1)
+    coordinator.reportProgress(milliseconds: 2000, generation: token)
+    for _ in 0..<100 where timers.count < 2 { await Task.yield() }
+    try #require(timers.count == 2)
+    // A canceled deadline cannot fail the still-progressing session.
+    timers.removeFirst().resume()
+    for _ in 0..<10 { await Task.yield() }
+    #expect(coordinator.state == .playing)
+    coordinator.reportProgress(milliseconds: 2000, generation: token)
+    coordinator.reportProgress(milliseconds: 1500, generation: token)
+    coordinator.reportProgress(milliseconds: 3000, generation: UUID())
+    coordinator.receive(.playing, generation: token)
+    for _ in 0..<10 { await Task.yield() }
+    try #require(timers.count == 1)
+    timers.removeFirst().resume()
+    for _ in 0..<100 where coordinator.state == .playing { await Task.yield() }
+    #expect(coordinator.state == .failed(.read))
+    await coordinator.stop()
+}
