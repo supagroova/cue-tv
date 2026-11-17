@@ -4,20 +4,25 @@ use std::{path::PathBuf, time::Duration};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn peer_bytes_ranges_and_teardown() {
-    check_fixture("single", 0, false).await;
+    check_fixture("single", 0, false, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn magnet_resolves_metadata_from_peer() {
-    check_fixture("single", 0, true).await;
+    check_fixture("single", 0, true, false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multifile_selects_second_episode() {
-    check_fixture("multi-episode", 1, true).await;
+    check_fixture("multi-episode", 1, true, false).await;
 }
 
-async fn check_fixture(name: &str, index: usize, magnet: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tracker_discovers_peer_without_initial_addresses() {
+    check_fixture("single", 0, true, true).await;
+}
+
+async fn check_fixture(name: &str, index: usize, magnet: bool, tracker: bool) {
     tokio::time::timeout(Duration::from_secs(45), async {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let torrent =
@@ -72,11 +77,33 @@ async fn check_fixture(name: &str, index: usize, magnet: bool) {
             .into_handle()
             .unwrap();
         seed.wait_until_completed().await.unwrap();
+        let tracker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tracker_address = tracker_listener.local_addr().unwrap();
+        let mut reply = b"d8:intervali60e5:peers6:".to_vec();
+        reply.extend_from_slice(&[127, 0, 0, 1]);
+        reply.extend_from_slice(&address.port().to_be_bytes());
+        reply.push(b'e');
+        let announcements = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let requests = announcements.clone();
+        let tracker_task = tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/announce",
+                axum::routing::get(move || {
+                    let reply = reply.clone();
+                    let requests = requests.clone();
+                    async move {
+                        requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        reply
+                    }
+                }),
+            );
+            axum::serve(tracker_listener, app).await.unwrap();
+        });
         let download = tempfile::tempdir().unwrap();
         let playback = PlaybackSession::start_source(
             if magnet {
                 TorrentSource::Magnet(format!(
-                    "magnet:?xt=urn:btih:{}",
+                    "magnet:?xt=urn:btih:{}&tr=http://{tracker_address}/announce",
                     seed.info_hash().as_string()
                 ))
             } else {
@@ -84,8 +111,8 @@ async fn check_fixture(name: &str, index: usize, magnet: bool) {
             },
             index,
             download.path().to_owned(),
-            vec![address],
-            false,
+            if tracker { vec![] } else { vec![address] },
+            tracker,
         )
         .await
         .unwrap();
@@ -132,6 +159,10 @@ async fn check_fixture(name: &str, index: usize, magnet: bool) {
         let url = playback.url.clone();
         playback.stop().await;
         assert!(client.get(url).send().await.is_err());
+        if tracker {
+            assert!(announcements.load(std::sync::atomic::Ordering::Relaxed) > 0);
+        }
+        tracker_task.abort();
         seeder.stop().await;
     })
     .await

@@ -15,7 +15,7 @@ Run `cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml`
 ## Evidence
 
 - Native byte-range boundary and two C ABI invalid-input/idempotent-stop tests pass.
-- Three real peer integration tests pass (torrent file, magnet metadata resolution, second-episode selection): empty download directory, separate seeder, suffix request first, HEAD, invalid range (416), full file byte comparison, endpoint unavailable after stop. Deadline is 45 seconds.
+- Four real peer integration tests pass (torrent file, magnet metadata resolution, second-episode selection, tracker discovery with no initial peer addresses): empty download directory, separate seeder, suffix request first, HEAD, invalid range (416), full file byte comparison, endpoint unavailable after stop. Deadline is 45 seconds.
 - Seven existing/fixture Swift unit tests pass with the Rust library linked.
 - Two tvOS simulator UI tests pass: local decoder start/stop and direct torrent fixture playback clock advancing beyond 0.5 seconds. Simulator runtime is tvOS 26.5.
 - Full app, including the final Rust bridge, builds unsigned for the Apple TV device target.
