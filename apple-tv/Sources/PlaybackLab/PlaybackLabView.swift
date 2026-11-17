@@ -8,6 +8,8 @@ struct PlaybackLabView: View {
     @State private var player: AVPlayer?
     @State private var selected: String?
     @State private var advanced = false
+    @State private var playbackSeconds = 0.0
+    @State private var firstFrameEvidence: String?
     @State private var error: String?
     @State private var torrent = TorrentLabSession()
 
@@ -17,7 +19,9 @@ struct PlaybackLabView: View {
             Text("Decoder controls and controlled-peer torrent proof").foregroundStyle(.secondary)
             if let player {
                 VideoPlayer(player: player).frame(height: 450)
+                Text(String(format: "%.1f", playbackSeconds)).font(.caption).accessibilityIdentifier("playback-seconds")
                 Text(advanced ? "Playback advanced" : "Waiting for video").accessibilityIdentifier("playback-progress")
+                if let firstFrameEvidence { Text(firstFrameEvidence).accessibilityIdentifier("first-frame-evidence") }
                 Button("Stop playback") { stop() }
             } else {
                 ForEach(fixtures) { fixture in
@@ -42,7 +46,13 @@ struct PlaybackLabView: View {
         }
         .task(id: selected) {
             while !Task.isCancelled, let player {
-                advanced = player.currentTime().seconds > 0.5
+                playbackSeconds = player.currentTime().seconds
+                if !advanced, player.currentTime().seconds > 0.5 {
+                    advanced = true
+                    if torrent.totalBytes > 0 {
+                        firstFrameEvidence = "First playback progress: \(torrent.verifiedBytes)/\(torrent.totalBytes) verified bytes"
+                    }
+                }
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
@@ -77,6 +87,8 @@ struct PlaybackLabView: View {
         player = nil
         selected = nil
         advanced = false
+        playbackSeconds = 0
+        firstFrameEvidence = nil
     }
 }
 #endif

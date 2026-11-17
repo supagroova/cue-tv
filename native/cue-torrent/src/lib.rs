@@ -118,6 +118,14 @@ pub struct PlaybackSession {
     server: tokio::task::JoinHandle<()>,
 }
 
+#[derive(Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct Discovery {
+    pub trackers: bool,
+    pub dht: bool,
+    pub bootstrap: Option<Vec<String>>,
+}
+
 pub enum TorrentSource {
     Bytes(Vec<u8>),
     Magnet(String),
@@ -135,7 +143,7 @@ impl PlaybackSession {
             index,
             output,
             initial_peers,
-            false,
+            Discovery::default(),
         )
         .await
     }
@@ -145,7 +153,7 @@ impl PlaybackSession {
         index: usize,
         output: PathBuf,
         initial_peers: Vec<SocketAddr>,
-        discovery: bool,
+        discovery: Discovery,
     ) -> Result<Self> {
         let source = match source {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
@@ -165,12 +173,13 @@ impl PlaybackSession {
         let session = Session::new_with_opts(
             output,
             SessionOptions {
-                dht: discovery.then(|| DhtSessionConfig {
+                dht: discovery.dht.then(|| DhtSessionConfig {
+                    bootstrap_addrs: discovery.bootstrap,
                     persistence: None,
                     ..Default::default()
                 }),
                 persistence: None,
-                disable_trackers: !discovery,
+                disable_trackers: !discovery.trackers,
                 disable_local_service_discovery: true,
                 cancellation_token: Some(cancel.clone()),
                 peer_limit: Some(30),
@@ -234,6 +243,15 @@ impl PlaybackSession {
             }
         }
     }
+    pub fn snapshot(&self) -> serde_json::Value {
+        let stats = self.torrent.stats();
+        let files = self.torrent.with_metadata(|m| m.file_infos.iter().enumerate().map(|(index, file)| {
+            serde_json::json!({"index": index, "path": file.relative_filename.to_string_lossy(), "bytes": file.len})
+        }).collect::<Vec<_>>()).unwrap_or_default();
+        serde_json::json!({"state": if stats.error.is_some() {"failed"} else {"ready"}, "url": self.url,
+            "verified_bytes": stats.progress_bytes, "total_bytes": stats.total_bytes, "files": files})
+    }
+
     pub fn downloaded_bytes(&self) -> u64 {
         self.torrent.stats().progress_bytes
     }

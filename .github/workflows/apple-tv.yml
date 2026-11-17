@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - name: Install project generator and report toolchain
         run: |
-          brew install xcodegen
+          brew install xcodegen ffmpeg
           xcodegen --version
           xcodebuild -version
           xcodebuild -showsdks
@@ -39,6 +39,8 @@ jobs:
           mkdir -p .agent-work
           cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
           cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
+      - name: Generate sustained playback fixture
+        run: python3 scripts/fixtures/generate-long.py
       - name: Build unsigned Apple TV app
         shell: bash
         run: |
@@ -90,6 +92,19 @@ jobs:
           done
           grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
           make apple-lab-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-lab-test.log
+      - name: Verify ten minutes of direct torrent playback
+        shell: bash
+        run: |
+          set -euo pipefail
+          CUE_LONG_FIXTURE=1 "$CARGO_TARGET_DIR/debug/examples/seed" > .agent-work/long-seeder.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if grep -q 'Fixture peer ready' .agent-work/long-seeder.log; then break; fi
+            sleep 1
+          done
+          grep -q 'Fixture peer ready' .agent-work/long-seeder.log
+          make apple-long-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-long-test.log
       - name: Upload build logs and test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,6 +114,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: |
+            .agent-work/apple-long-test.log
+            .agent-work/long-seeder.log
+            .agent-work/long-playback/manifest.json
             .agent-work/native-test.log
             .agent-work/fixture-seeder.log
             .agent-work/apple-build.log
