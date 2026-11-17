@@ -12,3 +12,5 @@ pub mod catalog;
 pub mod details;
 
 pub mod sources;
+
+pub mod playback_source;

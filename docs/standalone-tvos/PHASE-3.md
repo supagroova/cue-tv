@@ -461,3 +461,11 @@ Still required before readiness: validated source-to-playback handoff, malformed
 ### Pending multi-provider sources
 
 An empty result from one provider no longer marks an otherwise empty source list ready while another provider is still pending. Nonempty results remain usable while additional providers load; a completed all-empty result is ready and empty. The mixed empty/loading fixture failed before the fix (4232f30cd91b41f5a301cb58ed75954c.log); all 30 native tests pass afterward (31bec9da1da24b74a005e0d5c63050d5.log). This is a source-status correction; the playback admission handoff remains pending.
+
+### Torrent handoff data preparation
+
+`playback_source::torrent` prepares a bounded torrent request from Core's info-hash or raw magnet source variants. It preserves an optional file index and filename-selection hints; absent indexes are not silently replaced with zero. Tracker prefixes are normalized once and query values encoded independently. DHT hints are not tracker endpoints; engine discovery remains a separate policy. The wrapper checks v1 hash shape/ambiguity, tracker schemes/length/count and total magnet size. Unsupported sources fail explicitly. This request is not a presentation snapshot and has no Debug implementation.
+
+Five tests cover tracker query preservation, unknown/explicit file indexes, DHT hints, unsupported sources, malformed/duplicate hashes and non-network trackers. All 35 native tests pass (6800a28b5ac54d32bc137e5b97e6e1c0.log); the device app builds (f9961e58b2af4047a7efb109a1d36783.log). The converter is not yet wired to a revision-checked source-selection command or Swift playback. Engine metadata resolution/file choice is still required for absent file indexes; the engine currently requires a concrete index. No end-to-end playback claim follows from converter tests.
+
+Remote run 44103117696 on 05ff6c6 passed in 11m04s. This improves the previous warm run but leaves the user's CI timing concern unresolved. Sustained playback remains manual-only.
