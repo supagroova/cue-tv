@@ -9,9 +9,16 @@ final class StandaloneModel {
     private var active: Task<Void, Never>?
     private var retirement: Task<Void, any Error>?
     private var generation = UUID()
+    private(set) var signingOut = false
+    var needsSignOutRetry: Bool { pendingSignOut != nil }
+    private var pendingSignOut: (owner: NativeCoreService, account: CoreAccountSelection.Account)?
     init(service: (any CoreService)? = nil) { self.service = service }
 
     func run() async {
+        guard !signingOut, pendingSignOut == nil else {
+            error = "Account cleanup must finish before starting another session. Retry sign-out."
+            return
+        }
         let token = UUID()
         generation = token
         let previous = active
@@ -37,6 +44,29 @@ final class StandaloneModel {
 
     /// Ownership transfers only on successful return; the caller retains a rejected candidate.
     func replace(with replacement: (any CoreService)?) async throws {
+        guard !signingOut, pendingSignOut == nil else { throw NativeCoreService.Failure.stopped }
+        try await replaceOwner(with: replacement)
+    }
+
+    /// Retains the retiring account across cleanup failures so a retry cannot lose its owner.
+    func signOut(selection: CoreAccountSelection = .shared, root: URL? = nil) async throws {
+        guard !signingOut else { throw NativeCoreService.Failure.stopped }
+        signingOut = true
+        defer { signingOut = false }
+        if pendingSignOut == nil {
+            guard let owner = service as? NativeCoreService,
+                  let account = try await selection.load() else { throw NativeCoreService.Failure.stopped }
+            pendingSignOut = (owner, account)
+        }
+        guard let pending = pendingSignOut else { throw NativeCoreService.Failure.stopped }
+        try await replaceOwner(with: nil)
+        try await pending.owner.stop()
+        try await selection.clear(ifMatching: pending.account.namespace)
+        try await pending.owner.discardAccountStorage(CoreStorage.account(id: pending.account.namespace, root: root))
+        pendingSignOut = nil
+    }
+
+    private func replaceOwner(with replacement: (any CoreService)?) async throws {
         let token = UUID()
         generation = token
         snapshot = nil

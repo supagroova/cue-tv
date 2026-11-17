@@ -159,3 +159,61 @@ private actor ActionGate {
     run.cancel()
     await run.value
 }
+
+@Test @MainActor func signingOutStopsAccountDeletesItsStorageAndPreservesOtherAccount() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selection = CoreAccountSelection(keyAccount: "signout-" + UUID().uuidString)
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    let other = CoreStorage.account(id: UUID(), root: root)
+    let otherConfiguration = try await other.prepare()
+    defer { Task { try? await other.removeUnopenedAccount() } }
+    try await selection.save(.init(namespace: namespace, userID: "synthetic-user"))
+    let service = NativeCoreService(persistence: configuration, startup: .newAccount)
+    let model = StandaloneModel(service: service)
+    let run = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.status == .ready)
+    try await model.signOut(selection: selection, root: root)
+    await run.value
+    #expect(try await selection.load() == nil)
+    #expect(!FileManager.default.fileExists(atPath: configuration.directory.path))
+    #expect(FileManager.default.fileExists(atPath: otherConfiguration.directory.path))
+    await #expect(throws: NativeCoreService.Failure.stopped) { _ = try await service.snapshot() }
+    #expect(model.snapshot == nil)
+    #expect(!model.signingOut)
+}
+
+@Test @MainActor func failedSignOutRetainsOwnerAndBlocksReplacementUntilCleanupRetry() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selection = CoreAccountSelection(keyAccount: "signout-retry-" + UUID().uuidString)
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    try await selection.save(.init(namespace: namespace, userID: "synthetic-user"))
+    let service = NativeCoreService(persistence: configuration, startup: .newAccount)
+    let model = StandaloneModel(service: service)
+    let run = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.status == .ready)
+    // The storage boundary refuses removal through a mismatched directory.
+    await #expect(throws: CoreStorage.Failure.unsafeDirectory) {
+        try await model.signOut(selection: selection, root: root.appendingPathComponent("wrong-root"))
+    }
+    await run.value
+    #expect(model.needsSignOutRetry)
+    #expect(!model.signingOut)
+    #expect(FileManager.default.fileExists(atPath: configuration.directory.path))
+    #expect(try await selection.load() == nil)
+    await #expect(throws: NativeCoreService.Failure.stopped) { try await model.replace(with: NativeCoreService()) }
+    await model.run()
+    #expect(model.snapshot == nil)
+    #expect(model.error != nil)
+    try await model.signOut(selection: selection, root: root)
+    #expect(!model.needsSignOutRetry)
+    #expect(!FileManager.default.fileExists(atPath: configuration.directory.path))
+    try await model.replace(with: NativeCoreService())
+}

@@ -17,7 +17,23 @@ struct StandaloneHome: View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
             Text(model.snapshot?.model?.authenticated == true ? "Stremio · Account" : "Stremio · Guest").foregroundStyle(.secondary)
-            if model.snapshot?.model?.authenticated != true {
+            if model.snapshot?.model?.authenticated == true || model.needsSignOutRetry {
+                HStack {
+                    Button(model.needsSignOutRetry ? "Retry sign-out" : "Sign out of Stremio") {
+                        accountError = nil
+                        Task {
+                            do {
+                                try await model.signOut()
+                                screen = .catalogs
+                                search = ""
+                                manifest = ""
+                                restart = UUID()
+                            } catch { accountError = "Account cleanup could not finish. Please retry sign-out." }
+                        }
+                    }.disabled(model.signingOut)
+                    Spacer()
+                }.focusSection()
+            } else {
                 HStack {
                     Button("Sign in to Stremio") {
                         preparingAccount = true
