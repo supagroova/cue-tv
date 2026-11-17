@@ -113,7 +113,15 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
 }
 
 /// Owns both swarm and HTTP server. Call stop before discarding to await teardown.
+struct StorageLease(BudgetFactory);
+impl Drop for StorageLease {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 pub struct PlaybackSession {
+    storage: StorageLease,
     pub url: String,
     session: Arc<Session>,
     torrent: Arc<librqbit::ManagedTorrent>,
@@ -180,6 +188,7 @@ impl PlaybackSession {
         probe: Option<DiskProbe>,
     ) -> Result<Self> {
         let storage = BudgetFactory::new(output.clone(), budget, probe);
+        let storage_lease = StorageLease(storage.clone());
         let source = match source {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
             TorrentSource::Magnet(value) => {
@@ -255,6 +264,7 @@ impl PlaybackSession {
             Ok((url, server, torrent)) => {
                 guard.disarm();
                 Ok(Self {
+                    storage: storage_lease,
                     url,
                     session,
                     torrent,
@@ -283,6 +293,7 @@ impl PlaybackSession {
     }
 
     pub async fn stop(self) {
+        self.storage.0.close();
         self.cancel.cancel();
         self.session.stop().await;
         self.server.abort();
@@ -313,6 +324,7 @@ mod tests {
 
 impl Drop for PlaybackSession {
     fn drop(&mut self) {
+        self.storage.0.close();
         self.cancel.cancel();
         self.server.abort();
     }

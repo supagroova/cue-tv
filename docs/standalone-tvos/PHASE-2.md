@@ -16,6 +16,14 @@ Local Rust suite: 16 tests passed, including four storage tests covering oversiz
 
 `make apple-build` passed for the unsigned arm64 Apple TV target with the storage wrapper linked. No physical device result is claimed. Sustained playback remains manual-only and is not part of routine push/PR CI.
 
+## Storage shutdown barrier
+
+The pinned upstream rqbit `Session::stop` pauses torrents, cancels tasks and sleeps for one second; it does not join all background tasks. Treating its return alone as proof that cache removal is safe would be incorrect.
+
+The storage wrapper now shares a permanent close barrier across factory/storage clones. Close waits for current synchronous file operations, then rejects later creation, initialization, read, write, resize, removal and storage transfer operations. A session-owned lease closes it on explicit stop, drop and cancelled/failed setup. This is a prerequisite for safe cleanup; the C API still needs an explicit acknowledgement and Swift still must coordinate player teardown and cache removal. The barrier serializes reads as well as writes, so its performance cost remains part of resource qualification.
+
+A regression exercises a late engine initialization through a closed real storage factory and verifies no files are created.
+
 ## Candidate decoder evidence
 
 VLCKit is pinned to the full revision and binary checksum documented in DEPENDENCIES.md. A debug-only candidate screen is enabled with CUE_PLAYBACK_LAB=1 and CUE_VLC_LAB=1. The generated MKV fixture is a remux of the owned 1080p H.264 High / AAC LC clip; its source/output hashes, duration and stream profiles are in Resources/PlaybackLab/mkv-manifest.json. Regenerate using scripts/fixtures/generate-mkv.py.

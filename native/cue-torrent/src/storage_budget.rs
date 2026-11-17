@@ -91,15 +91,30 @@ pub struct BudgetFactory {
     root: PathBuf,
     budget: StorageBudget,
     probe: DiskProbe,
-    lock: Arc<Mutex<()>>,
+    lock: Arc<Mutex<bool>>,
 }
 impl BudgetFactory {
+    /// Wait for in-flight storage calls and permanently reject subsequent I/O.
+    pub fn close(&self) {
+        let mut closed = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        *closed = true;
+    }
+    fn enter(&self) -> Result<std::sync::MutexGuard<'_, bool>> {
+        let guard = self
+            .lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage lock failed"))?;
+        if *guard {
+            bail!("storage closed");
+        }
+        Ok(guard)
+    }
     pub fn new(root: PathBuf, budget: StorageBudget, probe: Option<DiskProbe>) -> Self {
         Self {
             root,
             budget,
             probe: probe.unwrap_or_else(|| Arc::new(disk_usage)),
-            lock: Arc::new(Mutex::new(())),
+            lock: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -110,6 +125,7 @@ impl StorageFactory for BudgetFactory {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> Result<Self::Storage> {
+        let _guard = self.enter()?;
         Ok(BudgetStorage {
             inner: Box::new(FilesystemStorageFactory::default().create(shared, metadata)?),
             policy: self.clone(),
@@ -171,6 +187,7 @@ impl BudgetStorage {
 }
 impl TorrentStorage for BudgetStorage {
     fn init(&mut self, shared: &ManagedTorrentShared, metadata: &TorrentMetadata) -> Result<()> {
+        let _guard = self.policy.enter()?;
         if self.lengths.len() > self.policy.budget.max_files {
             bail!("too many torrent files");
         }
@@ -203,17 +220,14 @@ impl TorrentStorage for BudgetStorage {
         self.inner.init(shared, metadata)
     }
     fn pread_exact(&self, file: usize, offset: u64, buf: &mut [u8]) -> Result<()> {
+        let _guard = self.policy.enter()?;
         self.inner.pread_exact(file, offset, buf)
     }
     fn pwrite_all(&self, file: usize, offset: u64, buf: &[u8]) -> Result<()> {
         if buf.is_empty() {
             return Ok(());
         }
-        let _lock = self
-            .policy
-            .lock
-            .lock()
-            .map_err(|_| anyhow::anyhow!("storage lock failed"))?;
+        let _guard = self.policy.enter()?;
         self.guard_write(file, offset, buf.len())?;
         self.inner.pwrite_all(file, offset, buf)
     }
@@ -221,11 +235,7 @@ impl TorrentStorage for BudgetStorage {
         if length > *self.lengths.get(file).context("invalid file index")? {
             bail!("invalid file length");
         }
-        let _lock = self
-            .policy
-            .lock
-            .lock()
-            .map_err(|_| anyhow::anyhow!("storage lock failed"))?;
+        let _guard = self.policy.enter()?;
         self.guard_write(
             file,
             0,
@@ -234,12 +244,15 @@ impl TorrentStorage for BudgetStorage {
         self.inner.ensure_file_length(file, length)
     }
     fn remove_file(&self, file: usize, path: &Path) -> Result<()> {
+        let _guard = self.policy.enter()?;
         self.inner.remove_file(file, path)
     }
     fn remove_directory_if_empty(&self, path: &Path) -> Result<()> {
+        let _guard = self.policy.enter()?;
         self.inner.remove_directory_if_empty(path)
     }
     fn take(&self) -> Result<Box<dyn TorrentStorage>> {
+        let _guard = self.policy.enter()?;
         Ok(Box::new(Self {
             inner: self.inner.take()?,
             policy: self.policy.clone(),

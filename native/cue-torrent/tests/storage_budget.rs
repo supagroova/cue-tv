@@ -240,3 +240,35 @@ async fn existing_directory_allocation_counts_before_file_creation() {
         "over-budget directory metadata must reject admission before creating files"
     );
 }
+
+#[tokio::test]
+async fn closed_storage_rejects_late_initialization_without_creating_files() {
+    use cue_torrent::storage_budget::BudgetFactory;
+    use librqbit::{AddTorrent, Session, SessionOptions, storage::StorageFactoryExt};
+    let output = tempfile::tempdir().unwrap();
+    let factory = BudgetFactory::new(output.path().to_owned(), StorageBudget::default(), None);
+    factory.close();
+    let session = Session::new_with_opts(
+        output.path().to_owned(),
+        SessionOptions {
+            default_storage_factory: Some(factory.boxed()),
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let result = session
+        .add_torrent(AddTorrent::from_bytes(torrent), None)
+        .await;
+    assert!(
+        result.is_err(),
+        "closed storage must reject late initialization"
+    );
+    assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
+    session.stop().await;
+}
