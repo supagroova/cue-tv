@@ -2,6 +2,7 @@
 """Owned Stremio add-on fixture; loopback only, no external media or accounts."""
 import argparse
 import json
+import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
@@ -19,6 +20,8 @@ MANIFEST = {
 }
 
 class Handler(BaseHTTPRequestHandler):
+    retry_lock = threading.Lock()
+    retry_failed = False
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
         if path == "/captions.vtt":
@@ -40,7 +43,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.json":
             body = MANIFEST
         elif path.startswith("/catalog/series/owned") and path.endswith(".json"):
-            if path == "/catalog/series/owned/search=needle.json":
+            if path == "/catalog/series/owned/search=retry.json":
+                with Handler.retry_lock:
+                    fail = not Handler.retry_failed
+                    Handler.retry_failed = True
+                if fail:
+                    self.send_error(503)
+                    return
+                body = {"metas": [{"id": "cue-owned-2", "name": "Needle search result", "type": "series"}]}
+            elif path == "/catalog/series/owned/search=needle.json":
                 body = {"metas": [{"id": "cue-owned-2", "name": "Needle search result", "type": "series"}]}
             elif "/search=" in path:
                 body = {"metas": []}

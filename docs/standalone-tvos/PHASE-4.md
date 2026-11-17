@@ -337,3 +337,17 @@ duration or dependencies changed. Remaining: request-error/retry journeys and
 the broader unfinished phase requirements documented above.
 
 Unsigned device build also passes: `367b85d1c1084accaebcb2cbd8ee9288`.
+
+### Failed catalog recovery
+
+A query-specific owned endpoint returns HTTP 503 once, then a valid result. The
+remote test first fails because the error explanation and Retry titles button
+are absent (`e85238ba3b994ae9870790c673cc7d6a`). The titles screen now renders
+these controls for failed catalogs and retries the current offset through Core's
+existing failed-page rearm path. It preserves the catalog/search identity, uses
+the current revision guard, and does not replace the session. The same test
+passes (`2188e44d87674fa7b78b4c4fc2959954`), opening the recovered result and
+checking query/focus on Back. Empty and failed states remain distinct; all 15
+portable checks pass. Detail/source failure recovery remains to be reviewed.
+
+Unsigned device build passes: `b2aff7134f3946bc847ca7d2161974bf`.

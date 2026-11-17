@@ -41,8 +41,9 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     }
     @MainActor func testSearchOpensMatchingTitleAndPreservesQueryOnBack() throws { try searchJourney(empty: false) }
     @MainActor func testEmptySearchExplainsResultAndReturnsToQuery() throws { try searchJourney(empty: true) }
-    @MainActor private func searchJourney(empty: Bool) throws {
-        let query = empty ? "missing" : "needle"
+    @MainActor func testFailedSearchRetriesWithoutLosingQuery() throws { try searchJourney(empty: false, retry: true) }
+    @MainActor private func searchJourney(empty: Bool, retry: Bool = false) throws {
+        let query = retry ? "retry" : (empty ? "missing" : "needle")
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -59,6 +60,15 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         for _ in 0..<8 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
         XCTAssertTrue(catalog.hasFocus)
         XCUIRemote.shared.press(.select)
+        if retry {
+            let retryButton = app.buttons["Retry titles"]
+            XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Titles could not be loaded. Try again."].exists)
+            XCTAssertFalse(app.staticTexts["No titles found. Go back to change your search or choose another catalog."].exists)
+            for _ in 0..<8 where !retryButton.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(retryButton.hasFocus)
+            XCUIRemote.shared.press(.select)
+        }
         if empty {
             XCTAssertTrue(app.staticTexts["No titles found. Go back to change your search or choose another catalog."].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["Owned series 1"].exists)

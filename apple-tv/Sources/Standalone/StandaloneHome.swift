@@ -104,6 +104,12 @@ struct StandaloneHome: View {
                                     .focused($focusedRow, equals: .title(title.kind, title.id))
                                 }
                                 if catalog.status == .loading { ProgressView() }
+                                if catalog.status == .failed {
+                                    Text("Titles could not be loaded. Try again.").foregroundStyle(.orange)
+                                    Button("Retry titles") {
+                                        Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: catalog.offset, expectedRevision: $1) } }
+                                    }
+                                }
                                 if catalog.status == .ready, catalog.items.isEmpty, !catalog.hasMore {
                                     Text("No titles found. Go back to change your search or choose another catalog.")
                                 }
