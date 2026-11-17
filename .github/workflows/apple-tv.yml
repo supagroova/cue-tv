@@ -96,9 +96,6 @@ jobs:
               env.write(f"SIMULATOR_UDID={device['udid']}\n")
           PY
           xcrun simctl list devices available
-      - uses: ./.github/actions/setup-apple
-        with:
-          cache-role: simulator-tests
       - name: Fingerprint simulator native artifact inputs
         id: native-key
         run: echo "key=$(python3 scripts/native/artifact-cache.py key)" >> "$GITHUB_OUTPUT"
@@ -115,6 +112,10 @@ jobs:
         run: |
           python3 scripts/native/artifact-cache.py restore "$NATIVE_KEY"
           echo "CUE_NATIVE_CACHE_KEY=$NATIVE_KEY" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-apple
+        with:
+          cache-role: simulator-tests
+          native-artifact-hit: ${{ steps.native-artifacts.outputs.cache-hit }}
       - name: Start simulator boot while fixture seeder builds
         run: xcrun simctl boot "$SIMULATOR_UDID"
       - name: Install optional media generator
