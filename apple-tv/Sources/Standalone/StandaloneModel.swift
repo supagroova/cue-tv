@@ -31,7 +31,7 @@ final class StandaloneModel {
         error = nil
         snapshot = nil
         do {
-            if service == nil { service = try await NativeCoreService.guest() }
+            if service == nil { service = try await NativeCoreService.selected() }
             guard let service else { return }
             try await service.start()
             while !Task.isCancelled {

@@ -12,7 +12,7 @@ struct StandaloneHome: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
-            Text("Stremio · Guest").foregroundStyle(.secondary)
+            Text(model.snapshot?.model?.authenticated == true ? "Stremio · Account" : "Stremio · Guest").foregroundStyle(.secondary)
             if let error = model.error { Text(error).foregroundStyle(.orange) }
             if let state = model.snapshot?.model {
                 if state.error != nil { Text("The request could not be completed. Please retry.").foregroundStyle(.orange) }
