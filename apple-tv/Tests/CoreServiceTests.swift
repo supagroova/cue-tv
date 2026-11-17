@@ -86,6 +86,16 @@ import Security
     #expect(state.model?.details?.id == "cue-fixture")
     #expect(state.model?.details?.name == "Detailed simulator film")
     #expect(state.model?.details?.description == "Owned title details")
+    #expect(state.model?.details?.videoTotal == 30)
+    #expect(state.model?.details?.videos.count == 24)
+    try await service.showDetailsVideos(offset: 24, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.videoOffset == 24 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.videos.count == 6)
+    #expect(state.model?.details?.videos.last?.id == "cue-fixture:30")
     for offset in [24, 27, 30] {
         try await service.showCatalogItems(offset: offset, expectedRevision: try #require(state.model?.revision))
         for _ in 0..<200 {
@@ -151,9 +161,11 @@ nonisolated private final class CoreHTTPFixture: Sendable {
                 let range = requestText.contains("skip=30") ? 30..<30 : requestText.contains("skip=27") ? 27..<30 : 0..<27
                 let metas = range.map { index in ["id": index == 0 ? "cue-fixture" : "cue-fixture-\(index)", "name": index == 0 ? "Simulator film" : "Film \(index)", "type": "movie"] }
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
+                let videos = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)"] }
+                let metadataBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["meta": ["id": "cue-fixture", "type": "movie", "name": "Detailed simulator film", "description": "Owned title details", "videos": videos]]), as: UTF8.self)
                 let body = isCatalog
                     ? catalogBody
-                    : isMetadata ? #"{"meta":{"id":"cue-fixture","type":"movie","name":"Detailed simulator film","description":"Owned title details"}}"#
+                    : isMetadata ? metadataBody
                     : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"}]}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })

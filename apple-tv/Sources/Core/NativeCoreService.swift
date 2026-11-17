@@ -13,7 +13,8 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct CatalogChoice: Decodable, Sendable { let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
-    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String? }
+    struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
+    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
@@ -41,6 +42,7 @@ nonisolated protocol CoreService: Sendable {
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
+    func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
@@ -100,6 +102,11 @@ actor NativeCoreService: CoreService {
 
     func installAddon(expectedRevision: UInt64) throws {
         try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
+    }
+
+    func showDetailsVideos(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "details_videos", "offset": offset, "revision": expectedRevision])
     }
 
     func loadDetails(index: Int, expectedRevision: UInt64) throws {

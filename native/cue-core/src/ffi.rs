@@ -183,6 +183,7 @@ async fn own(
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
+                            Command::DetailsVideos { offset, revision, .. } => session.show_details_videos(offset, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
                             Command::LoadCatalog { index, revision, .. } => session.load_catalog(index, revision).await,
                             Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
@@ -234,6 +235,11 @@ enum Command {
         version: u32,
         revision: u64,
     },
+    DetailsVideos {
+        version: u32,
+        offset: usize,
+        revision: u64,
+    },
     LoadDetails {
         version: u32,
         index: usize,
@@ -259,6 +265,7 @@ impl Command {
     fn valid(&self) -> bool {
         match self {
             Self::InstallAddon { version, .. }
+            | Self::DetailsVideos { version, .. }
             | Self::LoadDetails { version, .. }
             | Self::LoadCatalog { version, .. }
             | Self::CatalogChoices { version, .. }

@@ -67,6 +67,7 @@ enum Command {
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Effect(Msg, u64, u64, u64),
 }
 pub struct CoreSession {
@@ -111,6 +112,7 @@ impl CoreSession {
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
             &MetaDetails::default(),
+            0,
             0,
             0,
             0,
@@ -219,6 +221,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn show_details_videos(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsVideos(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -249,6 +262,7 @@ fn snapshot(
     addon: &AddonDetails,
     catalog: &crate::catalog::Catalog,
     details: &MetaDetails,
+    video_offset: usize,
     catalog_choices_offset: usize,
     catalog_item_offset: usize,
     revision: u64,
@@ -262,7 +276,7 @@ fn snapshot(
         catalog_choices_offset,
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
-        details: crate::details::view(details),
+        details: crate::details::view(details, video_offset),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -306,6 +320,7 @@ async fn run(
     let mut catalog_generation = 0u64;
     let mut details = MetaDetails::default();
     let mut details_generation = 0u64;
+    let mut video_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
     let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
@@ -431,6 +446,7 @@ async fn run(
                         &addon,
                         &catalog,
                         &details,
+                        video_offset,
                         catalog_choices_offset,
                         catalog_item_offset,
                         revision,
@@ -464,6 +480,37 @@ async fn run(
                     &addon,
                     &catalog,
                     &details,
+                    video_offset,
+                    catalog_choices_offset,
+                    catalog_item_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::DetailsVideos(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let view = crate::details::view(&details, 0);
+                if !view.is_some_and(|view| {
+                    view.status == "ready" && (offset == 0 || offset < view.video_total)
+                }) {
+                    let _ = reply.send(Err("invalid_video_offset"));
+                    continue;
+                }
+                video_offset = offset;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    &details,
+                    video_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
                     revision,
@@ -492,6 +539,7 @@ async fn run(
                 details_generation = next;
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
+                video_offset = 0;
                 error = None;
                 let selected = DetailsSelected {
                     meta_path: stremio_core::types::addon::ResourcePath::without_extra(
@@ -621,6 +669,7 @@ async fn run(
             &addon,
             &catalog,
             &details,
+            video_offset,
             catalog_choices_offset,
             catalog_item_offset,
             revision,
@@ -642,6 +691,7 @@ async fn run(
         &addon,
         &catalog,
         &details,
+        video_offset,
         catalog_choices_offset,
         catalog_item_offset,
         revision,
