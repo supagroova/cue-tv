@@ -16,3 +16,6 @@ pub mod sources;
 pub mod playback_source;
 
 mod restore;
+
+#[cfg(test)]
+mod auth_tests;

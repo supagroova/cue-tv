@@ -294,3 +294,60 @@ async fn shutdown_joins_concurrent_and_queued_effects() {
     env.shutdown().await;
     assert_eq!(executed.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn api_post_declares_json_and_preserves_credentials_in_body_only() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let (headers, body) = loop {
+            let mut chunk = [0; 1024];
+            let count = socket.read(&mut chunk).await.unwrap();
+            assert!(count > 0 && bytes.len() + count <= 8192);
+            bytes.extend_from_slice(&chunk[..count]);
+            if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                let headers = String::from_utf8(bytes[..end].to_vec()).unwrap();
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    break (headers, bytes[end + 4..end + 4 + length].to_vec());
+                }
+            }
+        };
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .await
+            .unwrap();
+        (headers, body)
+    });
+    let env = Environment::new().unwrap();
+    env.scope(async {
+        let request = http::Request::post(format!("http://{address}/api/login"))
+            .body(serde_json::json!({"email":"fixture@example.test", "password":"synthetic-password"})).unwrap();
+        NativeEnv::fetch::<_, Value>(request).await.unwrap();
+    }).await;
+    let (headers, body) = tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("\r\ncontent-type: application/json")
+    );
+    assert!(!headers.contains("synthetic-password"));
+    assert!(!headers.contains("fixture@example.test"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        serde_json::json!({"email":"fixture@example.test", "password":"synthetic-password"})
+    );
+    env.shutdown().await;
+}
