@@ -196,8 +196,30 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
             format!("http://{tracker_address}/announce")
         };
         let download = tempfile::tempdir().unwrap();
+        let resolved = if magnet && protocol == "direct" {
+            let result = cue_torrent::metadata::resolve(
+                TorrentSource::Magnet(format!(
+                    "magnet:?xt=urn:btih:{}",
+                    seed.info_hash().as_string()
+                )),
+                download.path().to_owned(),
+                vec![address],
+                Discovery::default(),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(std::fs::read_dir(download.path()).unwrap().count(), 0);
+            assert_eq!(result.files[index].index, index);
+            assert_eq!(result.files[index].bytes, bytes.len() as u64);
+            Some(result.torrent_bytes)
+        } else {
+            None
+        };
         let playback = PlaybackSession::start_source(
-            if magnet {
+            if let Some(metadata) = resolved {
+                TorrentSource::Bytes(metadata)
+            } else if magnet {
                 TorrentSource::Magnet(format!(
                     "magnet:?xt=urn:btih:{}&tr={tracker_url}",
                     seed.info_hash().as_string()
