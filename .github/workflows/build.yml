@@ -57,7 +57,18 @@ jobs:
         run: sh scripts/build-apk.sh
 
       - name: On-TV app unit tests
-        run: tv-home/android/gradlew -p on-tv/android --no-daemon -q testDebugUnitTest
+        run: tv-home/android/gradlew -p on-tv/android --no-daemon --console=plain testDebugUnitTest
+
+      - name: Upload On-TV test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: on-tv-unit-test-results
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            on-tv/android/app/build/reports/tests/testDebugUnitTest/
+            on-tv/android/app/build/test-results/testDebugUnitTest/*.xml
 
       - name: Signing fingerprints
         run: for f in dist/*.apk; do echo "$f"; "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs "$f" | grep -i "SHA-256"; done
