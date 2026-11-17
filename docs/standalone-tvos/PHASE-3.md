@@ -601,3 +601,9 @@ This exposed a pinned Core omission: streaming_server_urls retained the account 
 Guest startup and account restoration now reject login admission. Only new_account, which requires an empty store before schema migration, enables login; sign-out disables it for that session. Failed authentication may retry within the fresh account session. This replaces the earlier caller-only convention and prevents credentials from being admitted into normal guest sessions. Existing success/failure fixtures now explicitly create account sessions.
 
 The guest regression reproduced admission before the guard (`14561fe045dc44f98675ed252e07b45b`). Full native suite passes (`9813c8d76cd84f809440af5929493846`), including rejection by guest, restored and signed-out sessions and rejection of populated storage as a new account. Swift still needs to allocate the opaque dedicated namespace and manage its protected active-account record.
+
+### C login/account startup boundary
+
+The bridge exposes create_account for an empty dedicated encrypted store, a copy-only credential entry with independent UTF-8 email/password limits, and JSON logout dispatch. Explicit startup variants keep guest, fresh account and restored identity distinct. Login admission is asynchronous and does not mean successful authentication. Credentials never enter JSON snapshots.
+
+Bridge tests verify guest login rejection, snapshot redaction, fresh-store startup, logout dispatch, acknowledged release and rejection of the used store. Full native suite passes (`760e88ad7fa947e1b0639ee40960da88`). The existing full-capacity handle-table test initially collided with the new concurrent tests (`d26ebbace59e43c893ec08866ca103cd`); tests sharing that process-global table now take an exclusive test lock, retaining all capacity assertions. Successful account login through C and the Swift/UI path remain to be verified.

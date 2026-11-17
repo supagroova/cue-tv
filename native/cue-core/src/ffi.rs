@@ -67,8 +67,14 @@ pub extern "C" fn cue_core_abi_version() -> u32 {
 pub extern "C" fn cue_core_create() -> u64 {
     create(None)
 }
+#[derive(Clone)]
+enum Startup {
+    Guest,
+    NewAccount,
+    Restore(String),
+}
 struct Persistence {
-    account: Option<String>,
+    startup: Startup,
     directory: std::path::PathBuf,
     key: [u8; 32],
 }
@@ -81,7 +87,19 @@ pub unsafe extern "C" fn cue_core_create_persistent(
     key: *const u8,
     key_length: usize,
 ) -> u64 {
-    unsafe { persistent(path, path_length, key, key_length, None) }
+    unsafe { persistent(path, path_length, key, key_length, Startup::Guest) }
+}
+/// Create a login-capable session in an empty dedicated encrypted account store.
+/// # Safety
+/// Both non-null inputs must be readable for their supplied lengths; inputs are copied.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_create_account(
+    path: *const u8,
+    path_length: usize,
+    key: *const u8,
+    key_length: usize,
+) -> u64 {
+    unsafe { persistent(path, path_length, key, key_length, Startup::NewAccount) }
 }
 /// Restore an identity selected by protected app storage. All inputs are copied.
 /// # Safety
@@ -107,7 +125,15 @@ pub unsafe extern "C" fn cue_core_restore_account(
         if user.chars().any(char::is_control) {
             return 0;
         }
-        unsafe { persistent(path, path_length, key, key_length, Some(user.to_owned())) }
+        unsafe {
+            persistent(
+                path,
+                path_length,
+                key,
+                key_length,
+                Startup::Restore(user.to_owned()),
+            )
+        }
     }))
     .unwrap_or(0)
 }
@@ -116,7 +142,7 @@ unsafe fn persistent(
     path_length: usize,
     key: *const u8,
     key_length: usize,
-    account: Option<String>,
+    startup: Startup,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         if path.is_null()
@@ -148,7 +174,7 @@ unsafe fn persistent(
         create(Some(Persistence {
             directory,
             key,
-            account,
+            startup,
         }))
     }))
     .unwrap_or(0)
@@ -192,9 +218,10 @@ async fn own(
     mut inbox: mpsc::Receiver<Command>,
     persistence: Option<Persistence>,
 ) {
-    let expected_user = persistence
+    let startup = persistence
         .as_ref()
-        .and_then(|config| config.account.clone());
+        .map(|config| config.startup.clone())
+        .unwrap_or(Startup::Guest);
     let environment = match persistence {
         Some(config) => Environment::persistent(&config.directory, &config.key),
         None => Environment::new(),
@@ -208,9 +235,10 @@ async fn own(
         }
     };
     let setup = AssertUnwindSafe(async {
-        match expected_user {
-            Some(user) => CoreSession::restore_account(env.clone(), &user).await,
-            None => CoreSession::guest(env.clone()).await,
+        match startup {
+            Startup::Restore(user) => CoreSession::restore_account(env.clone(), &user).await,
+            Startup::NewAccount => CoreSession::new_account(env.clone()).await,
+            Startup::Guest => CoreSession::guest(env.clone()).await,
         }
     })
     .catch_unwind()
@@ -238,6 +266,8 @@ async fn own(
                     tokio::select! { biased;
                         _ = entry.stop.cancelled() => break,
                         result = async { match command {
+                            Command::Login { email, password } => session.login(&email, &password).await,
+                            Command::Logout { .. } => session.logout().await,
                             Command::PrepareTorrent { ticket, index, revision } => {
                                 let result = session.prepare_torrent(index, revision).await;
                                 let value = match result {
@@ -300,6 +330,14 @@ async fn own(
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
     #[serde(skip)]
+    Login {
+        email: String,
+        password: String,
+    },
+    Logout {
+        version: u32,
+    },
+    #[serde(skip)]
     PrepareTorrent {
         ticket: u64,
         index: usize,
@@ -357,7 +395,8 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::PrepareTorrent { .. } => false,
+            Self::PrepareTorrent { .. } | Self::Login { .. } => false,
+            Self::Logout { version } => *version == 1,
             Self::InstallAddon { version, .. }
             | Self::DetailsVideos { version, .. }
             | Self::LoadSources { version, .. }
@@ -376,6 +415,57 @@ impl Command {
             }
         }
     }
+}
+/// Copies credentials into the bounded command queue. Admission is not authentication.
+/// # Safety
+/// Non-null input pointers must be readable for their supplied lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_login(
+    handle: u64,
+    email: *const u8,
+    email_length: usize,
+    password: *const u8,
+    password_length: usize,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if email.is_null()
+            || password.is_null()
+            || email_length == 0
+            || email_length > 512
+            || password_length == 0
+            || password_length > 4096
+        {
+            return -2;
+        }
+        let Ok(email) =
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(email, email_length) })
+        else {
+            return -2;
+        };
+        let Ok(password) =
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(password, password_length) })
+        else {
+            return -2;
+        };
+        if email.chars().any(char::is_control) || password.contains('\0') {
+            return -2;
+        }
+        let Some(entry) = lookup(handle) else {
+            return -1;
+        };
+        if entry.stop.is_cancelled() {
+            return -1;
+        }
+        match entry.commands.try_send(Command::Login {
+            email: email.to_owned(),
+            password: password.to_owned(),
+        }) {
+            Ok(()) => 0,
+            Err(mpsc::error::TrySendError::Full(_)) => -3,
+            Err(_) => -1,
+        }
+    }))
+    .unwrap_or(-1)
 }
 /// # Safety
 /// A non-null input must be readable for `length` bytes for this call.
