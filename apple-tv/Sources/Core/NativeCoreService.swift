@@ -21,6 +21,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     }
     struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
     struct Model: Decodable, Sendable {
+        let authenticated: Bool
         let revision: UInt64
         let stopped: Bool
         let interfaceLanguage: String
@@ -77,12 +78,18 @@ nonisolated protocol CoreService: Sendable {
     func stop() async throws
 }
 
-/// Serializes native admission off the UI actor. No account data crosses this initial service.
+/// Serializes native admission off the UI actor; snapshots exclude account secrets.
 actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
         case requestFailed(String) }
     private let persistence: CorePersistenceConfiguration?
-    init(persistence: CorePersistenceConfiguration? = nil) { self.persistence = persistence }
+    private let expectedUser: String?
+    /// Account restoration requires an identity from protected app storage.
+    /// A missing/mismatched account fails rather than falling back to guest.
+    init(persistence: CorePersistenceConfiguration? = nil, expectedUser: String? = nil) {
+        self.persistence = persistence
+        self.expectedUser = expectedUser
+    }
     nonisolated static func guest() async throws -> NativeCoreService {
         let configuration = try await CoreStorage.shared.prepare()
         return NativeCoreService(persistence: configuration)
@@ -93,13 +100,25 @@ actor NativeCoreService: CoreService {
     func start() throws {
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
+        if let expectedUser {
+            guard persistence != nil, !expectedUser.isEmpty, expectedUser.utf8.count <= 512,
+                  !expectedUser.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else { throw Failure.invalidRequest }
+        }
         guard cue_core_abi_version() == 1 else { throw Failure.unavailable }
         let created: UInt64
         if let persistence {
             let path = Data(persistence.directory.path.utf8)
             created = path.withUnsafeBytes { pathBytes in
                 persistence.key.withUnsafeBytes { keyBytes in
-                    cue_core_create_persistent(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                    if let expectedUser {
+                        return Data(expectedUser.utf8).withUnsafeBytes { userBytes in
+                            cue_core_restore_account(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                                keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count,
+                                userBytes.bindMemory(to: UInt8.self).baseAddress, userBytes.count)
+                        }
+                    }
+                    return cue_core_create_persistent(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
                                                keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count)
                 }
             }

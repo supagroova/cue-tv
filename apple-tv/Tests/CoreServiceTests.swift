@@ -148,6 +148,36 @@ import Security
     try await service.stop()
 }
 
+@Test func accountRestoreDoesNotFallBackToGuestWhenStorageIsEmpty() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let configuration = CorePersistenceConfiguration(directory: directory, key: Data(repeating: 49, count: 32))
+    let account = NativeCoreService(persistence: configuration, expectedUser: "fixture-user")
+    try await account.start()
+    var state = try await account.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await account.snapshot()
+    }
+    #expect(state.status == .stopped)
+    #expect(state.error == "core_start_failed")
+    try await account.stop()
+    // Failed account startup must release the store, so a guest can open it explicitly.
+    let guest = NativeCoreService(persistence: configuration)
+    try await guest.start()
+    state = try await guest.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await guest.snapshot()
+    }
+    #expect(state.status == .ready)
+    #expect(state.model?.authenticated == false)
+    try await guest.stop()
+    let missingStore = NativeCoreService(expectedUser: "fixture-user")
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await missingStore.start() }
+}
+
 @Test func keychainBackedGuestSurvivesServiceRecreation() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     let account = "test-" + UUID().uuidString
