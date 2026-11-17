@@ -50,6 +50,17 @@ import Security
     #expect(state.model?.addon?.status == .ready)
     #expect(state.model?.addon?.id == "org.cue.simulator")
     #expect(state.model?.addon?.name == "Simulator fixture")
+    let originalCount = state.model?.addonCount
+    try await service.installAddon(expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.addon?.installed == true && state.model?.pendingEffects == 0 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.addon?.installed == true)
+    #expect(state.model?.addonCount == originalCount.map { $0 + 1 })
+    #expect(state.error == nil)
+    #expect(state.model?.error == nil)
     try await service.stop()
 }
 

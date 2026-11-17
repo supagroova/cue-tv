@@ -159,7 +159,16 @@ async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
         let body = r#"{"id":"org.cue.fixture","version":"1.0.0","name":"Fixture Addon","description":"Owned test fixture","resources":["catalog"],"types":["movie"],"catalogs":[]}"#;
         socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
     });
-    let mut session = CoreSession::guest(Environment::new().unwrap())
+    let directory = std::env::temp_dir().join(format!(
+        "cue-core-install-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let mut session = CoreSession::guest(Environment::persistent(&directory, &[5; 32]).unwrap())
         .await
         .unwrap();
     assert!(
@@ -185,8 +194,24 @@ async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
             .unwrap()
             .contains("private-config")
     );
+    assert!(session.install_addon(0).await.is_err());
+    session.install_addon(state.revision).await.unwrap();
+    let installed = session.settled().await.unwrap();
+    assert_eq!(installed.addon_count, state.addon_count + 1);
+    assert!(installed.addon.unwrap().installed);
+    assert!(installed.error.is_none());
     server.await.unwrap();
     session.stop().await;
+    drop(session);
+    let encrypted = std::fs::read(directory.join("state.bin")).unwrap();
+    assert!(!String::from_utf8_lossy(&encrypted).contains("private-config"));
+    let mut restored = CoreSession::guest(Environment::persistent(&directory, &[5; 32]).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(restored.snapshot().addon_count, state.addon_count + 1);
+    restored.stop().await;
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[tokio::test]

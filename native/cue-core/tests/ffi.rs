@@ -34,6 +34,13 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
             -2
         );
     }
+    let stale = br#"{"version":1,"action":"install_addon","revision":999}"#;
+    assert_eq!(
+        unsafe { cue_core_dispatch(handle, stale.as_ptr(), stale.len()) },
+        0
+    );
+    until(|| state(handle)["error"] == "stale_preview");
+    assert_eq!(state(handle)["status"], "ready");
     let command = br#"{"version":1,"action":"set_language","language":"fra"}"#;
     assert_eq!(
         unsafe { cue_core_dispatch(handle, command.as_ptr(), command.len()) },
@@ -84,8 +91,14 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     let create = || unsafe {
         cue_core_create_persistent(path.as_ptr(), path.len(), key.as_ptr(), key.len())
     };
-    assert_eq!(unsafe { cue_core_create_persistent(std::ptr::null(), 0, key.as_ptr(), 32) }, 0);
-    assert_eq!(unsafe { cue_core_create_persistent(path.as_ptr(), path.len(), key.as_ptr(), 31) }, 0);
+    assert_eq!(
+        unsafe { cue_core_create_persistent(std::ptr::null(), 0, key.as_ptr(), 32) },
+        0
+    );
+    assert_eq!(
+        unsafe { cue_core_create_persistent(path.as_ptr(), path.len(), key.as_ptr(), 31) },
+        0
+    );
     let persisted = create();
     assert_ne!(persisted, 0);
     until(|| state(persisted)["status"] == "ready");

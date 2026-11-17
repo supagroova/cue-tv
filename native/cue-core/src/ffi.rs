@@ -169,6 +169,7 @@ async fn own(
         }
     };
     let result = AssertUnwindSafe(async {
+        let mut command_error = None;
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(20));
         loop {
             tokio::select! { biased;
@@ -181,13 +182,14 @@ async fn own(
                         result = async { match command {
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
+                            Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
                         }} => {
-                            if result.is_err() { break; }
+                            command_error = result.err();
                         }
                     }
                 },
                 _ = tick.tick() => {
-                    publish(&entry, handle, "ready", Some(session.snapshot()), None);
+                    publish(&entry, handle, "ready", Some(session.snapshot()), command_error);
                 }
             }
         }
@@ -218,10 +220,12 @@ async fn own(
 enum Command {
     SetLanguage { version: u32, language: String },
     LoadAddon { version: u32, url: String },
+    InstallAddon { version: u32, revision: u64 },
 }
 impl Command {
     fn valid(&self) -> bool {
         match self {
+            Self::InstallAddon { version, .. } => *version == 1,
             Self::SetLanguage { version, language } => {
                 *version == 1
                     && language.len() == 3

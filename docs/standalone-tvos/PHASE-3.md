@@ -314,3 +314,25 @@ are still open.
 
 All 10 short Playback Lab UI tests also pass with ad-hoc simulator signing
 (100.490 seconds of test execution). Sustained playback remains manual-only.
+
+## Installing a validated preview
+
+The Swift/C service now supports `install_addon` with the displayed Core revision.
+The model owner rejects stale revisions and non-ready previews, then dispatches
+Core's actual `ActionCtx::InstallAddon` using the descriptor it fetched. Callers
+cannot supply an arbitrary descriptor or substitute a transport URL at confirmation.
+Snapshots include whether the ready descriptor is installed. Core still enforces
+its configuration-required, locked-add-on and duplicate-install rules.
+
+A rejected command previously stopped the entire C-owned session. A regression
+reproduced that behavior with a stale install; command failures now appear as a
+fixed latest-command error in the coalesced snapshot and leave the session usable.
+A subsequent accepted command clears that error. Queue acceptance remains distinct
+from model/effect completion; consumers must observe the resulting state.
+
+The native fixture now previews, installs, persists and restores the add-on from
+encrypted guest storage without exposing its configured URL in plaintext. The
+simulator HTTP test also installs through Swift and observes the installed state
+and incremented add-on count. All 23 native tests, 25 simulator unit tests and the
+device application build pass. Catalogue/search/source operations, removal and
+upgrade UI, account flows and full-process relaunch remain outstanding.

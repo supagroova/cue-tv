@@ -6,6 +6,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct Addon: Decodable, Sendable {
         enum Status: String, Decodable, Sendable { case loading, ready, failed }
         let status: Status
+        let installed: Bool
         let id: String?
         let name: String?
     }
@@ -30,6 +31,7 @@ nonisolated protocol CoreService: Sendable {
     func snapshot() async throws -> CoreSnapshot
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
+    func installAddon(expectedRevision: UInt64) async throws
     func stop() async throws
 }
 
@@ -81,6 +83,10 @@ actor NativeCoreService: CoreService {
 
     func loadAddon(_ manifestURL: String) throws {
         try dispatch(["version": 1, "action": "load_addon", "url": manifestURL])
+    }
+
+    func installAddon(expectedRevision: UInt64) throws {
+        try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
     }
 
     private func dispatch(_ command: [String: Any]) throws {

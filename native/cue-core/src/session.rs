@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[derive(Clone, Debug, Serialize)]
 pub struct AddonSnapshot {
     pub status: &'static str,
+    pub installed: bool,
     pub id: Option<String>,
     pub name: Option<String>,
 }
@@ -55,6 +56,7 @@ pub struct Snapshot {
 enum Command {
     Language(String, oneshot::Sender<Result<(), &'static str>>),
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
+    Install(u64, oneshot::Sender<Result<(), &'static str>>),
     Effect(Msg, u64),
 }
 pub struct CoreSession {
@@ -145,6 +147,13 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn install_addon(&self, expected_revision: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Install(expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -189,16 +198,19 @@ fn snapshot(
             .map(|addon| match &addon.content {
                 Loadable::Loading => AddonSnapshot {
                     status: "loading",
+                    installed: false,
                     id: None,
                     name: None,
                 },
                 Loadable::Err(_) => AddonSnapshot {
                     status: "failed",
+                    installed: false,
                     id: None,
                     name: None,
                 },
                 Loadable::Ready(value) => AddonSnapshot {
                     status: "ready",
+                    installed: ctx.profile.addons.contains(value),
                     id: Some(value.manifest.id.chars().take(256).collect()),
                     name: Some(value.manifest.name.chars().take(256).collect()),
                 },
@@ -251,6 +263,27 @@ async fn run(
                 }
                 (
                     Msg::Action(Action::Load(ActionLoad::AddonDetails(selected))),
+                    Some(reply),
+                    addon_generation,
+                )
+            }
+            Command::Install(expected_revision, reply) => {
+                if expected_revision != revision {
+                    let _ = reply.send(Err("stale_preview"));
+                    continue;
+                }
+                let Some(descriptor) = addon
+                    .remote_addon
+                    .as_ref()
+                    .and_then(|value| value.content.ready())
+                    .cloned()
+                else {
+                    let _ = reply.send(Err("addon_not_ready"));
+                    continue;
+                };
+                error = None;
+                (
+                    Msg::Action(Action::Ctx(ActionCtx::InstallAddon(descriptor))),
                     Some(reply),
                     addon_generation,
                 )
