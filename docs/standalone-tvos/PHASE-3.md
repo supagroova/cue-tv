@@ -151,3 +151,29 @@ not satisfy the Phase 3 exit gate.
 
 C-boundary verification: all 14 native tests pass; locked device and simulator
 static-library builds pass. Swift application linkage is not yet verified.
+
+## Swift service integration
+
+The generated app project now builds and links both native libraries, with the
+Core module map available to Swift. `NativeCoreService` serializes bridge calls
+on a separate actor, validates snapshot version/session identity and bounds the
+snapshot copy to 16 KiB. The model is decoded into Sendable values; raw Core
+objects and authentication data are not exposed.
+
+Concurrent stop calls await the same retirement task. The service clears its
+handle only after native join and release, and checks the captured handle after
+awaiting to avoid clearing a replacement session. A five-second shutdown timeout
+retains the handle for retry; deinitialization makes a best-effort asynchronous
+retirement. Production recovery of a permanently stuck native task remains an
+explicit failure case, not permission to free live state.
+
+The device application links successfully with both Rust archives. The focused
+simulator test executes a real Core settings action through Swift, checks the
+result and settled effects, overlaps two stops, rejects a post-stop command and
+restarts with a fresh session ID. Removing action delivery while acknowledging
+success makes the test fail (`eng` instead of `fra`), confirming it exercises the
+real bridge. This is still a guest lifecycle/settings slice: catalogue/search,
+add-ons, sources, account/library operations and durable storage remain required.
+
+All 23 simulator unit tests pass after restoring delivery (2.659 seconds of test
+execution). These checks do not establish physical-device behavior.
