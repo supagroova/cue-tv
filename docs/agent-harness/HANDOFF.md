@@ -402,3 +402,25 @@ resume-position retrieval/choice before decoder starts, then actual callback/lif
 integration. A service pause receipt can inspect the newly started Core position
 without adding watched time; verify same-video versus different-episode restoration
 before using it for Resume. No library journal or physical qualification completed.
+
+### Phase 5 resume identity restoration
+
+Regression aba02794a5694e3a8c805db16dce1b6b proved a newly selected episode retained
+the preceding episode's1000ms duration. Native Playback::new now checks the stored
+video ID before retaining position/duration; different identity resets those fields
+to0 without changing the library. Same-video901ms/1000ms/901ms viewed survives
+initialization. Full native suite passes e842ee5577ab43aab6ca416fefbf5c95.
+
+Extended tests/checkpoint.rs to keep the owned HTTP fixture across encrypted reopen,
+serve a different torrent hash on second resolution and create a fresh Core session.
+New token and source are verified; paused progress restores600ms/1000ms/600ms viewed,
+unwatched. Targeted integration passes e51c1d73d8f446c2ad4cdd301cf50976. No additional
+production change followed the full native run. Unsigned device build passes
+5217c8bf49284cdc95a92d9d55fe299b;15 harness tests pass. No decoder/UI resume claim.
+
+Important UI sequencing: starting Core to inspect Resume is not yet decoder playback.
+If the user cancels before any decoder observation is admitted, retire without saving
+rather than checkpointing a new episode's zero state over the old continue-watching
+pointer. PlaybackAccountingOwner currently closes with a save even before a sample;
+add an explicit pre-play abort path and tests before UI integration. Parent retention
+and resume choice still required as described above.

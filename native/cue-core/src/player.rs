@@ -57,6 +57,12 @@ impl Playback {
             })
             .ok_or("invalid_playback")?
             .clone();
+        let same_video = selected.stream_request.as_ref().is_some_and(|stream| {
+            ctx.library
+                .items
+                .get(&request.path.id)
+                .is_some_and(|item| item.state.video_id.as_deref() == Some(stream.path.id.as_str()))
+        });
         let mut playback = Self {
             token,
             manual_watched: None,
@@ -66,6 +72,15 @@ impl Playback {
             },
         };
         playback.update(Action::Load(ActionLoad::Player(Box::new(selected))), ctx);
+        if !same_video {
+            if let Some(item) = &mut playback.model.library_item {
+                // Core retains the previous episode's duration and can seed a
+                // one-millisecond next-video pointer. Neither is decoder evidence
+                // for this selected video, nor a usable resume position.
+                item.state.time_offset = 0;
+                item.state.duration = 0;
+            }
+        }
         let initial = playback.progress()?;
         // Establish the selected video without treating an existing resume offset as viewing.
         // Initialization establishes identity, not newly viewed content.
@@ -371,6 +386,13 @@ mod tests {
             assert!(!owner.event(PlaybackEvent::TimeChanged { time: 901, duration: 1000 }, &ctx).unwrap().watched);
             let item = owner.model.library_item.as_ref().unwrap().clone();
             ctx.library.items.insert(item.id.clone(), item);
+            let resumed = Playback::new(90, selected.clone(), &details, &ctx).unwrap();
+            assert_eq!(resumed.progress().unwrap(), Progress { time: 901, duration: 1000, time_watched: 901, watched: false });
+            let mut next_episode = selected.clone();
+            next_episode.stream_request.as_mut().unwrap().path.id = "owned:1:2".into();
+            let next_episode = Playback::new(91, next_episode, &details, &ctx).unwrap();
+            assert_eq!(next_episode.progress().unwrap(), Progress { time: 0, duration: 0, time_watched: 0, watched: false });
+            assert_eq!(ctx.library.items["owned"].state.time_offset, 901, "Inspecting a new episode must not overwrite the stored resume record");
             let mut fresh = Playback::new(2, selected, &details, &ctx).unwrap();
             assert!(!fresh.progress().unwrap().watched, "Load itself must not undo the manual choice");
             let unknown = fresh.event(PlaybackEvent::TimeChanged { time: 901, duration: 0 }, &ctx).unwrap();

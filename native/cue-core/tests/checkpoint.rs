@@ -26,29 +26,38 @@ async fn roundtrip() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/manifest.json", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
-        for (path, body) in [
-            (
-                "/catalog/movie/owned.json",
-                r#"{"metas":[{"id":"film","type":"movie","name":"Owned"}]}"#,
-            ),
-            (
-                "/meta/movie/film.json",
-                r#"{"meta":{"id":"film","type":"movie","name":"Owned"}}"#,
-            ),
-            (
-                "/stream/movie/film.json",
-                r#"{"streams":[{"infoHash":"0123456789abcdef0123456789abcdef01234567","fileIdx":0}]}"#,
-            ),
-        ] {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            let count = socket.read(&mut request).await.unwrap();
-            assert!(
-                std::str::from_utf8(&request[..count])
-                    .unwrap()
-                    .starts_with(&format!("GET {path} "))
-            );
-            socket
+        for attempt in 0..2 {
+            for (path, body) in [
+                (
+                    "/catalog/movie/owned.json",
+                    r#"{"metas":[{"id":"film","type":"movie","name":"Owned"}]}"#,
+                ),
+                (
+                    "/meta/movie/film.json",
+                    r#"{"meta":{"id":"film","type":"movie","name":"Owned"}}"#,
+                ),
+                (
+                    "/stream/movie/film.json",
+                    r#"{"streams":[{"infoHash":"0123456789abcdef0123456789abcdef01234567","fileIdx":0}]}"#,
+                ),
+            ] {
+                let body = if attempt == 0 {
+                    body.to_owned()
+                } else {
+                    body.replace(
+                        "0123456789abcdef0123456789abcdef01234567",
+                        "fedcba9876543210fedcba9876543210fedcba98",
+                    )
+                };
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                let count = socket.read(&mut request).await.unwrap();
+                assert!(
+                    std::str::from_utf8(&request[..count])
+                        .unwrap()
+                        .starts_with(&format!("GET {path} "))
+                );
+                socket
                 .write_all(
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -58,6 +67,7 @@ async fn roundtrip() {
                 )
                 .await
                 .unwrap();
+            }
         }
     });
     let env = Environment::persistent(&directory, &[7; 32]).unwrap();
@@ -246,7 +256,6 @@ async fn roundtrip() {
     session.stop().await;
     drop(session);
     drop(env);
-    server.await.unwrap();
     let reopened = Environment::persistent(&directory, &[7; 32]).unwrap();
     reopened
         .scope(async {
@@ -261,6 +270,51 @@ async fn roundtrip() {
             assert!(!item.watched());
         })
         .await;
+    let mut resumed = CoreSession::guest(reopened.clone()).await.unwrap();
+    resumed
+        .load_catalog(0, resumed.snapshot().revision)
+        .await
+        .unwrap();
+    resumed.settled().await.unwrap();
+    resumed
+        .load_details(0, resumed.snapshot().revision)
+        .await
+        .unwrap();
+    resumed.settled().await.unwrap();
+    resumed
+        .load_sources(None, resumed.snapshot().revision)
+        .await
+        .unwrap();
+    resumed.settled().await.unwrap();
+    let fresh = resumed
+        .prepare_torrent(0, resumed.snapshot().revision)
+        .await
+        .unwrap();
+    assert_ne!(fresh.playback_token, token);
+    assert!(
+        fresh
+            .torrent
+            .magnet
+            .contains("fedcba9876543210fedcba9876543210fedcba98")
+    );
+    resumed.start_playback(fresh.playback_token).await.unwrap();
+    let restored = resumed
+        .playback_event(fresh.playback_token, PlaybackEvent::Paused(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        restored,
+        cue_core::player::Progress {
+            time: 600,
+            duration: 1000,
+            time_watched: 600,
+            watched: false
+        }
+    );
+    resumed.retire_playback(fresh.playback_token).await.unwrap();
+    resumed.stop().await;
+    drop(resumed);
+    server.await.unwrap();
     reopened.shutdown().await;
     drop(reopened);
     std::fs::remove_dir_all(directory).unwrap();

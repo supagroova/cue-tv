@@ -365,3 +365,17 @@ Start waits for startup, then retires before a decoder can be activated. Tests h
 the native operation boundary and assert that neither the second Start nor Close
 returns early. All 67 Swift tests, the unsigned tvOS build and 15 harness tests pass; strengthened assertions also pass in the
 three-test accounting suite. Parent ownership and Resume/Restart UI remain required.
+
+## Resume identity restoration
+
+Native Player initialization now retains saved position/duration only for the
+selected video's exact stored identity. A new episode starts at zero with unknown
+duration; Core previously retained the preceding episode's duration. Same-video
+initialization preserves progress without adding viewed time or mutating stored
+library state.
+
+The checkpoint integration test now reopens encrypted storage, creates a new Core
+session, resolves metadata and a different torrent source, starts that new owner,
+and inspects its paused progress. The saved film resumes at the expected 600ms with
+its prior duration and viewed-time count. This proves native restoration across
+source replacement; it does not prove decoder repositioning or relaunch tolerance.
