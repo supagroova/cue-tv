@@ -17,7 +17,7 @@ struct StandaloneHome: View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
             Text(model.snapshot?.model?.authenticated == true ? "Stremio · Account" : "Stremio · Guest").foregroundStyle(.secondary)
-            if model.snapshot?.model?.authenticated == true || model.needsSignOutRetry {
+            if model.canSignOut {
                 HStack {
                     Button(model.needsSignOutRetry ? "Retry sign-out" : "Sign out of Stremio") {
                         accountError = nil

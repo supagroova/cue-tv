@@ -11,8 +11,16 @@ final class StandaloneModel {
     private var generation = UUID()
     private(set) var signingOut = false
     var needsSignOutRetry: Bool { pendingSignOut != nil }
-    private var pendingSignOut: (owner: NativeCoreService, account: CoreAccountSelection.Account)?
-    init(service: (any CoreService)? = nil) { self.service = service }
+    private var pendingSignOut: (owner: NativeCoreService?, account: CoreAccountSelection.Account)?
+    private let accountSelection: CoreAccountSelection
+    private let accountRoot: URL?
+    private var restorationAccount: CoreAccountSelection.Account?
+    var canSignOut: Bool { snapshot?.model?.authenticated == true || restorationAccount != nil || pendingSignOut != nil }
+    init(service: (any CoreService)? = nil, accountSelection: CoreAccountSelection = .shared, accountRoot: URL? = nil) {
+        self.service = service
+        self.accountSelection = accountSelection
+        self.accountRoot = accountRoot
+    }
 
     func run() async {
         guard !signingOut, pendingSignOut == nil else {
@@ -49,21 +57,30 @@ final class StandaloneModel {
     }
 
     /// Retains the retiring account across cleanup failures so a retry cannot lose its owner.
-    func signOut(selection: CoreAccountSelection = .shared, root: URL? = nil) async throws {
+    func signOut(selection override: CoreAccountSelection? = nil, root: URL? = nil) async throws {
+        let selection = override ?? accountSelection
+        let root = root ?? accountRoot
         guard !signingOut else { throw NativeCoreService.Failure.stopped }
         signingOut = true
         defer { signingOut = false }
         if pendingSignOut == nil {
-            guard let owner = service as? NativeCoreService,
-                  let account = try await selection.load() else { throw NativeCoreService.Failure.stopped }
+            guard let account = try await selection.load() else { throw NativeCoreService.Failure.stopped }
+            let owner = service as? NativeCoreService
+            // No owner is safe only when restoration failed before creating one.
+            guard owner != nil || (service == nil && restorationAccount == account) else {
+                throw NativeCoreService.Failure.stopped
+            }
             pendingSignOut = (owner, account)
         }
         guard let pending = pendingSignOut else { throw NativeCoreService.Failure.stopped }
         try await replaceOwner(with: nil)
-        try await pending.owner.stop()
+        try await pending.owner?.stop()
         try await selection.clear(ifMatching: pending.account.namespace)
-        try await pending.owner.discardAccountStorage(CoreStorage.account(id: pending.account.namespace, root: root))
+        let storage = CoreStorage.account(id: pending.account.namespace, root: root)
+        if let owner = pending.owner { try await owner.discardAccountStorage(storage) }
+        else { try await storage.removeUnopenedAccount() }
         pendingSignOut = nil
+        restorationAccount = nil
     }
 
     private func replaceOwner(with replacement: (any CoreService)?) async throws {
@@ -94,7 +111,14 @@ final class StandaloneModel {
         snapshot = nil
         do {
             if service == nil {
-                let selected = try await NativeCoreService.selected()
+                let account = try await accountSelection.load()
+                guard generation == token, !Task.isCancelled else { throw CancellationError() }
+                restorationAccount = account
+                let selected: NativeCoreService
+                if let account {
+                    let configuration = try await CoreStorage.account(id: account.namespace, root: accountRoot).prepareExistingAccount()
+                    selected = NativeCoreService(persistence: configuration, startup: .restoreAccount(account.userID))
+                } else { selected = try await NativeCoreService.guest() }
                 guard generation == token, !Task.isCancelled else { throw CancellationError() }
                 service = selected
             }

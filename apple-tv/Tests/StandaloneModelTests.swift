@@ -217,3 +217,23 @@ private actor ActionGate {
     #expect(!FileManager.default.fileExists(atPath: configuration.directory.path))
     try await model.replace(with: NativeCoreService())
 }
+
+@Test @MainActor func missingSavedAccountCanBeExplicitlyRemovedWithoutGuestFallback() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let selection = CoreAccountSelection(keyAccount: "missing-account-recovery-" + UUID().uuidString)
+    let namespace = UUID()
+    try await selection.save(.init(namespace: namespace, userID: "synthetic-user"))
+    let model = StandaloneModel(accountSelection: selection, accountRoot: root)
+    await model.run()
+    #expect(model.error != nil)
+    #expect(model.snapshot == nil)
+    #expect(model.canSignOut)
+    #expect(try await selection.load()?.namespace == namespace)
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+    try await model.signOut(selection: selection, root: root)
+    #expect(try await selection.load() == nil)
+    #expect(!model.canSignOut)
+    #expect(model.error == nil)
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+}
