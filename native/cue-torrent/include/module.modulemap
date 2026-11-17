@@ -1,0 +1,4 @@
+module CueTorrent {
+  header "CueTorrent.h"
+  export *
+}

@@ -17,6 +17,8 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.agent-work/native-target
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +30,15 @@ jobs:
           xcodegen --version
           xcodebuild -version
           xcodebuild -showsdks
+      - name: Install pinned native toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal --target aarch64-apple-tvos,aarch64-apple-tvos-sim
+      - name: Test native peer transfer and range adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .agent-work
+          cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
+          cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
       - name: Build unsigned Apple TV app
         shell: bash
         run: |
@@ -70,6 +81,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          "$CARGO_TARGET_DIR/debug/examples/seed" > .agent-work/fixture-seeder.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log; then break; fi
+            sleep 1
+          done
+          grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
           make apple-lab-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-lab-test.log
       - name: Upload build logs and test results
         if: always()
@@ -80,6 +99,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: |
+            .agent-work/native-test.log
+            .agent-work/fixture-seeder.log
             .agent-work/apple-build.log
             .agent-work/apple-test.log
             .agent-work/apple-lab-test.log

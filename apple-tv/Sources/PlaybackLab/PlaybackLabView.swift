@@ -7,19 +7,26 @@ struct PlaybackLabView: View {
     @State private var fixtures: [PlaybackFixture] = []
     @State private var player: AVPlayer?
     @State private var selected: String?
+    @State private var advanced = false
     @State private var error: String?
+    @State private var torrent = TorrentLabSession()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Playback Lab").font(.largeTitle)
-            Text("Local decoder control · torrent engine not connected").foregroundStyle(.secondary)
+            Text("Decoder controls and controlled-peer torrent proof").foregroundStyle(.secondary)
             if let player {
                 VideoPlayer(player: player).frame(height: 450)
+                Text(advanced ? "Playback advanced" : "Waiting for video").accessibilityIdentifier("playback-progress")
                 Button("Stop playback") { stop() }
             } else {
                 ForEach(fixtures) { fixture in
                     Button("Play \(fixture.title) — \(fixture.durationSeconds)s") { start(fixture) }
                 }
+            }
+            if player == nil {
+                Button("Stream torrent fixture") { stop(); torrent.start() }
+                Text(torrent.status)
             }
             Text(selected.map { "Selected fixture: \($0)" } ?? "Select a generated fixture")
             if let error { Text(error).foregroundStyle(.orange) }
@@ -32,6 +39,19 @@ struct PlaybackLabView: View {
         .task {
             do { fixtures = try PlaybackFixture.load(from: .main) }
             catch { self.error = "The bundled fixture manifest could not be loaded." }
+        }
+        .task(id: selected) {
+            while !Task.isCancelled, let player {
+                advanced = player.currentTime().seconds > 0.5
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        .onChange(of: torrent.url) { _, url in
+            guard let url else { return }
+            selected = "Direct torrent · fixture peer"
+            let playback = AVPlayer(url: url)
+            player = playback
+            playback.play()
         }
         .onDisappear { stop() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { stop() } }
@@ -51,10 +71,12 @@ struct PlaybackLabView: View {
     }
 
     private func stop() {
+        torrent.stop()
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         player = nil
         selected = nil
+        advanced = false
     }
 }
 #endif
