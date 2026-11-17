@@ -118,3 +118,59 @@ fn season_filter_pages_and_selects_only_the_requested_season() {
             .is_empty()
     );
 }
+
+#[test]
+fn source_provider_labels_preserve_private_configuration_and_selection_indexes() {
+    use stremio_core::types::addon::{Descriptor, ResourcePath};
+    let mut model = series();
+    model.selected.as_mut().unwrap().stream_path = Some(ResourcePath::without_extra(
+        "stream",
+        "series",
+        "owned-series:1:1",
+    ));
+    let addons: Vec<Descriptor> = ["First", "Second"]
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            serde_json::from_value(serde_json::json!({
+            "transportUrl":format!("https://provider.test/private-key-{index}/manifest.json"),
+            "manifest":{"id":"same-addon-id","name":name,"version":"1.0.0","description":"Owned",
+                "resources":["stream"],"types":["series"],"catalogs":[]}
+        })).unwrap()
+        })
+        .collect();
+    let page = |index: usize, names: &[&str]| ResourceLoadable {
+        request: serde_json::from_value(serde_json::json!({
+            "base":format!("https://provider.test/private-key-{index}/manifest.json"),
+            "path":{"resource":"stream","type":"series","id":"owned-series:1:1","extra":[]}
+        }))
+        .unwrap(),
+        content: Some(Loadable::Ready(
+            names
+                .iter()
+                .map(|name| {
+                    serde_json::from_value(serde_json::json!({
+                        "url":format!("https://media.test/{name}.mp4"),"name":name
+                    }))
+                    .unwrap()
+                })
+                .collect(),
+        )),
+    };
+    model.meta_streams = vec![page(0, &["a", "b"])];
+    model.streams = vec![page(1, &["c"])];
+    let view = cue_core::sources::view_with_addons(&model, 1, &addons).unwrap();
+    assert_eq!(view.total, 3);
+    assert_eq!(
+        view.items.iter().map(|item| item.index).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(view.items[0].addon_index, Some(0));
+    assert_eq!(view.items[0].addon_name.as_deref(), Some("First"));
+    assert_eq!(view.items[1].addon_index, Some(1));
+    assert_eq!(view.items[1].addon_name.as_deref(), Some("Second"));
+    let public = serde_json::to_string(&view).unwrap();
+    assert!(!public.contains("private-key"));
+    assert!(!public.contains("provider.test"));
+    assert!(!public.contains("media.test"));
+}

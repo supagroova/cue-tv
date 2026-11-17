@@ -5,6 +5,15 @@ import Security
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
+@Test func sourceGroupsUseProviderIdentityWithoutRenumberingSelections() throws {
+    let data = Data(#"{"status":"ready","loading":false,"video_id":"owned","offset":0,"total":4,"items":[{"index":0,"kind":"http","addon_index":4,"addon_name":"Twin"},{"index":1,"kind":"http","addon_index":5,"addon_name":"Twin"},{"index":2,"kind":"torrent","addon_index":4,"addon_name":"Twin"},{"index":3,"kind":"unsupported"}]}"#.utf8)
+    let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let sources = try decoder.decode(CoreSnapshot.Sources.self, from: data)
+    #expect(sources.groups.map(\.id) == [4, 5, nil])
+    #expect(sources.groups.map(\.name) == ["Twin", "Twin", "Unknown add-on"])
+    #expect(sources.groups.map { $0.items.map(\.index) } == [[0, 2], [1], [3]])
+}
+
 @Test func swiftCoreServiceRunsRealModelAndJoinsStop() async throws {
     let service = NativeCoreService()
     try await service.start()

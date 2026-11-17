@@ -502,7 +502,7 @@ fn snapshot(
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
         details: crate::details::view_filtered(details, video_offset, selected_season),
-        sources: crate::sources::view(details, source_offset),
+        sources: crate::sources::view_with_addons(details, source_offset, &ctx.profile.addons),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),

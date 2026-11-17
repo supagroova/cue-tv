@@ -17,6 +17,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
     struct Source: Decodable, Sendable {
         enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
+        let addonIndex: Int?; let addonName: String?
         let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
     }
     struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
@@ -396,5 +397,26 @@ actor NativeCoreService: CoreService {
         if let handle, retirement == nil {
             Task.detached { try? await Self.retire(handle) }
         }
+    }
+}
+
+
+nonisolated struct CoreSourceGroup: Identifiable, Sendable {
+    let id: Int?
+    let name: String
+    var items: [CoreSnapshot.Source]
+}
+extension CoreSnapshot.Sources {
+    nonisolated var groups: [CoreSourceGroup] {
+        var groups: [CoreSourceGroup] = []
+        for item in items {
+            if let index = groups.firstIndex(where: { $0.id == item.addonIndex }) {
+                groups[index].items.append(item)
+            } else {
+                let name = item.addonName.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown add-on"
+                groups.append(CoreSourceGroup(id: item.addonIndex, name: name, items: [item]))
+            }
+        }
+        return groups
     }
 }

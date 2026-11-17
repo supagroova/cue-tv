@@ -37,6 +37,8 @@ pub fn selection_filtered(
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Item {
+    pub addon_index: Option<usize>,
+    pub addon_name: Option<String>,
     pub index: usize,
     pub kind: &'static str,
     pub name: Option<String>,
@@ -53,12 +55,19 @@ pub struct View {
     pub total: usize,
 }
 pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
+    view_with_addons(model, offset, &[])
+}
+pub fn view_with_addons(
+    model: &MetaDetails,
+    offset: usize,
+    addons: &[stremio_core::types::addon::Descriptor],
+) -> Option<View> {
     let selected = model.selected.as_ref()?.stream_path.as_ref()?;
     let pages = || model.meta_streams.iter().chain(&model.streams);
     let streams = || {
         pages()
-            .filter_map(|page| page.content.as_ref()?.ready())
-            .flatten()
+            .filter_map(|page| Some((page, page.content.as_ref()?.ready()?)))
+            .flat_map(|(page, streams)| streams.iter().map(move |stream| (page, stream)))
     };
     let total = streams().count();
     let loading = pages().any(|page| matches!(page.content, None | Some(Loadable::Loading)));
@@ -86,25 +95,43 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
             .enumerate()
             .skip(offset)
             .take(24)
-            .map(|(index, stream)| Item {
-                index,
-                kind: match &stream.source {
-                    StreamSource::Torrent { .. } => "torrent",
-                    StreamSource::Url { url } if url.scheme() == "magnet" => "torrent",
-                    StreamSource::Url { .. } if crate::playback_source::https(stream).is_ok() => {
-                        "http"
-                    }
-                    _ => "unsupported",
-                },
-                name: stream
-                    .name
-                    .as_ref()
-                    .map(|text| text.chars().take(128).collect()),
-                description: stream
-                    .description
-                    .as_ref()
-                    .map(|text| text.chars().take(512).collect()),
-                size_bytes: stream.behavior_hints.video_size,
+            .map(|(index, (page, stream))| {
+                let provider = addons
+                    .iter()
+                    .enumerate()
+                    .find(|(_, addon)| addon.transport_url == page.request.base);
+                Item {
+                    addon_index: provider.map(|(index, _)| index),
+                    addon_name: provider.map(|(_, addon)| {
+                        addon
+                            .manifest
+                            .name
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .take(128)
+                            .collect()
+                    }),
+                    index,
+                    kind: match &stream.source {
+                        StreamSource::Torrent { .. } => "torrent",
+                        StreamSource::Url { url } if url.scheme() == "magnet" => "torrent",
+                        StreamSource::Url { .. }
+                            if crate::playback_source::https(stream).is_ok() =>
+                        {
+                            "http"
+                        }
+                        _ => "unsupported",
+                    },
+                    name: stream
+                        .name
+                        .as_ref()
+                        .map(|text| text.chars().take(128).collect()),
+                    description: stream
+                        .description
+                        .as_ref()
+                        .map(|text| text.chars().take(512).collect()),
+                    size_bytes: stream.behavior_hints.video_size,
+                }
             })
             .collect(),
     })

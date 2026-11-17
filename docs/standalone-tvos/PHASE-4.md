@@ -257,3 +257,25 @@ removing that generation comparison makes the new assertion fail
 (`ba27db07e3b845dfb0079d4dd01d1ef5`). The exact production source was restored;
 all six subtitle tests then pass (`d6e249583e6b4464a5faebd87a41f426`). This closes
 the earlier in-flight selection-change coverage gap without changing behavior.
+
+### Source provider grouping
+
+Source snapshots now carry a bounded public add-on name and installed-provider
+index, resolved from the private resource base URL. Configured URLs remain out
+of the presentation data. Embedded metadata streams and separate stream pages
+retain their original flat selection indexes and paging semantics. Swift groups
+by provider index, not name or manifest ID, preserving distinct configurations
+and exposing an Unknown add-on fallback when identity is unavailable.
+
+Native tests use two private configurations of the same manifest ID, checking
+labels, cross-provider paging and URL exclusion. Missing-API red:
+`a014850a64ab4add8250fbdf269dbd8f`; native details/catalogue green:
+`5cc830805a2149b78fe4a8f44940fc6a`. Swift grouping red:
+`5800817d2b2f4f7ea744c603dc384f20`; all 60 Swift tests pass:
+`3dadf6fbd84f4941b74324ce17c94737`. The unit fixture proves that equal display
+names do not merge providers or renumber selections. The real UI/peer journey
+asserts the add-on heading, correct green episode, Close and focus restoration
+(`a08a38f7d1154369a4da58a4cb6a36b1`). Full Core suite:
+`2c4ca89d4efa4706be08d839aa6c1a73`.
+Unsigned device build `08d8250e1ee44e83a7a7f5dd9d251548` passes (only this
+evidence document changed during the run); all 15 portable tests pass.
