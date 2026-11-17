@@ -46,6 +46,7 @@ pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static st
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
+    pub authenticated: bool,
     pub revision: u64,
     pub stopped: bool,
     pub interface_language: String,
@@ -96,14 +97,36 @@ pub struct CoreSession {
 impl CoreSession {
     /// Guest-only entry until protected account storage and authentication are integrated.
     pub async fn guest(environment: Arc<Environment>) -> Result<Self, EnvError> {
+        Self::restore(environment, None).await
+    }
+    /// Restore only the account identity selected by protected app storage.
+    /// This does not authenticate a new account or validate token freshness.
+    pub async fn restore_account(
+        environment: Arc<Environment>,
+        expected_user: &str,
+    ) -> Result<Self, EnvError> {
+        if expected_user.is_empty() || expected_user.len() > 512 {
+            return Err(EnvError::StorageUnavailable);
+        }
+        Self::restore(environment, Some(expected_user)).await
+    }
+    async fn restore(
+        environment: Arc<Environment>,
+        expected_user: Option<&str>,
+    ) -> Result<Self, EnvError> {
         let setup = environment
             .scope(async {
                 NativeEnv::migrate_storage_schema().await?;
                 let profile = NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY)
                     .await?
                     .unwrap_or_default();
-                if profile.auth.is_some() {
-                    return Err(EnvError::Other("Account storage is not configured".into()));
+                match (&profile.auth, expected_user) {
+                    (None, None) => {}
+                    (Some(auth), Some(expected))
+                        if auth.user.id.as_ref() == expected
+                            && !auth.key.0.is_empty()
+                            && auth.key.0.len() <= 4096 => {}
+                    _ => return Err(EnvError::StorageUnavailable),
                 }
                 Ok(Ctx::new(
                     profile,
@@ -346,6 +369,7 @@ fn snapshot(
 ) -> Snapshot {
     let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
+        authenticated: ctx.profile.auth.is_some(),
         catalogs,
         catalog_choices_offset,
         catalog_total,
