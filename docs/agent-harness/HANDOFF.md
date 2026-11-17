@@ -32,3 +32,10 @@ CI follow-up: warm role-cache run `44113416860` passed all checks in 9m02s queue
 CI artifact-cache follow-up: exact native-content simulator artifacts avoid repeating Cargo builds on matching inputs while preserving every test and device build. Local 15-test harness, workflow lint and shell syntax pass. Run 44123474614 passed cold and exact-hit attempts: warm simulator 7m32s, native/device 4m16s, queue-inclusive 7m47s; 31 unit and 10 UI tests preserved. The observed improvement over earlier warm simulator runs is 80–100s, with runner variability. See APPLE-CI.md for scope and invalidation rules.
 
 CI cache routing follow-up: simulator final-artifact hits now skip unused Cargo setup while keeping a separate Swift package cache. All15 portable tests and actionlint pass; remote timing still pending. See APPLE-CI.md.
+
+
+Phase 5 starts on `codex/tvos-phase-5`, based on Phase 4 `0bbecfa`. The state/sync
+contract is in `docs/standalone-tvos/decisions/003-resume-library-sync.md`; implementation
+status and next slice are in `docs/standalone-tvos/PHASE-5.md`. This is a separate
+worktree under `.agent-work/phase5`; the root worktree remains Phase 4 with its two
+unrelated unstaged documentation additions preserved. No Phase 5 runtime claim.
