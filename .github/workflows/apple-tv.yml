@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      sustained_playback:
+        description: Run the optional ten-minute playback qualification
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +31,7 @@ jobs:
           persist-credentials: false
       - name: Install project generator and report toolchain
         run: |
-          brew install xcodegen ffmpeg
+          brew install xcodegen
           xcodegen --version
           xcodebuild -version
           xcodebuild -showsdks
@@ -39,7 +44,11 @@ jobs:
           mkdir -p .agent-work
           cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
           cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
+      - name: Install optional media generator
+        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
+        run: brew install ffmpeg
       - name: Generate sustained playback fixture
+        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         run: python3 scripts/fixtures/generate-long.py
       - name: Build unsigned Apple TV app
         shell: bash
@@ -93,6 +102,7 @@ jobs:
           grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
           make apple-lab-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-lab-test.log
       - name: Verify ten minutes of direct torrent playback
+        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         shell: bash
         run: |
           set -euo pipefail
