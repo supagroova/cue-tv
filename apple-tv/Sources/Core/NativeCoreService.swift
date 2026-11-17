@@ -62,6 +62,7 @@ nonisolated private struct CoreTorrentReply: Decodable, Sendable {
 
 nonisolated protocol CoreService: Sendable {
     func start() async throws
+    func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
     func logout() async throws
     func snapshot() async throws -> CoreSnapshot
@@ -97,10 +98,17 @@ actor NativeCoreService: CoreService {
         let configuration = try await CoreStorage.shared.prepare()
         return NativeCoreService(persistence: configuration)
     }
+    nonisolated static func selected(selection: CoreAccountSelection = .shared, accountRoot: URL? = nil) async throws -> NativeCoreService {
+        guard let account = try await selection.load() else { return try await guest() }
+        let configuration = try await CoreStorage.account(id: account.namespace, root: accountRoot).prepareExistingAccount()
+        return NativeCoreService(persistence: configuration, startup: .restoreAccount(account.userID))
+    }
+    private var retiringAccount = false
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?
 
     func start() throws {
+        guard !retiringAccount else { throw Failure.stopped }
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
         if case .newAccount = startup, persistence == nil { throw Failure.invalidRequest }
@@ -133,6 +141,19 @@ actor NativeCoreService: CoreService {
         } else { created = cue_core_create() }
         guard created != 0 else { throw Failure.unavailable }
         handle = created
+    }
+
+    /// Private account-selection input. Never present this value in diagnostics.
+    func accountIdentity() throws -> String? {
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        var bytes = [UInt8](repeating: 0, count: 512)
+        let size = bytes.withUnsafeMutableBufferPointer { cue_core_account_identity(handle, $0.baseAddress, $0.count) }
+        if size == 0 { return nil }
+        guard size > 0 else { throw Failure.stopped }
+        guard size <= bytes.count, let identity = String(bytes: bytes.prefix(size), encoding: .utf8),
+              !identity.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { throw Failure.malformedSnapshot }
+        return identity
     }
 
     /// Returns after queue admission; callers observe authenticated state/error separately.
@@ -261,6 +282,16 @@ actor NativeCoreService: CoreService {
         case -3: throw Failure.busy
         default: throw Failure.stopped
         }
+    }
+
+    /// Permanently retires this owner before deleting its dedicated account storage.
+    /// Failed shutdown retains the owner and storage so cleanup can be retried.
+    func discardAccountStorage(_ storage: CoreStorage) async throws {
+        guard let persistence else { throw Failure.invalidRequest }
+        if case .guest = startup { throw Failure.invalidRequest }
+        retiringAccount = true
+        try await stop()
+        try await storage.removeAccount(expectedDirectory: persistence.directory)
     }
 
     func stop() async throws {

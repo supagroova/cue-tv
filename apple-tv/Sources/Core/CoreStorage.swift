@@ -9,7 +9,7 @@ nonisolated struct CorePersistenceConfiguration: Sendable {
 /// Filesystem and Keychain work run off the UI actor. Account storage remains separate.
 actor CoreStorage {
     enum Failure: Error, Equatable {
-        case unavailable, missingKey, invalidKey, unsafeDirectory
+        case unavailable, missingKey, missingState, invalidKey, unsafeDirectory
         case keychain(OSStatus)
     }
     static let keyService = "com.cue-tv.stremio-core.storage-v1"
@@ -25,13 +25,42 @@ actor CoreStorage {
         let base = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CueCore/accounts-v1", isDirectory: true)
         let name = id.uuidString.lowercased()
-        return CoreStorage(directory: base.appendingPathComponent(name, isDirectory: true),
+        return CoreStorage(accountDirectory: base.appendingPathComponent(name, isDirectory: true),
                            keyAccount: "account-v1:" + name)
     }
 
     private let directory: URL
     private let keyAccount: String
-    init(directory: URL, keyAccount: String) { self.directory = directory; self.keyAccount = keyAccount }
+    private let removableAccount: Bool
+    init(directory: URL, keyAccount: String) {
+        self.directory = directory; self.keyAccount = keyAccount; self.removableAccount = false
+    }
+    private init(accountDirectory: URL, keyAccount: String) {
+        self.directory = accountDirectory; self.keyAccount = keyAccount; self.removableAccount = true
+    }
+    /// Candidate login owner may call this only before creating any native owner.
+    func removeUnopenedAccount() throws { try removeAccount(expectedDirectory: directory) }
+    /// Only the owning service calls this after native stop acknowledgement.
+    func removeAccount(expectedDirectory: URL) throws {
+        guard removableAccount, directory == expectedDirectory, directory.isFileURL else { throw Failure.unsafeDirectory }
+        if FileManager.default.fileExists(atPath: directory.path) {
+            let values = try directory.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+            guard values.isSymbolicLink != true, values.isDirectory == true else { throw Failure.unsafeDirectory }
+            try FileManager.default.removeItem(at: directory)
+        }
+        // Keep the key if filesystem removal fails, so retained ciphertext stays recoverable.
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.keyService, kSecAttrAccount as String: keyAccount]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.keychain(status) }
+    }
+
+    func prepareExistingAccount() throws -> CorePersistenceConfiguration {
+        guard removableAccount else { throw Failure.unsafeDirectory }
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("state.bin").path)
+        else { throw Failure.missingState }
+        return try prepare()
+    }
 
     func prepare() throws -> CorePersistenceConfiguration {
         guard directory.isFileURL else { throw Failure.unsafeDirectory }

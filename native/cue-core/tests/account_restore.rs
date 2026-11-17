@@ -116,6 +116,17 @@ async fn ffi_account_restore_copies_identity_and_releases_encrypted_store() {
                 assert_eq!(value["status"], expected);
                 if expected == "ready" {
                     assert_eq!(value["model"]["authenticated"], true);
+                    let mut short = [83; 1];
+                    assert_eq!(
+                        unsafe { cue_core_account_identity(id, short.as_mut_ptr(), short.len()) },
+                        12
+                    );
+                    assert_eq!(short, [83]);
+                    let mut identity = [0; 512];
+                    let count = unsafe {
+                        cue_core_account_identity(id, identity.as_mut_ptr(), identity.len())
+                    };
+                    assert_eq!(&identity[..count as usize], b"fixture-user");
                 }
                 break;
             }
@@ -123,6 +134,10 @@ async fn ffi_account_restore_copies_identity_and_releases_encrypted_store() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         cue_core_stop(id);
+        assert_eq!(
+            unsafe { cue_core_account_identity(id, std::ptr::null_mut(), 0) },
+            -1
+        );
         while cue_core_stop_status(id) == 0 {
             assert!(tokio::time::Instant::now() < deadline);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

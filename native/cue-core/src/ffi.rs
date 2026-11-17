@@ -20,6 +20,7 @@ struct Handoff {
     reply: Option<Vec<u8>>,
 }
 struct Entry {
+    identity: Mutex<Option<String>>,
     handoff: Mutex<Handoff>,
     commands: mpsc::Sender<Command>,
     snapshot: Mutex<Vec<u8>>,
@@ -197,6 +198,7 @@ fn create(persistence: Option<Persistence>) -> u64 {
         };
         let (commands, inbox) = mpsc::channel(64);
         let entry = Arc::new(Entry {
+            identity: Mutex::new(None),
             commands,
             handoff: Mutex::new(Handoff::default()),
             snapshot: Mutex::new(Vec::new()),
@@ -297,6 +299,7 @@ async fn own(
                     }
                 },
                 _ = tick.tick() => {
+                    if let Ok(mut identity) = entry.identity.lock() { *identity = session.account_identity(); }
                     publish(&entry, handle, "ready", Some(session.snapshot()), command_error);
                 }
             }
@@ -494,6 +497,40 @@ pub unsafe extern "C" fn cue_core_dispatch(handle: u64, bytes: *const u8, length
             Err(mpsc::error::TrySendError::Full(_)) => -3,
             Err(_) => -1,
         }
+    }))
+    .unwrap_or(-1)
+}
+/// Copies only the authenticated user ID for protected account selection.
+/// # Safety
+/// A non-null output must be writable for capacity bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_account_identity(
+    handle: u64,
+    output: *mut u8,
+    capacity: usize,
+) -> isize {
+    catch_unwind(AssertUnwindSafe(|| {
+        if output.is_null() && capacity != 0 {
+            return -1;
+        }
+        let Some(entry) = lookup(handle) else {
+            return -1;
+        };
+        if entry.stop.is_cancelled() {
+            return -1;
+        }
+        let Ok(identity) = entry.identity.lock() else {
+            return -1;
+        };
+        let Some(identity) = identity.as_ref() else {
+            return 0;
+        };
+        if !output.is_null() && capacity >= identity.len() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(identity.as_ptr(), output, identity.len());
+            }
+        }
+        identity.len() as isize
     }))
     .unwrap_or(-1)
 }

@@ -11,7 +11,7 @@ actor CoreAccountSelection {
         let version: Int
         let account: Account
     }
-    enum Failure: Error, Equatable { case invalidRecord, keychain(OSStatus) }
+    enum Failure: Error, Equatable { case invalidRecord, alreadySelected, keychain(OSStatus) }
     static let shared = CoreAccountSelection(keyAccount: "active-account-v1")
     private let keyAccount: String
     init(keyAccount: String) { self.keyAccount = keyAccount }
@@ -41,8 +41,14 @@ actor CoreAccountSelection {
         try validate(record.account)
         return record.account
     }
+    /// Atomically admits a new selection through the shared actor; no account replacement.
+    func selectNew(_ account: Account) throws {
+        guard try load() == nil else { throw Failure.alreadySelected }
+        try save(account)
+    }
     /// Save only after native authentication and identity verification have succeeded.
     func save(_ account: Account) throws {
+        try Task.checkCancellation()
         try validate(account)
         let data = try JSONEncoder().encode(Record(version: 1, account: account))
         let attributes: [String: Any] = [kSecValueData as String: data,

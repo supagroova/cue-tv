@@ -619,3 +619,27 @@ The real simulator bridge verifies fresh startup, malformed-credential rejection
 CoreAccountSelection stores a versioned opaque namespace UUID and expected provider user ID in nonsynchronizing, AfterFirstUnlockThisDeviceOnly Keychain storage. It stores no password or auth token. Missing selection returns none; malformed/unknown-version or invalid identity records fail explicitly. A namespace-matched clear operation prevents a late sign-out from deleting a newer selection. Production coordination must use its shared actor and save only a verified native identity.
 
 Real simulator Keychain tests verify recreation, replacement, stale-sign-out protection, deletion, invalid records and accessibility/synchronization attributes. Full Swift suite passes (`6e3751db928b4a81a4ce2991938951a2`). Missing-type reproduction is retained (`aa677c94b53c476ca5756299cbf39d28`). The record is not yet wired into startup/login; account-directory deletion and successful C/Swift authentication still remain.
+
+### Explicit authenticated identity handoff
+
+A separate private native identity channel exposes a bounded user-ID copy for verified active-account selection. Identity remains absent from serialized UI snapshots; the copy contains no token/email. Native logout/shutdown clears the channel. The C accessor has a 512-byte maximum, leaves undersized buffers untouched, and rejects stopping/stopped handles; Swift exposes it only as an explicit service operation.
+
+Native tests verify authenticated identity, logout/shutdown clearing, exact C restoration copy and short-buffer behavior; full native suite passes (`7f370e3fc89e40b6873de43acbc9454e`). Full Swift suite passes (`91871cc249344583b608abaf67168b54`), including absent guest identity and stopped access rejection. The missing-native-method reproduction is retained (`f56e6f2711f9485b86e366f6523bf3a8`). Active-account coordination must still generation-check the operation before persisting selection; this accessor alone does not complete login UI or race isolation.
+
+### Owned account-store disposal
+
+NativeCoreService can permanently retire an account owner, await native stop acknowledgement, then remove its matching dedicated directory and Keychain key. Guest services cannot invoke this cleanup; normal CoreStorage instances are not removable account stores. Removal retains the key if filesystem deletion fails. The retired service cannot restart while cleanup is awaiting another actor or after deletion; cleanup can be retried. Active-account selection must be cleared separately by the coordinator.
+
+A real simulator test starts a fresh native account owner, disposes it, verifies its directory/key are absent, verifies another account's directory/key survive, rejects restart and guest disposal, and repeats cleanup safely. Full Swift suite passes (`e1ea203468554653841eee81390841d2`). Initial missing-method reproduction (`8dc5fdb4eb03426c85c097062b8fb6a4`) and an intermediate method-placement compile error are retained. Injected shutdown/filesystem failures and the complete login coordinator remain to be covered.
+
+### Candidate login owner
+
+CoreAccountLogin allocates a single-use opaque namespace, owns native startup/authentication, waits for authenticated state and settled effects, then selects the explicit identity through Keychain. Selection uses a shared-actor select-if-empty operation so concurrent candidates cannot replace an existing account. Cancellation checks surround storage, native admission and selection; Keychain save also rejects cancelled tasks. Ancillary add-on/library failures do not undo successful authentication.
+
+Failure/cancellation cleanup stops candidate work before Keychain operations, clears only its matching selection and disposes its account store after shutdown. The owner retains service/storage references when cleanup throws, permitting an explicit retry. A simulator test verifies invalid credentials remove the candidate directory/key and leave no selection; Keychain tests verify select-if-empty preserves the winner. Full Swift suite passes (`ce367d4948ad4dd79505d547850e2493`); missing-owner compilation failure retained (`d58feb2a5c494cbf9fb032aec4677d31`). Successful end-to-end coordinator authentication, cancellation at each suspension boundary, injected cleanup failures and UI integration remain unverified.
+
+### Selected-account startup and pre-start cancellation
+
+The service factory loads protected selection and requires existing account ciphertext before preparing its key and selecting identity-checked native restoration. Missing account state throws explicitly, preserves the selected record and creates no replacement directory/key; no selection still chooses guest. Login-attempt cancellation now permanently closes the attempt, including cancellation before signIn starts.
+
+The cancellation regression reproduced later admission and storage allocation (`01be458fac61460bb57dbdd4855d1b28`); after the guard, the full Swift suite passes (`214fce770c6b43299cbfa1e927c6bfeb`). Tests also verify selected-but-missing ciphertext fails without guest fallback or storage creation. Successful restored-account UI and cancellation during network/storage suspension remain outstanding.
