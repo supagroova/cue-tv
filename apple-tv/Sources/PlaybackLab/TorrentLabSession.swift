@@ -9,6 +9,9 @@ final class TorrentLabSession {
     private(set) var url: URL?
     private(set) var verifiedBytes: UInt64 = 0
     private(set) var totalBytes: UInt64 = 0
+    private(set) var cacheDirectory: URL?
+    private(set) var pendingCleanups = 0
+    private(set) var cleanupFailures = 0
     private var handle: UInt64 = 0
     private var generation = UUID()
     private var polling: Task<Void, Never>?
@@ -25,6 +28,7 @@ final class TorrentLabSession {
         guard let data = try? JSONSerialization.data(withJSONObject: config), let json = String(data: data, encoding: .utf8) else { return }
         handle = json.withCString { cue_torrent_start($0) }
         guard handle != 0 else { status = "Engine rejected configuration"; return }
+        cacheDirectory = output
         status = "Connecting to fixture peer"
         let current = generation
         polling = Task { [weak self] in
@@ -54,7 +58,37 @@ final class TorrentLabSession {
     func stop() {
         generation = UUID()
         polling?.cancel(); polling = nil
-        cue_torrent_stop(handle); handle = 0
+        let ticket = cue_torrent_stop_ticket(handle)
+        let directory = cacheDirectory
+        handle = 0; cacheDirectory = nil
+        if ticket != 0 {
+            pendingCleanups += 1
+            let cleanup = Task.detached {
+                defer { cue_torrent_stop_release(ticket) }
+                for _ in 0..<100 {
+                    let state = cue_torrent_stop_status(ticket)
+                    if state == 1 {
+                        guard let directory else { return true }
+                        do {
+                            if FileManager.default.fileExists(atPath: directory.path) {
+                                try FileManager.default.removeItem(at: directory)
+                            }
+                            return true
+                        } catch { return false }
+                    }
+                    if state < 0 { return false }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                // Keep files if shutdown is unconfirmed; never delete on timeout.
+                return false
+            }
+            Task { [weak self] in
+                let removed = await cleanup.value
+                guard let self else { return }
+                self.pendingCleanups -= 1
+                if !removed { self.cleanupFailures += 1 }
+            }
+        }
         url = nil; status = "Idle"
         verifiedBytes = 0; totalBytes = 0
     }

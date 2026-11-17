@@ -12,4 +12,11 @@ char *cue_torrent_snapshot(uint64_t handle);
 void cue_torrent_string_free(char *value);
 // Idempotent; requests asynchronous shutdown, invalidates the handle immediately.
 void cue_torrent_stop(uint64_t handle);
+// Stops and invalidates a live handle; returns a ticket, or zero if unknown/already stopped.
+uint64_t cue_torrent_stop_ticket(uint64_t handle);
+// 0 pending, 1 storage closed and session owner finished, -1 unknown/released.
+// Acknowledges cache I/O closure, not joining every upstream network task.
+int32_t cue_torrent_stop_status(uint64_t ticket);
+// Required exactly once per nonzero ticket (idempotent); safe to abandon a pending ticket.
+void cue_torrent_stop_release(uint64_t ticket);
 #endif
