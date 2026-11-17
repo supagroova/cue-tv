@@ -82,3 +82,28 @@ import Testing
     #expect(coordinator.state == .resolving)
     await coordinator.stop()
 }
+
+@Test @MainActor func playbackFailureReleasesResourcesAndRemainsVisible() async throws {
+    let coordinator = PlaybackSessionCoordinator()
+    var releases = 0
+    let token = try #require(await coordinator.begin { releases += 1 })
+    coordinator.receive(.buffering, generation: token)
+    coordinator.receive(.failed(.decoder), generation: token)
+    for _ in 0..<100 where releases == 0 { await Task.yield() }
+    #expect(releases == 1)
+    #expect(coordinator.state == .failed(.decoder))
+    coordinator.receive(.playing, generation: token)
+    #expect(coordinator.state == .failed(.decoder))
+    await coordinator.stop()
+    #expect(releases == 1)
+    #expect(coordinator.state == .idle)
+}
+
+@Test @MainActor func unresolvedPlaybackTimesOutAndReleasesResources() async throws {
+    let coordinator = PlaybackSessionCoordinator(wait: { _ in })
+    var releases = 0
+    _ = try #require(await coordinator.begin { releases += 1 })
+    for _ in 0..<100 where releases == 0 { await Task.yield() }
+    #expect(coordinator.state == .failed(.invalidMetadata))
+    #expect(releases == 1)
+}

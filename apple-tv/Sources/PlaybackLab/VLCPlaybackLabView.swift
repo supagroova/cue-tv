@@ -30,6 +30,9 @@ struct VLCPlaybackLabView: View {
                 }
                 Button("Stream torrent with VLC") { start(torrentSource: true) }
                 Text(torrent.status)
+                if case .failed(let failure) = lifecycle.state {
+                    Text("Playback failed: \(String(describing: failure))")
+                }
             }
         }
         .onChange(of: torrent.url) { _, value in
@@ -45,6 +48,7 @@ struct VLCPlaybackLabView: View {
         url = nil; milliseconds = 0; token = nil
         Task {
             let next = await lifecycle.begin {
+                url = nil; milliseconds = 0; token = nil
                 torrent.stop()
                 while torrent.pendingCleanups > 0 {
                     try? await Task.sleep(for: .milliseconds(50))

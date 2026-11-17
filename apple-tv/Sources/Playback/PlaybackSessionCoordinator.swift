@@ -15,6 +15,12 @@ final class PlaybackSessionCoordinator {
     private var generation = UUID()
     private var teardown: (@MainActor () async -> Void)?
     private var retirement: Task<Void, Never>?
+    private var deadline: Task<Void, Never>?
+    private let wait: (Duration) async throws -> Void
+
+    init(wait: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.wait = wait
+    }
 
     /// Allocate/start resources only after this returns a non-nil generation.
     func begin(teardown next: @escaping @MainActor () async -> Void) async -> UUID? {
@@ -23,6 +29,7 @@ final class PlaybackSessionCoordinator {
         guard generation == token else { return nil }
         teardown = next
         state = .resolving
+        armDeadline()
         return token
     }
 
@@ -30,8 +37,12 @@ final class PlaybackSessionCoordinator {
         guard token == generation, teardown != nil else { return }
         if case .failed = state { return }
         // Only ownership methods may enter idle/stopping.
-        guard next != .idle, next != .stopping else { return }
+        guard next != .idle, next != .stopping, next != state else { return }
+        if case .failed = next {
+            _ = retire()
+        }
         state = next
+        armDeadline()
     }
 
     func stop() async {
@@ -41,7 +52,28 @@ final class PlaybackSessionCoordinator {
         state = .idle
     }
 
+    private func armDeadline() {
+        deadline?.cancel()
+        let duration: Duration
+        let failure: Failure
+        switch state {
+        case .resolving: duration = .seconds(15); failure = .invalidMetadata
+        case .discovering: duration = .seconds(30); failure = .discovery
+        case .buffering: duration = .seconds(30); failure = .buffering
+        case .seeking: duration = .seconds(15); failure = .read
+        default: deadline = nil; return
+        }
+        let token = generation
+        let expected = state
+        deadline = Task { [weak self, wait] in
+            do { try await wait(duration) } catch { return }
+            guard !Task.isCancelled, let self, self.generation == token, self.state == expected else { return }
+            self.receive(.failed(failure), generation: token)
+        }
+    }
+
     private func retire() -> UUID {
+        deadline?.cancel(); deadline = nil
         generation = UUID()
         let previous = retirement
         let release = teardown

@@ -40,7 +40,9 @@ This proves one local MKV decoding path and the MP4 torrent-to-VLC connection on
 
 Validation: all ten Swift unit tests and four simulator Playback Lab UI tests passed. The coordinator tests cover stale failure/playback events and overlapping starts while teardown is held open.
 
-This is initial lifecycle integration, not complete production playback: pause/seek controls, automatic failure teardown, bounded discovery/decoder waits and a stable product snapshot still need implementation. The existing lab's shutdown ticket bounds cache-cleanup waiting separately.
+Failure now retires the active generation and releases its resources while preserving the categorized failure for display. Resolving is limited to 15 seconds, discovery and initial buffering to 30 seconds each, and seeking to 15 seconds. Repeated identical state reports do not extend deadlines. These provisional timeouts are safeguards, not claims that the product startup/seek targets have been achieved. Tests inject the timer wait rather than sleeping through the deadlines. All twelve Swift unit tests and four Playback Lab UI tests passed after failure/deadline integration; the failure regression first reproduced resources remaining active.
+
+This is initial lifecycle integration, not complete production playback: pause/seek controls, decoder error/stall reporting after playback begins and a stable product snapshot still need implementation. The existing lab's shutdown ticket bounds cache-cleanup waiting separately.
 
 ## Remaining work
 
