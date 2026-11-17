@@ -607,3 +607,9 @@ The guest regression reproduced admission before the guard (`14561fe045dc44f9867
 The bridge exposes create_account for an empty dedicated encrypted store, a copy-only credential entry with independent UTF-8 email/password limits, and JSON logout dispatch. Explicit startup variants keep guest, fresh account and restored identity distinct. Login admission is asynchronous and does not mean successful authentication. Credentials never enter JSON snapshots.
 
 Bridge tests verify guest login rejection, snapshot redaction, fresh-store startup, logout dispatch, acknowledged release and rejection of the used store. Full native suite passes (`760e88ad7fa947e1b0639ee40960da88`). The existing full-capacity handle-table test initially collided with the new concurrent tests (`d26ebbace59e43c893ec08866ca103cd`); tests sharing that process-global table now take an exclusive test lock, retaining all capacity assertions. Successful account login through C and the Swift/UI path remain to be verified.
+
+### Swift account commands
+
+NativeCoreService now selects an explicit guest/new-account/restored-account startup mode. Fresh accounts require persistence; Swift rejects login on other modes and copies credentials into the dedicated C entry. CoreService exposes login/logout admission, with authentication completion still observed separately. The existing restoration test retains identity-mismatch behavior.
+
+The real simulator bridge verifies fresh startup, malformed-credential rejection, logout admission, failure to restart a used store as fresh, and guest login rejection. Full Swift suite passes (`65879f77640a48899d234e75e5b009cd`); missing Swift API failure retained (`f38bb9ee2c744126905e60d170796040`). These tests do not authenticate a real account or prove the successful C/Swift login response path. Protected active selection, account coordination and user-facing login remain outstanding.

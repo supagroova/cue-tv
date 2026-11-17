@@ -62,6 +62,8 @@ nonisolated private struct CoreTorrentReply: Decodable, Sendable {
 
 nonisolated protocol CoreService: Sendable {
     func start() async throws
+    func login(email: String, password: String) async throws
+    func logout() async throws
     func snapshot() async throws -> CoreSnapshot
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
@@ -83,12 +85,13 @@ actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
         case requestFailed(String) }
     private let persistence: CorePersistenceConfiguration?
-    private let expectedUser: String?
+    enum Startup: Sendable { case guest, newAccount, restoreAccount(String) }
+    private let startup: Startup
     /// Account restoration requires an identity from protected app storage.
     /// A missing/mismatched account fails rather than falling back to guest.
-    init(persistence: CorePersistenceConfiguration? = nil, expectedUser: String? = nil) {
+    init(persistence: CorePersistenceConfiguration? = nil, startup: Startup = .guest) {
         self.persistence = persistence
-        self.expectedUser = expectedUser
+        self.startup = startup
     }
     nonisolated static func guest() async throws -> NativeCoreService {
         let configuration = try await CoreStorage.shared.prepare()
@@ -100,7 +103,8 @@ actor NativeCoreService: CoreService {
     func start() throws {
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
-        if let expectedUser {
+        if case .newAccount = startup, persistence == nil { throw Failure.invalidRequest }
+        if case .restoreAccount(let expectedUser) = startup {
             guard persistence != nil, !expectedUser.isEmpty, expectedUser.utf8.count <= 512,
                   !expectedUser.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
             else { throw Failure.invalidRequest }
@@ -111,7 +115,11 @@ actor NativeCoreService: CoreService {
             let path = Data(persistence.directory.path.utf8)
             created = path.withUnsafeBytes { pathBytes in
                 persistence.key.withUnsafeBytes { keyBytes in
-                    if let expectedUser {
+                    if case .newAccount = startup {
+                        return cue_core_create_account(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                            keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count)
+                    }
+                    if case .restoreAccount(let expectedUser) = startup {
                         return Data(expectedUser.utf8).withUnsafeBytes { userBytes in
                             cue_core_restore_account(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
                                 keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count,
@@ -126,6 +134,28 @@ actor NativeCoreService: CoreService {
         guard created != 0 else { throw Failure.unavailable }
         handle = created
     }
+
+    /// Returns after queue admission; callers observe authenticated state/error separately.
+    func login(email: String, password: String) throws {
+        guard case .newAccount = startup else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let emailBytes = Data(email.utf8)
+        let passwordBytes = Data(password.utf8)
+        let result = emailBytes.withUnsafeBytes { email in
+            passwordBytes.withUnsafeBytes { password in
+                cue_core_login(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
+                               password.bindMemory(to: UInt8.self).baseAddress, password.count)
+            }
+        }
+        switch result {
+        case 0: return
+        case -2: throw Failure.invalidRequest
+        case -3: throw Failure.busy
+        default: throw Failure.stopped
+        }
+    }
+
+    func logout() throws { try dispatch(["version": 1, "action": "logout"]) }
 
     func snapshot() throws -> CoreSnapshot {
         guard let handle, retirement == nil else { throw Failure.stopped }

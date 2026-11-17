@@ -153,7 +153,7 @@ import Security
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let configuration = CorePersistenceConfiguration(directory: directory, key: Data(repeating: 49, count: 32))
-    let account = NativeCoreService(persistence: configuration, expectedUser: "fixture-user")
+    let account = NativeCoreService(persistence: configuration, startup: .restoreAccount("fixture-user"))
     try await account.start()
     var state = try await account.snapshot()
     for _ in 0..<200 where state.status == .starting {
@@ -174,7 +174,7 @@ import Security
     #expect(state.status == .ready)
     #expect(state.model?.authenticated == false)
     try await guest.stop()
-    let missingStore = NativeCoreService(expectedUser: "fixture-user")
+    let missingStore = NativeCoreService(startup: .restoreAccount("fixture-user"))
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await missingStore.start() }
 }
 
@@ -305,4 +305,39 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     }
     #expect(state.model?.interfaceLanguage == "fra")
     try await reopened.stop()
+}
+
+@Test func freshAccountServiceValidatesCredentialsAndCannotReuseStorage() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let configuration = CorePersistenceConfiguration(directory: directory, key: Data(repeating: 83, count: 32))
+    let service = NativeCoreService(persistence: configuration, startup: .newAccount)
+    try await service.start()
+    var state = try await service.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10)); state = try await service.snapshot()
+    }
+    #expect(state.status == .ready)
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.login(email: "", password: "synthetic-password") }
+    let revision = try #require(state.model?.revision)
+    try await service.logout()
+    for _ in 0..<200 where state.model?.revision == revision {
+        try await Task.sleep(for: .milliseconds(10)); state = try await service.snapshot()
+    }
+    #expect(state.model?.revision != revision)
+    #expect(state.model?.authenticated == false)
+    try await service.stop()
+    try await service.start()
+    state = try await service.snapshot()
+    for _ in 0..<200 where state.status == .starting {
+        try await Task.sleep(for: .milliseconds(10)); state = try await service.snapshot()
+    }
+    #expect(state.status == .stopped)
+    #expect(state.error == "core_start_failed")
+    try await service.stop()
+    let guest = NativeCoreService()
+    try await guest.start()
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await guest.login(email: "fixture@example.test", password: "synthetic-password") }
+    try await guest.stop()
 }
