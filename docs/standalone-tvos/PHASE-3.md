@@ -541,3 +541,7 @@ The simulator integration test starts a local HTTP tracker returning only the co
 ### App-facing source state model
 
 `TorrentPlaybackModel` now connects the source resource owner to `PlaybackSessionCoordinator`: discovery, paged file choices, explicit selection, native failure mapping and loopback URL readiness. A `choosingFile` state avoids treating user selection time as buffering. Generation/owner checks reject snapshots arriving after stop or replacement; decoder callbacks still determine playing/progress. A real native invalid-source test verifies failure presentation and cache availability only after retirement. Simulator suite passes (`d7116ccbdf0045d4918df42c476a914a`). Decoder surface integration, a rendered successful model flow and file-choice UI remain outstanding.
+
+### Shared VLC rendering component
+
+Extracted the existing VLC surface/snapshot into production `Playback/VLCPlaybackSurface.swift`; the debug lab uses the same implementation. Playback, track controls, polling and teardown logic are unchanged. All short Playback Lab UI tests pass (`1bc6965b16f94c308891ab21c0dd9dbe`). This makes the decoder component available to the source flow but does not yet constitute a rendered production source screen. Open PR review threads were checked on 2026-11-17 and none were unresolved; phase completeness remains separate from review-thread status.
