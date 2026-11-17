@@ -136,3 +136,19 @@ import CryptoKit
     try await service.stop()
     try FileManager.default.removeItem(at: root)
 }
+
+@Test @MainActor func sourceModelReportsNativeFailureAndRetiresBeforeCacheReuse() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = TorrentCacheStore(root: root)
+    let model = TorrentPlaybackModel(cache: cache)
+    let request = CoreTorrentRequest(metaId: "title", videoId: "title:1:2", kind: "series", magnet: "invalid", fileIndex: nil, fileMustInclude: [])
+    await model.start(request)
+    #expect(model.coordinator.state == .failed(.invalidMetadata))
+    #expect(model.playbackURL == nil)
+    await model.stop()
+    #expect(model.coordinator.state == .idle)
+    #expect(!model.cleanupFailed)
+    let next = try await cache.acquire()
+    try await cache.release(next)
+}
