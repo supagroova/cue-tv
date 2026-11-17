@@ -1,0 +1,80 @@
+name: Apple TV
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-tv-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install project generator and report toolchain
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
+          xcodebuild -showsdks
+      - name: Build unsigned Apple TV app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .agent-work
+          make apple-build 2>&1 | tee .agent-work/apple-build.log
+      - name: Select available Apple TV simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))
+          candidates = [(runtime, device) for runtime, devices in data['devices'].items()
+                        if '.tvOS-' in runtime for device in devices
+                        if device.get('isAvailable') and device['name'].startswith('Apple TV')]
+          if not candidates:
+              raise SystemExit('No available tvOS simulator on this runner; tests cannot run.')
+          def rank(item):
+              runtime, device = item
+              version = tuple(int(n) for n in runtime.split('.tvOS-')[1].split('-'))
+              return (version, '4K' in device['name'], device['name'])
+          runtime, device = max(candidates, key=rank)
+          print(f"Selected {device['name']} on {runtime}: {device['udid']}")
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f"DESTINATION=platform=tvOS Simulator,id={device['udid']}\n")
+              env.write(f"SIMULATOR_UDID={device['udid']}\n")
+          PY
+          xcrun simctl list devices available
+      - name: Boot simulator
+        run: |
+          xcrun simctl boot "$SIMULATOR_UDID"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+      - name: Run Apple TV unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          make apple-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-test.log
+      - name: Upload build logs and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-tv-results
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            .agent-work/apple-build.log
+            .agent-work/apple-test.log
+            .agent-work/DerivedData/Logs/Test/*.xcresult
