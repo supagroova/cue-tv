@@ -75,3 +75,64 @@ import CueTorrent
     #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).count == 1)
     try await cache.release(next)
 }
+
+import Network
+import CryptoKit
+
+@Test func magnetDiscoverySelectionAndVerifiedBytesThroughSwift() async throws {
+    let tracker = try NWListener(using: .tcp, on: .any)
+    defer { tracker.cancel() }
+    tracker.newConnectionHandler = { connection in
+        connection.start(queue: .global())
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { _, _, _, _ in
+            var body = Data("d8:intervali60e5:peers6:".utf8)
+            body.append(contentsOf: [127, 0, 0, 1, 0xa5, 0xb8]) // Controlled fixture peer, port 42424.
+            body.append(Data("e".utf8))
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+    let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+        tracker.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                tracker.stateUpdateHandler = nil
+                continuation.resume(returning: tracker.port!.rawValue)
+            case .failed(let error):
+                tracker.stateUpdateHandler = nil
+                continuation.resume(throwing: error)
+            default: break
+            }
+        }
+        tracker.start(queue: .global())
+    }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let directory = root.appendingPathComponent("session")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let service = NativeMetadataService()
+    try await service.start(magnet: "magnet:?xt=urn:btih:1be994f3f99cc80c9c2830b113432065d1551e9d&tr=http://127.0.0.1:\(port)/announce", output: directory, useDHT: false)
+    var snapshot = try await service.snapshot()
+    for _ in 0..<300 where snapshot.state == .loading {
+        try await Task.sleep(for: .milliseconds(50))
+        snapshot = try await service.snapshot()
+    }
+    #expect(snapshot.state == .ready)
+    #expect(snapshot.files?.first?.index == 0)
+    #expect(snapshot.files?.first?.bytes == 175917)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    let playback = try await service.play(fileIndex: 0, output: directory, cacheRoot: root)
+    var state = try await playback.snapshot()
+    for _ in 0..<100 where state.state == "starting" {
+        try await Task.sleep(for: .milliseconds(50))
+        state = try await playback.snapshot()
+    }
+    let url = try #require(state.url.flatMap(URL.init(string:)))
+    let (bytes, response) = try await URLSession.shared.data(from: url)
+    #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    #expect(bytes.count == 175917)
+    #expect(SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() == "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb")
+    try await playback.stop()
+    try await service.stop()
+    try FileManager.default.removeItem(at: root)
+}

@@ -19,12 +19,12 @@ actor NativeMetadataService {
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?
 
-    func start(magnet: String, output: URL, discoverPeers: Bool = true) throws {
+    func start(magnet: String, output: URL, discoverPeers: Bool = true, useDHT: Bool = true) throws {
         guard handle == nil else { throw Failure.busy }
         guard output.isFileURL, magnet.utf8.count <= 16384 else { throw Failure.invalidRequest }
         let input = try JSONSerialization.data(withJSONObject: [
             "api_version": 1, "magnet": magnet, "output": output.path,
-            "discovery": ["trackers": discoverPeers, "dht": discoverPeers]
+            "discovery": ["trackers": discoverPeers, "dht": discoverPeers && useDHT]
         ])
         let id = input.withUnsafeBytes {
             cue_metadata_start($0.bindMemory(to: UInt8.self).baseAddress, $0.count)
