@@ -28,4 +28,4 @@ VLCKit already connects to the embedded engine through the loopback adapter and 
 
 No speed, energy or picture-quality advantage is claimed. Keep the MPV probe as a fallback reference. Revisit the selection if VLCKit fails required physical-device decoding, resource limits, uncached network seeks or complete dependency/license review. Do not drop MKV or subtitle requirements to preserve this decision.
 
-Remaining acceptance includes HEVC MP4 coverage, live alternate-audio verification, decode-mode measurement, sustained resource measurements, app-wide cache limits, streaming MKV/uncached VLC seeks, remaining failure paths and physical qualification.
+Remaining acceptance includes HEVC MP4 coverage, live alternate-audio verification, decode-mode measurement, sustained resource measurements, app-wide cache limits, streaming MKV/repeated uncached VLC seeks, remaining failure paths and physical qualification.

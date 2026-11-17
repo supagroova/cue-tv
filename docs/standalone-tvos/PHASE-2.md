@@ -63,3 +63,38 @@ write-time exhaustion test: the peer could write and exhaust its injected space
 before `start_budgeted` returned. The test now gates its peer connection until
 startup completes, preserving the existing first-write, blocked-write and failure
 assertions. All nine storage-budget tests pass locally with the explicit barrier.
+
+### VLC distant seek and simulator sampling
+
+The manual `LongPlaybackTests/testOneMinuteVLCAndDistantSeek` initially failed
+its 15-second post-seek deadline twice. Diagnostic HTTP tracing showed VLC
+requested byte 8,038,926 of the 9,677,074-byte owned long MP4 correctly. The pinned
+engine defaults to 128 outstanding 16 KiB requests per peer: newly requested
+ranges can wait behind that backlog. Playback now sets the supported per-torrent
+request window to 16 (256 KiB per peer). This is a latency/throughput tradeoff;
+high-latency, high-bitrate public swarms still require measurement.
+
+With that change, the unchanged manual playback assertion passed in 80.804
+seconds: first playback progress at 436,498 / 9,677,074 verified bytes, one minute
+of playback, then a seek to 600 seconds with clock advancement beyond 600.5
+seconds approximately 7.2 seconds after the remote press. The controlled seeder
+was limited to 64 KiB/s. The native uncached-range and pending-body cancellation
+test also passed in 8.15 seconds; each range now has a 15-second deadline. All 23
+native tests passed. This single simulator sample does not satisfy the repeated
+physical-device acceptance matrix.
+
+Manual reproduction (generate `scripts/fixtures/generate-long.py`, start the
+fixture seeder with `CUE_LONG_FIXTURE=1`, and expose pinned Rust/XcodeGen first):
+
+```sh
+python3 scripts/agent/profile-simulator.py --device <simulator-UDID>
+```
+
+The helper runs only the minute-and-seek test and writes ignored JSON samples
+and an Xcode log. It is not called by automatic CI. Existing ten-minute tests
+remain manual-only. The successful sample recorded 76 process samples: maximum
+RSS 359,648 KiB (351.2 MiB), median CPU 21.95%, maximum sampled CPU 122.7% (one
+core = 100%). These are debug simulator process samples on the Mac, including
+startup and seeking, with synthetic low-bitrate video. They are not physical
+memory/energy budgets, peak allocation tracking, hardware-decode confirmation,
+or proof of realistic 1080p throughput.

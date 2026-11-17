@@ -18,6 +18,8 @@ struct VLCPlaybackLabView: View {
     @State private var paused = false
     @State private var seekRequest: UUID?
     @State private var seeking = false
+    @State private var firstProgress: String?
+    private var seekMilliseconds: Int { ProcessInfo.processInfo.environment["CUE_VLC_LONG_SEEK"] == "1" ? 600000 : 8000 }
     @State private var lifecycle = PlaybackSessionCoordinator()
     @State private var token: UUID?
     @FocusState private var stopFocused: Bool
@@ -25,14 +27,17 @@ struct VLCPlaybackLabView: View {
         VStack {
             if let url {
                 VLCFixtureSurface(url: url, audioIndex: requestedAudio, subtitleIndex: requestedSubtitle,
-                                  paused: requestedPause, seekRequest: seekRequest) { [generation = token] snapshot in
+                                  paused: requestedPause, seekRequest: seekRequest, seekMilliseconds: seekMilliseconds) { [generation = token] snapshot in
                     guard let generation, generation == token else { return }
                     milliseconds = snapshot.milliseconds
+                    if firstProgress == nil, milliseconds > 500, torrent.totalBytes > 0 {
+                        firstProgress = "VLC first progress: \(torrent.verifiedBytes)/\(torrent.totalBytes)"
+                    }
                     audioTracks = snapshot.audioTracks; subtitleTracks = snapshot.subtitleTracks
                     selectedAudio = snapshot.selectedAudio; selectedSubtitle = snapshot.selectedSubtitle
                     paused = snapshot.state == .paused
                     if snapshot.state == .error { lifecycle.receive(.failed(.decoder), generation: generation); return }
-                    if seeking, snapshot.milliseconds < 7500 { return }
+                    if seeking, snapshot.milliseconds < seekMilliseconds - 500 { return }
                     seeking = false
                     if paused { lifecycle.receive(.paused, generation: generation) }
                     else if snapshot.milliseconds > 500 { lifecycle.receive(.playing, generation: generation) }
@@ -40,6 +45,7 @@ struct VLCPlaybackLabView: View {
                     .id(url).frame(height: 360)
                 Text(paused ? "VLC paused" : "VLC active")
                 Text(milliseconds > 500 ? "VLC playback advanced" : "Waiting for VLC").accessibilityIdentifier("vlc-progress")
+                if let firstProgress { Text(firstProgress).accessibilityIdentifier("vlc-first-progress") }
                 Text(verbatim: String(milliseconds)).accessibilityIdentifier("vlc-time")
                 Text("Audio tracks: \(audioTracks); subtitle tracks: \(subtitleTracks)")
                 Text("Selected audio: \(selectedAudio); subtitle: \(selectedSubtitle)")
@@ -53,7 +59,7 @@ struct VLCPlaybackLabView: View {
                     Button("Next subtitle track") { requestedSubtitle = (requestedSubtitle + 1) % subtitleTracks }
                 }
                 Button(requestedPause ? "Resume" : "Pause") { requestedPause.toggle() }
-                Button("Seek to 8 seconds") {
+                Button("Seek to \(seekMilliseconds / 1000) seconds") {
                     if let token { lifecycle.receive(.seeking, generation: token) }
                     seeking = true; seekRequest = UUID()
                 }
@@ -81,6 +87,7 @@ struct VLCPlaybackLabView: View {
         url = nil; milliseconds = 0; token = nil
         requestedAudio = 0; requestedSubtitle = 0
         requestedPause = false; paused = false; seekRequest = nil; seeking = false
+        firstProgress = nil
         Task {
             let next = await lifecycle.begin {
                 url = nil; milliseconds = 0; token = nil
@@ -124,6 +131,7 @@ private struct VLCFixtureSurface: UIViewRepresentable {
     let subtitleIndex: Int
     let paused: Bool
     let seekRequest: UUID?
+    let seekMilliseconds: Int
     var progress: @MainActor (VLCPlaybackSnapshot) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
@@ -157,6 +165,7 @@ private struct VLCFixtureSurface: UIViewRepresentable {
         context.coordinator.subtitleIndex = subtitleIndex
         context.coordinator.paused = paused
         context.coordinator.seekRequest = seekRequest
+        context.coordinator.seekMilliseconds = seekMilliseconds
     }
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
         coordinator.polling?.cancel()
@@ -172,6 +181,7 @@ private struct VLCFixtureSurface: UIViewRepresentable {
         var subtitleIndex = 0
         var paused = false
         var seekRequest: UUID?
+        var seekMilliseconds = 8000
         private var appliedPause = false
         private var appliedSeek: UUID?
         func applyControls() {
@@ -181,7 +191,7 @@ private struct VLCFixtureSurface: UIViewRepresentable {
                 appliedPause = paused
             }
             if let seekRequest, seekRequest != appliedSeek {
-                player.time = VLCTime(int: 8000)
+                player.time = VLCTime(int: Int32(seekMilliseconds))
                 appliedSeek = seekRequest
             }
         }

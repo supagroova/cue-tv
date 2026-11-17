@@ -268,6 +268,12 @@ impl PlaybackSession {
                 .add_torrent(
                     source,
                     Some(AddTorrentOptions {
+                        // Bound queued bytes ahead of a new seek (16 * 16 KiB per peer).
+                        // The upstream default of 128 can strand a seek behind 2 MiB.
+                        peer_opts: Some(librqbit::PeerConnectionOptions {
+                            max_request_window: Some(16),
+                            ..Default::default()
+                        }),
                         only_files: Some(vec![index]),
                         initial_peers: Some(initial_peers),
                         ..Default::default()
