@@ -5,6 +5,7 @@ struct StandaloneHome: View {
     @State private var screen = Screen.catalogs
     @State private var manifest = ""
     @State private var search = ""
+    @State private var restart = UUID()
     @State private var selectedSource: SelectedSource?
     enum Screen { case catalogs, titles, details, sources }
     struct SelectedSource: Identifiable { let id = UUID(); let request: CoreTorrentRequest }
@@ -78,9 +79,11 @@ struct StandaloneHome: View {
                     }
                 }
                 if screen != .catalogs { Button("Back") { screen = screen == .sources ? .details : screen == .details ? .titles : .catalogs } }
+            } else if model.error != nil {
+                Button("Retry Stremio") { screen = .catalogs; restart = UUID() }
             } else { ProgressView("Starting Stremio…") }
         }.padding(60)
-        .task { await model.run() }
+        .task(id: restart) { await model.run() }
         .fullScreenCover(item: $selectedSource) { TorrentPlaybackView(request: $0.request) }
     }
 }

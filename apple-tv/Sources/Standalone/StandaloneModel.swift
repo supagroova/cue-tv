@@ -36,10 +36,11 @@ final class StandaloneModel {
             try await service.start()
             while !Task.isCancelled {
                 snapshot = try await service.snapshot()
+                guard snapshot?.status != .stopped else { throw NativeCoreService.Failure.stopped }
                 try await Task.sleep(for: .milliseconds(100))
             }
         } catch is CancellationError { }
-        catch { self.error = "The Stremio session could not start. Please reopen the app." }
+        catch { self.error = "The Stremio session could not start. Please try again." }
         if let service { try? await service.stop() }
     }
 

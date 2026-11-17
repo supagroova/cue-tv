@@ -33,3 +33,7 @@ The catalog screen now accepts a search query and submits it only when the user 
 ## Command admission and navigation
 
 Navigation now advances only when the current-generation command is admitted locally; missing sessions, invalid arguments, cancellation and stale-generation replies return false. Tests cover unavailable, invalid and successful command admission. The simulator suite passes (`phase-4-ui/d9f1da8910ab4912b0596a11bea6707f`). Admission is not network completion: asynchronous Core errors remain visible in the destination state and still require fuller retry/empty-state UI coverage.
+
+### Startup failure recovery
+
+A native session that reported `stopped` previously remained in the home screen's startup spinner. The model now terminates polling with a fixed nonsecret error and retires the service; startup failure displays Retry Stremio. Retry resets navigation and uses the existing serialized session replacement. A real native-store test reproduces the missing error (`5f7c0fa2db45472db1e5ed234e923971`), then verifies error reporting and successful restart after creating the required directory. The full Swift suite passes (`ac3e82d136574cbeb25313ba477d4712`), including the merged Swift account-restoration tests. The retry button itself has not yet been exercised by an automated UI test.

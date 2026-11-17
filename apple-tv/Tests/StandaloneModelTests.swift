@@ -91,3 +91,22 @@ private actor ActionGate {
     run.cancel()
     await run.value
 }
+
+@Test @MainActor func stoppedCoreReportsStartupFailureAndAllowsRetry() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let service = NativeCoreService(persistence: CorePersistenceConfiguration(directory: directory, key: Data(repeating: 61, count: 32)))
+    let model = StandaloneModel(service: service)
+    let first = Task { await model.run() }
+    for _ in 0..<200 where model.error == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.error != nil)
+    first.cancel()
+    await first.value
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let retry = Task { await model.run() }
+    for _ in 0..<200 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.status == .ready)
+    #expect(model.error == nil)
+    retry.cancel()
+    await retry.value
+}
