@@ -111,3 +111,38 @@ pub struct PreparedTorrent {
     #[serde(flatten)]
     pub torrent: TorrentRequest,
 }
+
+/// Direct HTTPS playback data. Keep signed URLs out of presentation snapshots/logs.
+#[derive(serde::Serialize)]
+pub struct HttpsRequest {
+    pub url: String,
+}
+pub fn https(stream: &Stream) -> Result<HttpsRequest, &'static str> {
+    let StreamSource::Url { url } = &stream.source else {
+        return Err("unsupported_source");
+    };
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || url.port() == Some(0)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("unsupported_source");
+    }
+    if url.as_str().len() > 16384 {
+        return Err("source_limit");
+    }
+    // A direct decoder connection cannot reproduce an add-on's proxy contract.
+    if stream
+        .behavior_hints
+        .proxy_headers
+        .as_ref()
+        .is_some_and(|headers| !headers.request.is_empty() || !headers.response.is_empty())
+    {
+        return Err("unsupported_proxy_headers");
+    }
+    Ok(HttpsRequest {
+        url: url.to_string(),
+    })
+}

@@ -76,3 +76,30 @@ fn duplicate_hashes_and_non_network_trackers_are_rejected() {
         assert!(torrent(&stream).is_err());
     }
 }
+
+#[test]
+fn https_handoff_preserves_signed_url_and_rejects_non_direct_sources() {
+    use cue_core::playback_source::https;
+    let signed = "https://media.example.test/video.mkv?signature=a%2Bb&expires=123";
+    let stream: Stream = serde_json::from_value(serde_json::json!({"url":signed})).unwrap();
+    assert_eq!(https(&stream).unwrap().url, signed);
+    for url in [
+        "http://media.example.test/video.mp4",
+        "file:///tmp/video.mp4",
+        "https://user:secret@media.example.test/video",
+        "https://media.example.test/video#fragment",
+    ] {
+        let stream: Stream = serde_json::from_value(serde_json::json!({"url":url})).unwrap();
+        assert!(https(&stream).is_err(), "must reject {url}");
+    }
+    let external: Stream =
+        serde_json::from_value(serde_json::json!({"externalUrl":signed})).unwrap();
+    assert!(https(&external).is_err());
+    let proxy: Stream = serde_json::from_value(serde_json::json!({"url":signed,"behaviorHints":{"proxyHeaders":{"request":{"Authorization":"synthetic"}}}})).unwrap();
+    assert!(https(&proxy).is_err());
+    let oversized: Stream = serde_json::from_value(
+        serde_json::json!({"url":format!("https://example.test/{}", "x".repeat(16384))}),
+    )
+    .unwrap();
+    assert!(https(&oversized).is_err());
+}

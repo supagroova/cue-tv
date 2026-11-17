@@ -89,3 +89,9 @@ An interleaved two-season fixture with identical episode titles verifies filtere
 At `ce014f6`, the combined simulator run passes all 50 Swift unit/integration tests and 12 short UI tests (`dcb12ed743a54e71a7f436bfff7fefdf`); UI execution was 116 seconds. Updated unsigned device compilation passes (`418fb02ee57541eb92ed60d6fac21027`). Screenshot review caught the guest view showing through the sign-in cover. An opaque full-screen background fixes it; the unchanged targeted form/cancel UI test passes (`828216d3626b46fe9445936141479879`) and its exported screenshot was visually checked. No physical-device acceptance is implied.
 
 The prior GitHub phase-four run `44135013503` failed to acquire macOS ARM runners; its native job was cancelled with no executed steps and a runner-capacity annotation. This is separate from code/test failures and cache performance.
+
+### Direct HTTPS admission boundary (integration pending)
+
+Added a typed private HTTPS handoff payload and validation for direct HTTPS URLs. Signed query parameters are preserved. Non-HTTPS schemes, URL user-info, fragments, port zero, URLs over 16 KiB, external-player sources and nonempty required proxy headers are rejected. VLC cannot honor an add-on proxy contract through a plain direct URL, so those sources must remain visibly unsupported rather than silently dropping headers. Payloads have no Debug implementation and are not presentation snapshots.
+
+Pinned native source-validation tests pass (`5cd156ffbc154a9796050bdc8ae6b1a1`), after missing-entry-point reproduction (`94b107c9d7934e18829ff8ac1675b31a`). This is only the admission layer: C/Swift handoff, decoder ownership, transport/redirect behavior and HTTPS playback fixtures remain to be implemented and verified. HTTPS source buttons are still disabled.
