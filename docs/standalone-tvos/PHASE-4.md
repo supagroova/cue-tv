@@ -119,3 +119,19 @@ Initial TLS pair passes (`4959761fca104b2bae1aa3e04af17b8d`); the strengthened n
 ### HTTPS controls and player focus
 
 The trusted TLS UI test now verifies pause stability, backward seek to zero, resumed advancement and remote navigation to Close. It reproduced a focus gap from the controls to the centered Close button (`931a7873516d43b1bbaa7b7c26b5b1b7`). A full-width focus section around Close fixes it; both TLS tests pass (`065da1cb51f74de9bef72f139ef56882`). Screenshot review then exposed Home content behind the transparent player cover. An opaque background fixes that presentation; the unchanged trusted playback/control test passes (`4e8be2b6959e4260bbfd27f5595a948c`) and its screenshot was visually inspected. The fixture runner accepts an optional XCTest selector for targeted reruns. These are small local-file TLS fixtures, not proof of uncached large-file seeking or interrupted remote transport.
+
+### Remote Back and selection focus
+
+Standalone Home now handles remote Back through sources → details → titles → catalogs, retaining the row the user selected. Title/episode focus uses content identity; the root leaves Back to tvOS. Playback dismissal requests focus on the selected source. The source-dismissal and movie paths still need journey coverage.
+
+An opt-in owned add-on fixture installs through the actual native Core into an ephemeral guest service and uses the production Home. It supplies three series and two seasons of episodes over loopback HTTP; it neither fakes UI snapshots nor uses account storage. `StandaloneJourneyTests` navigates with the remote to the second title and season-two episode, then verifies episode/title/catalog focus on Back. The first run reproduced missing remote Back (`791e67532a144e3c9d5ff12c89f7c718`); a subsequent run reproduced title focus being overwritten by transient focus (`976906f14db44a1a89b5fe2ef6001275`). Recording focus when a row is selected fixes that transition. The complete script passes (`6170e5578811466d81107a08930d126e`), including all three return levels and server cleanup.
+
+With the configured toolchain on PATH, run:
+
+```sh
+python3 scripts/agent/task.py verify phase-4-ui bash scripts/fixtures/check-journey.sh 'platform=tvOS Simulator,id=YOUR-SIMULATOR-ID'
+```
+
+This remains outside automatic short CI. Its torrent source is synthetic; this navigation test does not select it or prove transfer/playback. The full correct-episode torrent playback journey, add-on subtitles, artwork, live add-on and physical-device gates remain outstanding.
+
+Regression verification for the navigation change: `make apple-ci-test` passes 52 Swift tests and all 12 short UI tests (`1fde07615b23439683190dad8e018ce0`, UI execution 114.45 seconds); `make apple-build` passes unsigned device compilation (`bf4069233ab8409e941a68318d2a5ef1`). The restored-catalog screenshot was inspected. Portable harness checks pass all 15 tests. No physical-device claim follows from these checks.

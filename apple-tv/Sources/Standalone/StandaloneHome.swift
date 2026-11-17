@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct StandaloneHome: View {
-    @State private var model = StandaloneModel()
+    @State private var model: StandaloneModel
+    init(model: StandaloneModel = StandaloneModel()) { _model = State(initialValue: model) }
     @State private var screen = Screen.catalogs
     @State private var manifest = ""
     @State private var search = ""
@@ -11,7 +12,21 @@ struct StandaloneHome: View {
     @State private var preparingAccount = false
     @State private var accountError: String?
     @State private var selectedSource: SelectedSource?
-    enum Screen { case catalogs, titles, details, sources }
+    enum Screen: Hashable { case catalogs, titles, details, sources }
+    enum Row: Hashable {
+        case catalog(Int), title(String, String), video(String), movie(String), source(String, Int)
+    }
+    @FocusState private var focusedRow: Row?
+    @State private var rememberedRows: [Screen: Row] = [:]
+    private var backAction: (() -> Void)? { screen == .catalogs ? nil : { goBack() } }
+    private func goBack() {
+        switch screen {
+        case .sources: screen = .details
+        case .details: screen = .titles
+        case .titles: screen = .catalogs
+        case .catalogs: break
+        }
+    }
     struct SelectedSource: Identifiable { let id = UUID(); let request: CorePlaybackRequest }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -62,6 +77,7 @@ struct StandaloneHome: View {
                             TextField("Search titles in a catalog", text: $search).autocorrectionDisabled()
                             ForEach(state.catalogs, id: \.index) { catalog in
                                 Button("\(catalog.name) · \(catalog.kind)") {
+                                    rememberedRows[.catalogs] = .catalog(catalog.index)
                                     let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
                                     Task {
                                         let admitted = await model.perform(expectedRevision: state.revision) { service, revision in
@@ -70,7 +86,8 @@ struct StandaloneHome: View {
                                         }
                                         if admitted { screen = .titles }
                                     }
-                                }.disabled(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !catalog.searchable)
+                                }.focused($focusedRow, equals: .catalog(catalog.index))
+                                .disabled(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !catalog.searchable)
                             }
                             if state.catalogChoicesOffset > 0 { Button("Previous catalogs") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogChoices(offset: max(0, state.catalogChoicesOffset - 16), expectedRevision: $1) } } } }
                             if state.catalogChoicesOffset + 16 < state.catalogTotal { Button("More catalogs") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogChoices(offset: state.catalogChoicesOffset + 16, expectedRevision: $1) } } } }
@@ -82,8 +99,9 @@ struct StandaloneHome: View {
                             }
                         case .titles:
                             if let catalog = state.catalog {
-                                ForEach(Array(catalog.items.enumerated()), id: \.offset) { index, title in
-                                    Button(title.name) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
+                                ForEach(Array(catalog.items.enumerated()), id: \.element.id) { index, title in
+                                    Button(title.name) { rememberedRows[.titles] = .title(title.kind, title.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
+                                    .focused($focusedRow, equals: .title(title.kind, title.id))
                                 }
                                 if catalog.status == .loading { ProgressView() }
                                 if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
@@ -107,9 +125,10 @@ struct StandaloneHome: View {
                                     }
                                 }
                                 ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                    Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                    Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { rememberedRows[.details] = .video(video.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                    .focused($focusedRow, equals: .video(video.id))
                                 }
-                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } } }
+                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { rememberedRows[.details] = .movie(details.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } }.focused($focusedRow, equals: .movie(details.id)) }
                                 if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
                                 if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
                             }
@@ -118,6 +137,7 @@ struct StandaloneHome: View {
                                 if sources.loading { ProgressView("Finding sources…") }
                                 ForEach(sources.items, id: \.index) { source in
                                     Button(source.name ?? "Source \(source.index + 1)") {
+                                        rememberedRows[.sources] = .source(sources.videoId, source.index)
                                         Task {
                                             switch source.kind {
                                             case .torrent:
@@ -127,7 +147,8 @@ struct StandaloneHome: View {
                                             case .unsupported: break
                                             }
                                         }
-                                    }.disabled(source.kind == .unsupported)
+                                    }.focused($focusedRow, equals: .source(sources.videoId, source.index))
+                                    .disabled(source.kind == .unsupported)
                                     if source.kind == .unsupported { Text("This source format is not supported yet.").font(.caption) }
                                 }
                                 if sources.status == .ready, sources.items.isEmpty { Text("No sources found. Install a compatible Stremio add-on.") }
@@ -137,17 +158,22 @@ struct StandaloneHome: View {
                         }
                     }
                 }
-                if screen != .catalogs { Button("Back") { screen = screen == .sources ? .details : screen == .details ? .titles : .catalogs } }
+                if screen != .catalogs { Button("Back", action: goBack) }
             } else if model.error != nil {
                 Button("Retry Stremio") { screen = .catalogs; restart = UUID() }
             } else { ProgressView("Starting Stremio…") }
         }.padding(60)
+        .task(id: screen) {
+            await Task.yield()
+            focusedRow = rememberedRows[screen]
+        }
+        .onExitCommand(perform: backAction)
         .task(id: restart) { await model.run() }
         .fullScreenCover(isPresented: $showSignIn) {
             AccountSignInView(model: signIn, home: model,
                 onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },
                 onSuccess: { showSignIn = false; screen = .catalogs; restart = UUID() })
         }
-        .fullScreenCover(item: $selectedSource) { SourcePlaybackView(request: $0.request) }
+        .fullScreenCover(item: $selectedSource, onDismiss: { focusedRow = rememberedRows[.sources] }) { SourcePlaybackView(request: $0.request) }
     }
 }

@@ -8,7 +8,14 @@ import SwiftUI
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            StandaloneHome()
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
+                else { StandaloneHome() }
+                #else
+                StandaloneHome()
+                #endif
+            }
             #if DEBUG
             .overlay(alignment: .topTrailing) {
                 Button("Playback Lab") { showingPlaybackLab = true }
