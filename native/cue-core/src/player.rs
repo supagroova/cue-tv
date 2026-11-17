@@ -31,6 +31,7 @@ pub struct Progress {
 pub(crate) struct Playback {
     pub token: u64,
     model: Player,
+    manual_watched: Option<bool>,
 }
 impl Playback {
     pub fn new(
@@ -58,6 +59,7 @@ impl Playback {
             .clone();
         let mut playback = Self {
             token,
+            manual_watched: None,
             model: Player {
                 meta_item: Some(meta),
                 ..Default::default()
@@ -66,6 +68,10 @@ impl Playback {
         playback.update(Action::Load(ActionLoad::Player(Box::new(selected))), ctx);
         let initial = playback.progress()?;
         // Establish the selected video without treating an existing resume offset as viewing.
+        // Initialization establishes identity, not newly viewed content.
+        if let Some(item) = &mut playback.model.library_item {
+            item.state.flagged_watched = 1;
+        }
         playback.update(
             Action::Player(ActionPlayer::TimeChanged {
                 time: initial.time,
@@ -74,8 +80,69 @@ impl Playback {
             }),
             ctx,
         );
+        // An explicit new Play permits automatic completion again.
+        if let Some(item) = &mut playback.model.library_item {
+            item.state.flagged_watched = 0;
+        }
         playback.progress()?;
         Ok(playback)
+    }
+    pub fn override_watched(
+        &mut self,
+        kind: &str,
+        meta_id: &str,
+        video_id: Option<&str>,
+        watched: bool,
+    ) {
+        let Some(selected) = self.model.selected.as_ref() else {
+            return;
+        };
+        let Some(meta) = selected.meta_request.as_ref() else {
+            return;
+        };
+        let Some(stream) = selected.stream_request.as_ref() else {
+            return;
+        };
+        if meta.path.id != meta_id || meta.path.r#type != kind {
+            return;
+        }
+        if (kind == "movie" && video_id.is_some())
+            || (kind == "series" && video_id != Some(stream.path.id.as_str()))
+        {
+            return;
+        }
+        let Some(item) = self.model.library_item.as_mut() else {
+            return;
+        };
+        if kind == "movie" {
+            let position = item.state.time_offset;
+            if item.watched() != watched {
+                item.mark_as_watched::<NativeEnv>(watched);
+            }
+            // Keep the decoder accounting baseline; the details action separately
+            // applies Core's manual resume-state semantics to the stored library.
+            item.state.time_offset = position;
+        } else if kind == "series" {
+            let Some(meta) = self
+                .model
+                .meta_item
+                .as_ref()
+                .and_then(|page| page.content.as_ref())
+                .and_then(|content| content.ready())
+            else {
+                return;
+            };
+            let Some(video) = meta.videos.iter().find(|video| video.id == stream.path.id) else {
+                return;
+            };
+            let bits = item.state.watched_bitfield(&meta.videos);
+            item.mark_video_as_watched::<NativeEnv>(&bits, video, watched);
+            self.model.watched = Some(item.state.watched_bitfield(&meta.videos));
+        } else {
+            return;
+        }
+        self.manual_watched = Some(watched);
+        item.state.flagged_watched = 1;
     }
     fn update(&mut self, action: Action, ctx: &Ctx) {
         // Deliberately do not execute Core's returned effects here. Metadata is already
@@ -108,8 +175,21 @@ impl Playback {
                 } else {
                     time
                 };
-                if time < self.progress()?.time {
+                let current = self.progress()?;
+                if time < current.time {
                     return Err("playback_requires_seek");
+                }
+                if duration != current.duration {
+                    // Core updates duration in TimeChanged only when position advances.
+                    // Synchronize it without adding viewing time before threshold checks.
+                    self.update(
+                        Action::Player(ActionPlayer::Seek {
+                            time: current.time,
+                            duration,
+                            device: "tvos".into(),
+                        }),
+                        ctx,
+                    );
                 }
                 ActionPlayer::TimeChanged {
                     time,
@@ -119,6 +199,11 @@ impl Playback {
             }
             PlaybackEvent::Paused(paused) => ActionPlayer::PausedChanged { paused },
         };
+        if self.manual_watched.is_some() {
+            if let Some(item) = &mut self.model.library_item {
+                item.state.flagged_watched = 1;
+            }
+        }
         self.update(Action::Player(action), ctx);
         self.progress()
     }
@@ -150,5 +235,58 @@ impl Playback {
             time_watched: item.state.time_watched,
             watched,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::environment::Environment;
+    use stremio_core::{models::common::ResourceLoadable, types::profile::Profile};
+
+    #[tokio::test]
+    async fn episode_override_is_identity_scoped_and_new_play_reenables_completion() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let mut ctx = crate::restore::context(Profile::default()).await.unwrap();
+            let selected: Selected = serde_json::from_value(serde_json::json!({
+                "stream":{"infoHash":"0123456789abcdef0123456789abcdef01234567","fileIdx":0},
+                "metaRequest":{"base":"https://owned.test/manifest.json","path":{"resource":"meta","type":"series","id":"owned","extra":[]}},
+                "streamRequest":{"base":"https://owned.test/manifest.json","path":{"resource":"stream","type":"series","id":"owned:1:1","extra":[]}},
+                "subtitlesPath":null
+            })).unwrap();
+            let details = MetaDetails {
+                meta_items: vec![ResourceLoadable {
+                    request: selected.meta_request.clone().unwrap(),
+                    content: Some(Loadable::Ready(serde_json::from_value(serde_json::json!({
+                        "id":"owned","type":"series","name":"Owned",
+                        "videos":[{"id":"owned:1:1","title":"First","season":1,"episode":1},
+                                  {"id":"owned:1:2","title":"Second","season":1,"episode":2}]
+                    })).unwrap())),
+                }],
+                ..Default::default()
+            };
+            let mut owner = Playback::new(1, selected.clone(), &details, &ctx).unwrap();
+            assert!(owner.event(PlaybackEvent::TimeChanged { time: 800, duration: 1000 }, &ctx).unwrap().watched);
+            owner.override_watched("series", "owned", Some("owned:1:2"), false);
+            assert!(owner.event(PlaybackEvent::TimeChanged { time: 801, duration: 1000 }, &ctx).unwrap().watched);
+            owner.override_watched("series", "owned", Some("owned:1:1"), false);
+            assert!(!owner.event(PlaybackEvent::TimeChanged { time: 900, duration: 1000 }, &ctx).unwrap().watched);
+            owner.override_watched("series", "another-title", Some("owned:1:1"), true);
+            assert!(!owner.event(PlaybackEvent::TimeChanged { time: 901, duration: 1000 }, &ctx).unwrap().watched);
+            let item = owner.model.library_item.as_ref().unwrap().clone();
+            ctx.library.items.insert(item.id.clone(), item);
+            let mut fresh = Playback::new(2, selected, &details, &ctx).unwrap();
+            assert!(!fresh.progress().unwrap().watched, "Load itself must not undo the manual choice");
+            let unknown = fresh.event(PlaybackEvent::TimeChanged { time: 901, duration: 0 }, &ctx).unwrap();
+            assert_eq!(unknown.duration, 0);
+            assert!(!unknown.watched, "An unchanged clock with unknown duration must not use the previous duration");
+            assert!(fresh.event(PlaybackEvent::TimeChanged { time: 902, duration: 1000 }, &ctx).unwrap().watched);
+            let meta = details.meta_items[0].content.as_ref().unwrap().ready().unwrap();
+            let bits = fresh.model.library_item.as_ref().unwrap().state.watched_bitfield(&meta.videos);
+            assert!(bits.get_video("owned:1:1"));
+            assert!(!bits.get_video("owned:1:2"));
+        }).await;
+        env.shutdown().await;
     }
 }

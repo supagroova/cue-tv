@@ -229,3 +229,21 @@ Next: manual watched override precedence and acknowledged local checkpoint pipel
 then bridge token/events/lifecycle to the existing playback model. No automatic
 network writes every5seconds; library checkpoint/journal must remain identity-scoped.
 PR13ab91481sim134375797739 is now running, not queued; other checks pass.
+
+Manual watched intent now reaches the matching active Player even when Core details
+already has the requested value. It preserves the decoder baseline and prevents
+later automatic completion for that owner. Film real-session regression red:
+1dd89df5ccd34ac7aefbf1e5632386dd; green d9140c6412754ebcb573cfb031afde4e.
+Series model tests prove unrelated title/episode changes are ignored and explicit
+new Play re-enables Core completion without changing watched state during load.
+A new regression found unchanged-position TimeChanged retained an obsolete duration
+(ff31c3a2545e4eedad51b3cdf7359b78). Duration changes now use a no-viewing-credit Seek
+baseline before played progress, including duration becoming unknown.
+Full native suite passes87f8092af6e54403a548079f3e5171ed; device build passes
+3b145ee096fa4ea29610795e4a7ecc48;15harness tests pass. No additional Swift tests
+for this unexposed native accounting API. Next: acknowledged local checkpoints,
+resume lookup and Swift token/progress/lifecycle bridge. Manual checkpoint projection
+must preserve latest library membership and episode bits; do not overwrite a newer
+manual edit with old Player state. Close retirement still has no durability barrier.
+PR13ab91481 completed fully green: sim8m17, native/device4m7. Push the accumulated
+native changes after this commit and verify remote blobs/current-head checks.

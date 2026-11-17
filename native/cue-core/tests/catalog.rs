@@ -494,6 +494,56 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
         .unwrap();
     assert_eq!(paused.time, 701);
     assert_eq!(paused.time_watched, 701);
+    session
+        .set_details_watched(None, false, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    session
+        .playback_event(playing.playback_token, PlaybackEvent::Paused(false))
+        .await
+        .unwrap();
+    let overridden = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 800,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        !overridden.watched,
+        "Manual unwatched must win over later threshold progress"
+    );
+    assert_eq!(overridden.time_watched, 800);
+    session
+        .set_details_watched(None, true, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    let marked = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 900,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(marked.watched);
+    assert_eq!(
+        marked.time_watched, 900,
+        "Manual watched must not reset the decoder position and count it again"
+    );
+    session
+        .set_details_watched(None, false, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    let revision = session.snapshot().revision;
     let next_owner = session.prepare_torrent(0, revision).await.unwrap();
     assert_eq!(
         session.start_playback(next_owner.playback_token).await,

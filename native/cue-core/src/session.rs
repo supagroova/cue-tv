@@ -751,6 +751,7 @@ async fn run(
                     let _ = reply.send(Err("details_not_ready"));
                     continue;
                 };
+                let playback_video = video_id.clone();
                 let (action, unchanged) = match video_id {
                     None if meta.r#type == "movie" => (
                         ActionMetaDetails::MarkAsWatched(watched),
@@ -783,6 +784,14 @@ async fn run(
                         continue;
                     }
                 };
+                if let Some(owner) = &mut playback {
+                    owner.override_watched(
+                        &meta.r#type,
+                        &meta.id,
+                        playback_video.as_deref(),
+                        watched,
+                    );
+                }
                 // Repeated intent retries disk persistence without increasing play count.
                 let message = if unchanged {
                     Msg::Internal(Internal::LibraryChanged(false))

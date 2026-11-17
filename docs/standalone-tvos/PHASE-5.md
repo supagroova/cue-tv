@@ -236,3 +236,17 @@ fails with false completion; restored native tests and the unsigned tvOS build p
 Evidence is recorded in HANDOFF. These APIs are not wired to Swift playback yet;
 manual override, local checkpoint persistence, resume UI and lifecycle barriers
 remain incomplete. Retiring this accounting model currently makes no durability claim.
+
+## Manual intent during native playback
+
+Matching film/episode manual changes override automatic completion for the current
+Player owner, including when the details model already reports the desired value.
+Decoder position remains the progress baseline, so marking watched cannot count the
+same viewing interval twice. Other title/episode edits are ignored by that owner.
+Explicit new Play permits automatic completion again; initialization alone does not
+change the manual state. Tests cover these boundaries with the actual Core models.
+
+Duration updates at an unchanged clock now synchronize without adding watched time,
+so unknown duration cannot accidentally use a prior known duration for completion.
+The full native suite and device build pass. These native rules are not yet connected
+to Swift playback callbacks or durable checkpoint projection; those gates remain open.
