@@ -22,7 +22,12 @@ tokio::task_local! { static CONTEXT: Arc<Environment>; }
 
 /// One context per Core session. The default is memory-only; optional persistence
 /// encrypts the entire state before writing to the app-owned directory.
+#[cfg(test)]
+type TestHttp =
+    Arc<dyn Fn(&http::request::Parts, &[u8]) -> Result<Vec<u8>, EnvError> + Send + Sync>;
 pub struct Environment {
+    #[cfg(test)]
+    pub(crate) test_http: Mutex<Option<TestHttp>>,
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     persistence: Option<crate::persistence::EncryptedStore>,
     canceled: CancellationToken,
@@ -58,6 +63,8 @@ impl Environment {
         let (sequential, mut queue) =
             tokio::sync::mpsc::channel::<futures::future::BoxFuture<'static, ()>>(128);
         let env = Arc::new(Self {
+            #[cfg(test)]
+            test_http: Mutex::new(None),
             storage: Mutex::new(values),
             persistence,
             canceled: CancellationToken::new(),
@@ -143,6 +150,15 @@ impl Env for NativeEnv {
         async move {
             let env = context?;
             let (parts, body) = request.into_parts();
+            #[cfg(test)]
+            if let Some(http) = env.test_http.lock().unwrap().clone() {
+                if env.canceled.is_cancelled() {
+                    return Err(canceled());
+                }
+                let body = serde_json::to_vec(&body)
+                    .map_err(|_| EnvError::Serde("Invalid request".into()))?;
+                return decode(&http(&parts, &body)?);
+            }
             let uri = parts.uri.to_string();
             if !matches!(parts.uri.scheme_str(), Some("http" | "https")) {
                 return Err(EnvError::Fetch("Unsupported URL scheme".into()));

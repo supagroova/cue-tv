@@ -583,3 +583,9 @@ Unsigned Apple TV device build also passes for the C account-restoration bridge 
 ### API JSON request transport
 
 Pinned Core constructs authentication POST requests with a serializable body and no Content-Type header. The native adapter now supplies application/json for serialized request bodies when the caller has not supplied a type; GET/HEAD behavior is unchanged. A real loopback HTTP test verifies the wire header and exact synthetic credentials in the JSON body, absent from headers/request target. It reproduces the missing header (`76a2ab5e26cc4d0197f813a59b8188e3`); the full native suite passes after the fix (`57de8be70512445e8692bb7c101f6229`). This is transport evidence, not successful Stremio authentication.
+
+### Native Core login effects
+
+Added bounded native login admission through pinned Core AuthRequest::Login. Empty/oversized credentials are rejected; an authenticated or loading session cannot accept a replacement login. The admission reply does not imply authentication success. Callers must use a fresh account namespace; this operation is not yet exported to C/Swift or the default guest UI.
+
+Unit fixtures replace only the HTTP response boundary under cfg(test), with no fixture routing in production. They exercise real Core auth effects: API rejection retains guest identity and publishes a fixed error, success stores the returned profile identity, and another login is rejected. Snapshot assertions exclude email, password, user ID and token. Full native suite passes (`5cbb5d7072184f1287e0c440ff494d14`). The initial missing-login compile failure is retained (`33468d8fd1d044c3a16739bb48475783`); the success fixture was corrected to use the pinned API's authKey response field. This does not prove live authentication, encrypted login/relaunch, sign-out, cancellation during login, or active-account selection.
