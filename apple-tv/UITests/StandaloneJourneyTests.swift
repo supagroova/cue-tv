@@ -39,6 +39,50 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertTrue(catalog.waitForExistence(timeout: 5))
         XCTAssertTrue(catalog.hasFocus)
     }
+    @MainActor func testSearchOpensMatchingTitleAndPreservesQueryOnBack() throws { try searchJourney(empty: false) }
+    @MainActor func testEmptySearchExplainsResultAndReturnsToQuery() throws { try searchJourney(empty: true) }
+    @MainActor private func searchJourney(empty: Bool) throws {
+        let query = empty ? "missing" : "needle"
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        app.launch()
+        let search = app.textFields["Search titles in a catalog"]
+        XCTAssertTrue(search.waitForExistence(timeout: 20))
+        for _ in 0..<8 where !search.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(search.hasFocus)
+        XCUIRemote.shared.press(.select)
+        search.typeText(query)
+        XCUIRemote.shared.press(.menu)
+        let catalog = app.buttons["Owned series · series"]
+        XCTAssertTrue(catalog.exists)
+        XCTAssertFalse(app.buttons["Owned films · movie"].isEnabled, "A catalog without search must not accept a query")
+        for _ in 0..<8 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(catalog.hasFocus)
+        XCUIRemote.shared.press(.select)
+        if empty {
+            XCTAssertTrue(app.staticTexts["No titles found. Go back to change your search or choose another catalog."].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["Owned series 1"].exists)
+            XCUIRemote.shared.press(.menu)
+            XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+            XCTAssertTrue(catalog.hasFocus)
+            XCTAssertEqual(search.value as? String, query)
+            return
+        }
+        let result = app.buttons["Needle search result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Owned series 1"].exists, "Search must use the query endpoint, not the browse catalog")
+        for _ in 0..<8 where !result.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(result.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["S2 · E2 · Episode 2"].waitForExistence(timeout: 5))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+        XCTAssertTrue(catalog.hasFocus)
+        XCTAssertEqual(search.value as? String, query)
+    }
     @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"

@@ -104,6 +104,9 @@ struct StandaloneHome: View {
                                     .focused($focusedRow, equals: .title(title.kind, title.id))
                                 }
                                 if catalog.status == .loading { ProgressView() }
+                                if catalog.status == .ready, catalog.items.isEmpty, !catalog.hasMore {
+                                    Text("No titles found. Go back to change your search or choose another catalog.")
+                                }
                                 if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
                                 if catalog.hasMore { Button("More titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: catalog.offset + catalog.items.count, expectedRevision: $1) } } } }
                             }

@@ -318,3 +318,22 @@ source button makes the test fail for the absent Choose source control
 the final fixture/test pass is `9ed8166c51874a47bc6bb06172144b54` (one executed
 test, zero failures). All 15 portable tests pass. This adds navigation coverage,
 not a new playback claim; the test remains opt-in. Next is remote search coverage.
+
+### Search and empty results
+
+The opt-in search journey enters text through the system keyboard, selects a
+search-capable catalog, checks the distinct query-only result, opens its metadata
+and verifies query/focus preservation on Back (`afe62e5d896f40bcbfe71aa58e6e424c`).
+The fixture serves different results for browse, needle and missing queries, so
+the assertion cannot pass by accidentally loading the unfiltered catalog. It
+also checks that the film catalog, which does not advertise search, is disabled.
+
+An empty response previously left a blank list. The new empty-result test fails
+for the missing explanation (`a4d58c8ba89340e79d2b3f66012a1057`), then passes with
+the ready/empty/terminal catalog message (`8d0427ba89a24499b4773c696fe0ed7b`). Back
+returns to the catalog with the query intact. Loading and failed requests do not
+use this empty-state message. All 15 portable checks pass. No automatic CI test
+duration or dependencies changed. Remaining: request-error/retry journeys and
+the broader unfinished phase requirements documented above.
+
+Unsigned device build also passes: `367b85d1c1084accaebcb2cbd8ee9288`.

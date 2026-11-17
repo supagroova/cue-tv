@@ -40,7 +40,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manifest.json":
             body = MANIFEST
         elif path.startswith("/catalog/series/owned") and path.endswith(".json"):
-            body = {"metas": [{"id": f"cue-owned-{n}", "name": f"Owned series {n}", "type": "series"} for n in (1, 2, 3)]}
+            if path == "/catalog/series/owned/search=needle.json":
+                body = {"metas": [{"id": "cue-owned-2", "name": "Needle search result", "type": "series"}]}
+            elif "/search=" in path:
+                body = {"metas": []}
+            else:
+                body = {"metas": [{"id": f"cue-owned-{n}", "name": f"Owned series {n}", "type": "series"} for n in (1, 2, 3)]}
         elif path == "/catalog/movie/films.json":
             body = {"metas": [{"id": "cue-owned-film", "name": "Owned film", "type": "movie"}]}
         elif path == "/meta/movie/cue-owned-film.json":
