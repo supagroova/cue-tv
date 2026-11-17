@@ -61,3 +61,11 @@ Swift membership receipts now pass the real HTTP fixture and all 60 Swift tests
 Next: guarded UI library controls and interrupted save coverage. Phase5 uses
 symlinks to the root native-target/DerivedData caches; never build concurrently
 in those worktrees. PR8 Android retry completed successfully.
+
+Title-detail library controls pass the remote add/remove/source/Back journey
+(`b8b5344c99d24adaafdb2c819652f8b8`) and unsigned build
+(`1b8bf4c72fb84d81a6e575e1d302c58b`). Next: interrupted/failed receipt UI coverage,
+then remaining Phase5 library browsing/watched/player checkpoint work. PR8 native
+job134340042364 was retried after a proven runner-capacity cancellation; PR13
+simulator134341747698 likewise never acquired a runner. PR13native remains live,
+so local Phase5 commits have not yet been pushed over that run.

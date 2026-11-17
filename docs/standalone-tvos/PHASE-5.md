@@ -88,3 +88,18 @@ User-facing library controls and interrupted save coverage remain outstanding.
 
 Unsigned tvOS device build passes (`8ab87378acaf48be88a478f356765a00`); only
 this evidence document changed during that build, not source or tests.
+
+## Title-detail library control
+
+Ready title details now offer Add to library / Remove from library. The control
+keeps remote focus while saving and ignores repeated presses, waits for the save
+receipt, and retains a failed intent behind Retry library save. The task belongs
+to the title view; a cancelled/disappeared view does not publish a completion.
+Cancellation is not a rollback. This is not yet a library-browsing screen.
+
+The owned remote journey initially fails for the missing control
+(`2baceb74f1d849ccadb989771a0544d3`), then adds and removes the film, chooses its
+source and verifies Back focus (`b8b5344c99d24adaafdb2c819652f8b8`). Unsigned device
+build passes (`1b8bf4c72fb84d81a6e575e1d302c58b`), as do all 15 portable checks.
+UI-level failed-save retry and disappearance during a delayed receipt still need
+controlled coverage; native write-failure tests do not prove those UI states.

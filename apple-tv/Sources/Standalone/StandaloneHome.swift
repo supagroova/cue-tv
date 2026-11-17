@@ -121,6 +121,14 @@ struct StandaloneHome: View {
                                 Text(details.name ?? "Title").font(.title)
                                 if let description = details.description { Text(description) }
                                 if details.status == .loading { ProgressView() }
+                                if details.status == .ready, let member = state.detailsInLibrary {
+                                    LibraryMembershipControl(member: member) { desired in
+                                        await model.perform(expectedRevision: state.revision) { service, revision in
+                                            try await service.setDetailsLibrary(desired, expectedRevision: revision)
+                                        }
+                                    }.id(details.kind + "\n" + details.id)
+                                }
+
                                 if !details.seasons.isEmpty {
                                     ScrollView(.horizontal) {
                                         HStack {

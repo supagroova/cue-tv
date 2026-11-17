@@ -7,7 +7,9 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
-    @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws {
+    @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws { try movieJourney(library: false) }
+    @MainActor func testMovieLibraryMembershipCanBeAddedAndRemoved() throws { try movieJourney(library: true) }
+    @MainActor private func movieJourney(library: Bool) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -21,6 +23,19 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
         XCTAssertTrue(title.hasFocus)
         XCUIRemote.shared.press(.select)
+        if library {
+            let add = app.buttons["Add to library"]
+            XCTAssertTrue(add.waitForExistence(timeout: 5))
+            for _ in 0..<8 where !add.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(add.hasFocus)
+            XCUIRemote.shared.press(.select)
+            let remove = app.buttons["Remove from library"]
+            XCTAssertTrue(remove.waitForExistence(timeout: 5))
+            for _ in 0..<8 where !remove.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(remove.hasFocus)
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(add.waitForExistence(timeout: 5))
+        }
         let choose = app.buttons["Choose source"]
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Owned film without episode metadata"].exists)
