@@ -1,6 +1,6 @@
 //! C ABI: input strings borrowed for each call; snapshot strings must be freed.
 //! Handles are monotonic IDs, not pointers. Stop is idempotent and nonblocking.
-use super::PlaybackSession;
+use super::{PlaybackSession, TorrentSource};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -29,7 +29,10 @@ struct Entry {
 }
 #[derive(Deserialize)]
 struct Config {
-    torrent_path: PathBuf,
+    torrent_path: Option<PathBuf>,
+    magnet: Option<String>,
+    #[serde(default)]
+    discovery: bool,
     output: PathBuf,
     file_index: usize,
     initial_peers: Vec<SocketAddr>,
@@ -45,8 +48,12 @@ pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
         SESSIONS.lock().unwrap().insert(id, entry.clone());
         RUNTIME.spawn(async move {
             let setup = async {
-                let torrent = std::fs::read(config.torrent_path)?;
-                PlaybackSession::start(torrent, config.file_index, config.output, config.initial_peers).await
+                let source = match (config.torrent_path, config.magnet) {
+                    (Some(path), None) => TorrentSource::Bytes(std::fs::read(path)?),
+                    (None, Some(magnet)) => TorrentSource::Magnet(magnet),
+                    _ => anyhow::bail!("exactly one torrent source required"),
+                };
+                PlaybackSession::start_source(source, config.file_index, config.output, config.initial_peers, config.discovery).await
             };
             let session = tokio::select! {
                 _ = entry.cancel.cancelled() => return,

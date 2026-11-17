@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use librqbit::{AddTorrent, AddTorrentOptions, Session, SessionOptions};
+use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Magnet, Session, SessionOptions};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
@@ -114,6 +114,11 @@ pub struct PlaybackSession {
     server: tokio::task::JoinHandle<()>,
 }
 
+pub enum TorrentSource {
+    Bytes(Vec<u8>),
+    Magnet(String),
+}
+
 impl PlaybackSession {
     pub async fn start(
         torrent: Vec<u8>,
@@ -121,15 +126,47 @@ impl PlaybackSession {
         output: PathBuf,
         initial_peers: Vec<SocketAddr>,
     ) -> Result<Self> {
+        Self::start_source(
+            TorrentSource::Bytes(torrent),
+            index,
+            output,
+            initial_peers,
+            false,
+        )
+        .await
+    }
+
+    pub async fn start_source(
+        source: TorrentSource,
+        index: usize,
+        output: PathBuf,
+        initial_peers: Vec<SocketAddr>,
+        discovery: bool,
+    ) -> Result<Self> {
+        let source = match source {
+            TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
+            TorrentSource::Magnet(value) => {
+                if value.len() > 16384 || !value.starts_with("magnet:?") {
+                    bail!("invalid magnet");
+                }
+                let magnet = Magnet::parse(&value)?;
+                if magnet.as_id20().is_none() {
+                    bail!("v1 torrent hash required");
+                }
+                AddTorrent::from_url(value)
+            }
+        };
         let cancel = CancellationToken::new();
         let guard = cancel.clone().drop_guard();
-        // Controlled-peer feasibility stage: discovery is enabled separately once this path is proven.
         let session = Session::new_with_opts(
             output,
             SessionOptions {
-                dht: None,
+                dht: discovery.then(|| DhtSessionConfig {
+                    persistence: None,
+                    ..Default::default()
+                }),
                 persistence: None,
-                disable_trackers: true,
+                disable_trackers: !discovery,
                 disable_local_service_discovery: true,
                 cancellation_token: Some(cancel.clone()),
                 peer_limit: Some(30),
@@ -141,7 +178,7 @@ impl PlaybackSession {
         let setup = async {
             let handle = session
                 .add_torrent(
-                    AddTorrent::from_bytes(torrent),
+                    source,
                     Some(AddTorrentOptions {
                         only_files: Some(vec![index]),
                         initial_peers: Some(initial_peers),

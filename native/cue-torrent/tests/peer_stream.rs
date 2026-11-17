@@ -1,16 +1,46 @@
-use cue_torrent::PlaybackSession;
+use cue_torrent::{PlaybackSession, TorrentSource};
 use librqbit::{AddTorrent, AddTorrentOptions, ListenerOptions, Session, SessionOptions};
 use std::{path::PathBuf, time::Duration};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn peer_bytes_ranges_and_teardown() {
+    check_fixture("single", 0, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn magnet_resolves_metadata_from_peer() {
+    check_fixture("single", 0, true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multifile_selects_second_episode() {
+    check_fixture("multi-episode", 1, true).await;
+}
+
+async fn check_fixture(name: &str, index: usize, magnet: bool) {
     tokio::time::timeout(Duration::from_secs(45), async {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
-        let bytes =
-            std::fs::read(root.join("apple-tv/Resources/PlaybackLab/episode01.mp4")).unwrap();
+        let torrent =
+            std::fs::read(root.join(format!("fixtures/torrents/{name}.torrent"))).unwrap();
+        let bytes = std::fs::read(root.join(format!(
+            "apple-tv/Resources/PlaybackLab/episode0{}.mp4",
+            index + 1
+        )))
+        .unwrap();
         let seed_dir = tempfile::tempdir().unwrap();
-        std::fs::write(seed_dir.path().join("episode01.mp4"), &bytes).unwrap();
+        let seed_files = if name == "multi-episode" {
+            seed_dir.path().join("CueTV-fixtures")
+        } else {
+            seed_dir.path().to_owned()
+        };
+        std::fs::create_dir_all(&seed_files).unwrap();
+        for file in ["episode01.mp4", "episode02.mp4", "tail-index.mp4"] {
+            std::fs::copy(
+                root.join("apple-tv/Resources/PlaybackLab").join(file),
+                seed_files.join(file),
+            )
+            .unwrap();
+        }
         let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = reservation.local_addr().unwrap();
         drop(reservation);
@@ -43,10 +73,22 @@ async fn peer_bytes_ranges_and_teardown() {
             .unwrap();
         seed.wait_until_completed().await.unwrap();
         let download = tempfile::tempdir().unwrap();
-        let playback =
-            PlaybackSession::start(torrent, 0, download.path().to_owned(), vec![address])
-                .await
-                .unwrap();
+        let playback = PlaybackSession::start_source(
+            if magnet {
+                TorrentSource::Magnet(format!(
+                    "magnet:?xt=urn:btih:{}",
+                    seed.info_hash().as_string()
+                ))
+            } else {
+                TorrentSource::Bytes(torrent)
+            },
+            index,
+            download.path().to_owned(),
+            vec![address],
+            false,
+        )
+        .await
+        .unwrap();
         let client = reqwest::Client::new();
         let tail = client
             .get(&playback.url)
