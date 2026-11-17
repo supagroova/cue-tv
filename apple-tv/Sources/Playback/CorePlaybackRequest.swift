@@ -4,6 +4,9 @@ import Foundation
 nonisolated enum CorePlaybackRequest: Sendable {
     case torrent(CoreTorrentRequest)
     case https(CoreHTTPSRequest)
+    var playbackToken: UInt64 {
+        switch self { case .torrent(let source): source.playbackToken; case .https(let source): source.playbackToken }
+    }
     var subtitles: [CoreSubtitle] {
         switch self { case .torrent(let source): source.subtitles; case .https(let source): source.subtitles }
     }

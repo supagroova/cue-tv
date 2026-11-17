@@ -40,6 +40,7 @@ final class PlaybackAccountingOwner {
         }
     }
     func start() async -> Bool {
+        guard !closing else { return false }
         if !started {
             started = true
             guard queue.enqueue([.init(.start), .init(.pause)]) else { return false }

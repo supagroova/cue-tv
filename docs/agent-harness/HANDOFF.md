@@ -466,3 +466,26 @@ c3bd0ef3fe1d47478042628ce8d1f7d1. Unsigned tvOS build passes
 ef7ace8aaf704167b58d8093d5118802. The execution closure can now return service.playback's
 typed result directly; production StandaloneModel retention, Resume/Restart UI and
 VLC wiring remain the next integration task. No physical-device claim.
+
+
+### Phase 5 — parent-owned accounting lifetime
+
+StandaloneModel owns PlaybackAccountingSession and exposes accounting(for:) plus
+closePlayback(). The registry returns the same owner for a repeated token, serializes
+replacement/close, and retains failed saves. A replacement source, Core replacement,
+and polling shutdown/startup now await accounting retirement. On failure the Core
+service is retained, with a retry message, instead of silently dropping the save.
+Source preparation rechecks Core's authoritative revision after retirement; a changed
+source list requires reselection. CorePlaybackRequest exposes its native token.
+The full-screen player does not yet call accounting(for:); wire it next, including
+Resume/Restart, failure UI and its disappearance path.
+
+Storage-fault test checks failed Close, blocked replacement, same-owner retention,
+and exactly one successful durable Close before replacement. Sensitivity run
+44168d5649be42bdb40dc8ec00c9276f deliberately discarded the failed Close and failed
+four assertions. Initial green 1bbc93d35bf740c18557b84d93dfb3b9. A second test exposed
+a real late-view-task race: an acquired but unstarted owner could start native work
+after replacement had retired it (59be243520144343abfc540df451d765). start() now
+rejects closing owners before enqueueing. Full suite passes 73 tests in six suites
+c8f049839e1842218fdd050665460d0d; unsigned device build passes
+9c206c61e9f9496db1c0346e3a363e95. No device playback or production UI integration claim.
