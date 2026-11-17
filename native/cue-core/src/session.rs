@@ -68,7 +68,7 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
-    Checkpoint(u64, oneshot::Sender<Result<(), &'static str>>),
+    Checkpoint(u64, bool, oneshot::Sender<Result<(), &'static str>>),
     CheckpointDone(
         Result<(), &'static str>,
         oneshot::Sender<Result<(), &'static str>>,
@@ -516,7 +516,16 @@ impl CoreSession {
     pub async fn checkpoint_playback(&self, token: u64) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
-            .try_send(Command::Checkpoint(token, reply))
+            .try_send(Command::Checkpoint(token, false, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Freezes progress and retires the owner only after its final local save.
+    /// A failed write leaves the owner available for explicit retry.
+    pub async fn close_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Checkpoint(token, true, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -723,6 +732,7 @@ async fn run(
     let mut pending_playback: Option<PendingPlayback> = None;
     let mut playback: Option<crate::player::Playback> = None;
     let mut checkpoint_pending = false;
+    let mut playback_closing = false;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -1187,7 +1197,7 @@ async fn run(
                 let _ = reply.send(result);
                 continue;
             }
-            Command::Checkpoint(token, reply) => {
+            Command::Checkpoint(token, close, reply) => {
                 let Some(owner) = playback.as_ref().filter(|owner| owner.token == token) else {
                     let _ = reply.send(Err("stale_playback"));
                     continue;
@@ -1216,6 +1226,7 @@ async fn run(
                 // share Core's sequential queue, preserving admission order.
                 ctx.library = library;
                 checkpoint_pending = true;
+                playback_closing = close;
                 pending += 1;
                 revision += 1;
                 error = None;
@@ -1234,6 +1245,10 @@ async fn run(
                 )
             }
             Command::CheckpointDone(result, reply) => {
+                if playback_closing && result.is_ok() {
+                    playback = None;
+                }
+                playback_closing = false;
                 checkpoint_pending = false;
                 pending = pending.saturating_sub(1);
                 if let Err(failure) = result {
@@ -1269,6 +1284,7 @@ async fn run(
             }
             Command::PlaybackEvent(token, event, reply) => {
                 let result = match playback.as_mut().filter(|owner| owner.token == token) {
+                    Some(_) if playback_closing => Err("playback_closing"),
                     Some(owner) => owner.event(event, &ctx),
                     None => Err("stale_playback"),
                 };

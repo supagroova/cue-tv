@@ -289,3 +289,14 @@ position remains, retries and reopens encrypted storage. Retired tokens are reje
 Full native tests and the unsigned tvOS build pass. No Swift consumer, close-save
 barrier, automatic cadence or sync journal is connected yet; retirement alone still
 does not imply a save. Account-mode release remains gated on journal/conflict tests.
+
+## Native durable Close
+
+`close_playback` now freezes progress while the final checkpoint is pending and
+retires the owner only after storage success. A write failure releases the freeze
+and keeps the owner available for retry. Concurrent close/save returns busy; a
+retired token cannot submit progress or another close. Tests hold the actual writer
+to prove no early close acknowledgement and reject late progress before releasing
+the write. Disk-failure recovery and encrypted reopen remain covered. The full
+native suite, unsigned device build and 15 harness tests pass. Swift Close/Home
+controls and periodic/lifecycle scheduling still need this native integration.

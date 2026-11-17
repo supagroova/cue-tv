@@ -293,3 +293,18 @@ and encrypted failure/retry/reopen assertions pass in full native suite
 28ed3bb084e14f89a34da07521d59244. Device build70691f02e7d94a6388ebde052c2c6009 passes.
 Next: lifecycle barriers/coalescing, resume lookup and Swift callback receipt bridge;
 atomic account journal remains required. Retirement still does not auto-checkpoint.
+
+### Phase 5 native Close barrier
+
+Added `close_playback`: shared checkpoint queue freezes progress during closing,
+keeps the owner on failure and retires it on durable success before acknowledging.
+Current accounting-only `retire_playback` remains explicit and makes no save claim.
+Tests cover held close, duplicate close, late callbacks, failed close recovery and
+encrypted reopen at600ms rather than the rejected late900ms. Missing API red
+5458780f29574d7887128b83d8b50d9b; focused green c295546d1905411798835c0150aed6ed;
+full native6c88a01a32b84c8ca535147951e49f27; unsigned build
+fccf1a811d1c4fdb8405dd3ea157f0d0;15 harness tests pass. No Swift consumer yet.
+Next: bridge native start/progress/checkpoint/close receipts and playback token into
+Swift, then wire decoder callbacks with explicit seek classification and a bounded
+periodic coalescer retaining lifecycle barriers. Resume and account journal remain
+required. PR13 at18ca94a CI was still running at last observation.

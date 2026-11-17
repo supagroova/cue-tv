@@ -177,6 +177,10 @@ async fn roundtrip() {
         assert_eq!(bucket.items["film"].state.time_offset, 450);
     })
     .await;
+    assert_eq!(
+        session.close_playback(token).await,
+        Err("checkpoint_write_failed")
+    );
     std::fs::rename(&unavailable, &directory).unwrap();
     session
         .playback_event(
@@ -189,7 +193,52 @@ async fn roundtrip() {
         .await
         .unwrap();
     session.checkpoint_playback(token).await.unwrap();
-    session.retire_playback(token).await.unwrap();
+    let (release_close, blocked_close) = tokio::sync::oneshot::channel();
+    let (entered_close, started_close) = tokio::sync::oneshot::channel();
+    env.scope(async {
+        NativeEnv::exec_sequential(async move {
+            let _ = entered_close.send(());
+            let _ = blocked_close.await;
+        });
+    })
+    .await;
+    started_close.await.unwrap();
+    {
+        let close = session.close_playback(token);
+        tokio::pin!(close);
+        tokio::select! {
+            result = &mut close => panic!("Close acknowledged before write: {result:?}"),
+            _ = async { while session.snapshot().pending_effects == 0 { tokio::task::yield_now().await; } } => {}
+        }
+        assert_eq!(
+            session
+                .playback_event(
+                    token,
+                    PlaybackEvent::TimeChanged {
+                        time: 900,
+                        duration: 1000
+                    }
+                )
+                .await,
+            Err("playback_closing")
+        );
+        assert_eq!(session.close_playback(token).await, Err("checkpoint_busy"));
+        release_close.send(()).unwrap();
+        close.await.unwrap();
+    }
+    assert_eq!(
+        session
+            .playback_event(
+                token,
+                PlaybackEvent::TimeChanged {
+                    time: 900,
+                    duration: 1000
+                }
+            )
+            .await,
+        Err("stale_playback")
+    );
+    assert_eq!(session.close_playback(token).await, Err("stale_playback"));
     assert_eq!(
         session.checkpoint_playback(token).await,
         Err("stale_playback")
