@@ -52,11 +52,18 @@ nonisolated struct CoreTorrentRequest: Decodable, Sendable {
     let fileMustInclude: [String]
 }
 
-nonisolated private struct CoreTorrentReply: Decodable, Sendable {
+nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
+    let metaId: String
+    let videoId: String
+    let kind: String
+    let url: String
+}
+
+nonisolated private struct CoreSourceReply<Request: Decodable & Sendable>: Decodable, Sendable {
     let version: Int
     let session: UInt64
     let ticket: UInt64
-    let request: CoreTorrentRequest?
+    let request: Request?
     let error: String?
 }
 
@@ -79,6 +86,7 @@ nonisolated protocol CoreService: Sendable {
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest
+    func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest
     func stop() async throws
 }
 
@@ -249,10 +257,16 @@ actor NativeCoreService: CoreService {
     }
 
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest {
+        try await prepareSource(index: index, expectedRevision: expectedRevision, https: false)
+    }
+    func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest {
+        try await prepareSource(index: index, expectedRevision: expectedRevision, https: true)
+    }
+    private func prepareSource<Request: Decodable & Sendable>(index: Int, expectedRevision: UInt64, https: Bool) async throws -> Request {
         try Task.checkCancellation()
         guard index >= 0 else { throw Failure.invalidRequest }
         guard let handle, retirement == nil else { throw Failure.stopped }
-        let ticket = cue_core_request_torrent(handle, index, expectedRevision)
+        let ticket = https ? cue_core_request_https(handle, index, expectedRevision) : cue_core_request_torrent(handle, index, expectedRevision)
         guard ticket != 0 else { throw Failure.busy }
         defer { _ = cue_core_discard_torrent(handle, ticket) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -266,7 +280,7 @@ actor NativeCoreService: CoreService {
                 guard length <= bytes.count else { throw Failure.malformedSnapshot }
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let reply = try decoder.decode(CoreTorrentReply.self, from: Data(bytes.prefix(length)))
+                let reply = try decoder.decode(CoreSourceReply<Request>.self, from: Data(bytes.prefix(length)))
                 guard reply.version == 1, reply.session == handle, reply.ticket == ticket else { throw Failure.malformedSnapshot }
                 if let error = reply.error { throw Failure.requestFailed(error) }
                 guard let request = reply.request else { throw Failure.malformedSnapshot }

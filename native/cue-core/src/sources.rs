@@ -129,3 +129,25 @@ pub(crate) fn prepare(
         torrent: crate::playback_source::torrent(stream)?,
     })
 }
+
+pub(crate) fn prepare_https(
+    model: &MetaDetails,
+    index: usize,
+) -> Result<crate::playback_source::PreparedHttps, &'static str> {
+    let stream = model
+        .meta_streams
+        .iter()
+        .chain(&model.streams)
+        .filter_map(|page| page.content.as_ref()?.ready())
+        .flatten()
+        .nth(index)
+        .ok_or("invalid_source")?;
+    let selected = model.selected.as_ref().ok_or("invalid_source")?;
+    let video = selected.stream_path.as_ref().ok_or("invalid_source")?;
+    Ok(crate::playback_source::PreparedHttps {
+        meta_id: selected.meta_path.id.clone(),
+        video_id: video.id.clone(),
+        kind: selected.meta_path.r#type.clone(),
+        https: crate::playback_source::https(stream)?,
+    })
+}

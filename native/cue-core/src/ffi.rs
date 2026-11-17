@@ -283,6 +283,19 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::PrepareHttps { ticket, index, revision } => {
+                                let result = session.prepare_https(index, revision).await;
+                                let value = match result {
+                                    Ok(request) => json!({"version":1,"session":handle,"ticket":ticket,"request":request,"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
@@ -347,6 +360,12 @@ enum Command {
         index: usize,
         revision: u64,
     },
+    #[serde(skip)]
+    PrepareHttps {
+        ticket: u64,
+        index: usize,
+        revision: u64,
+    },
     SetLanguage {
         version: u32,
         language: String,
@@ -404,7 +423,7 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::PrepareTorrent { .. } | Self::Login { .. } => false,
+            Self::PrepareTorrent { .. } | Self::PrepareHttps { .. } | Self::Login { .. } => false,
             Self::Logout { version } => *version == 1,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
@@ -602,6 +621,14 @@ pub extern "C" fn cue_core_release(handle: u64) -> i32 {
 /// Starts one bounded handoff per session. Zero means unavailable or busy.
 #[unsafe(no_mangle)]
 pub extern "C" fn cue_core_request_torrent(handle: u64, index: usize, revision: u64) -> u64 {
+    request_source(handle, index, revision, false)
+}
+/// Uses the same one-ticket handoff slot and take/cancel functions as torrents.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_https(handle: u64, index: usize, revision: u64) -> u64 {
+    request_source(handle, index, revision, true)
+}
+fn request_source(handle: u64, index: usize, revision: u64, https: bool) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         let Some(entry) = lookup(handle) else {
             return 0;
@@ -622,10 +649,18 @@ pub extern "C" fn cue_core_request_torrent(handle: u64, index: usize, revision: 
         handoff.reply = None;
         if entry
             .commands
-            .try_send(Command::PrepareTorrent {
-                ticket,
-                index,
-                revision,
+            .try_send(if https {
+                Command::PrepareHttps {
+                    ticket,
+                    index,
+                    revision,
+                }
+            } else {
+                Command::PrepareTorrent {
+                    ticket,
+                    index,
+                    revision,
+                }
             })
             .is_err()
         {

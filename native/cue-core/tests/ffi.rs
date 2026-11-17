@@ -27,6 +27,7 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     let ticket = cue_core_request_torrent(handle, 0, revision);
     assert_ne!(ticket, 0);
     assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
+    assert_eq!(cue_core_request_https(handle, 0, revision), 0);
     until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
     let mut short = [77u8; 1];
     assert!(unsafe { cue_core_take_torrent(handle, ticket, short.as_mut_ptr(), 1) } > 1);
@@ -232,4 +233,30 @@ fn new_account_requires_empty_storage_and_owns_shutdown() {
         assert_eq!(cue_core_release(handle), 1);
     }
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn https_handoff_uses_bounded_ticket_and_rejects_unavailable_sources() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    let revision = state(handle)["model"]["revision"].as_u64().unwrap();
+    let ticket = cue_core_request_https(handle, 0, revision);
+    assert_ne!(ticket, 0);
+    assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
+    until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
+    let mut bytes = vec![0; 32768];
+    let count = unsafe { cue_core_take_torrent(handle, ticket, bytes.as_mut_ptr(), bytes.len()) };
+    assert!(count > 0);
+    let reply: serde_json::Value = serde_json::from_slice(&bytes[..count as usize]).unwrap();
+    assert_eq!(reply["error"], "invalid_source");
+    assert!(reply["request"].is_null());
+    assert_eq!(
+        unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) },
+        -1
+    );
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_request_https(handle, 0, revision), 0);
+    assert_eq!(cue_core_release(handle), 1);
 }

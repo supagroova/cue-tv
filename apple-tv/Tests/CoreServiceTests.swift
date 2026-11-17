@@ -131,7 +131,7 @@ import Security
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(state.model?.sources?.videoId == "cue-fixture:30")
-    #expect(state.model?.sources?.total == 30)
+    #expect(state.model?.sources?.total == 31)
     #expect(state.model?.sources?.items.count == 24)
     #expect(state.model?.sources?.items.first?.kind == .torrent)
     #expect(state.model?.sources?.items.first?.sizeBytes == nil)
@@ -141,8 +141,8 @@ import Security
         if state.model?.sources?.offset == 24 { break }
         try await Task.sleep(for: .milliseconds(10))
     }
-    #expect(state.model?.sources?.items.count == 6)
-    #expect(state.model?.sources?.items.last?.name == "Source 29")
+    #expect(state.model?.sources?.items.count == 7)
+    #expect(state.model?.sources?.items.last?.name == "Direct HTTPS")
     let handoff = try await service.prepareTorrent(index: 29, expectedRevision: try #require(state.model?.revision))
     #expect(handoff.magnet.contains("0123456789abcdef0123456789abcdef01234567"))
     #expect(handoff.metaId == "cue-fixture")
@@ -150,6 +150,17 @@ import Security
     #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
+    let https = try await service.prepareHTTPS(index: 30, expectedRevision: try #require(state.model?.revision))
+    #expect(https.url == "https://media.example.test/video.mkv?signature=synthetic%2Bvalue")
+    #expect(https.metaId == "cue-fixture")
+    #expect(https.videoId == "cue-fixture:30")
+    #expect(https.kind == "movie")
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {
+        try await service.prepareHTTPS(index: 30, expectedRevision: 0)
+    }
+    await #expect(throws: NativeCoreService.Failure.requestFailed("unsupported_source")) {
+        try await service.prepareHTTPS(index: 29, expectedRevision: try #require(state.model?.revision))
+    }
     await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {
         try await service.prepareTorrent(index: 29, expectedRevision: 0)
     }
@@ -250,7 +261,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
                 let videos: [[String: Any]] = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)", "season": $0 <= 15 ? 1 : 2, "episode": ($0 - 1) % 15 + 1] }
                 let metadataBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["meta": ["id": "cue-fixture", "type": "movie", "name": "Detailed simulator film", "description": "Owned title details", "videos": videos]]), as: UTF8.self)
-                let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] }
+                let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] } + [["url": "https://media.example.test/video.mkv?signature=synthetic%2Bvalue", "name": "Direct HTTPS"]]
                 let sourceBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["streams": streams]), as: UTF8.self)
                 let body = requestText.contains("/stream/movie/") ? sourceBody : isCatalog
                     ? catalogBody

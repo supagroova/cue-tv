@@ -89,6 +89,11 @@ enum Command {
         u64,
         oneshot::Sender<Result<crate::playback_source::PreparedTorrent, &'static str>>,
     ),
+    PrepareHttps(
+        usize,
+        u64,
+        oneshot::Sender<Result<crate::playback_source::PreparedHttps, &'static str>>,
+    ),
     Effect(Msg, u64, u64, u64, u64),
 }
 pub struct CoreSession {
@@ -383,6 +388,17 @@ impl CoreSession {
         let (reply, ack) = oneshot::channel();
         self.commands
             .try_send(Command::PrepareTorrent(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn prepare_https(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<crate::playback_source::PreparedHttps, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::PrepareHttps(index, expected_revision, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -764,6 +780,19 @@ async fn run(
                     Err("invalid_source")
                 } else {
                     crate::sources::prepare(&details, index)
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::PrepareHttps(index, expected, reply) => {
+                let result = if expected != revision {
+                    Err("stale_sources")
+                } else if !crate::sources::view(&details, source_offset)
+                    .is_some_and(|view| view.items.iter().any(|item| item.index == index))
+                {
+                    Err("invalid_source")
+                } else {
+                    crate::sources::prepare_https(&details, index)
                 };
                 let _ = reply.send(result);
                 continue;

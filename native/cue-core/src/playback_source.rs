@@ -146,3 +146,12 @@ pub fn https(stream: &Stream) -> Result<HttpsRequest, &'static str> {
         url: url.to_string(),
     })
 }
+
+#[derive(serde::Serialize)]
+pub struct PreparedHttps {
+    pub meta_id: String,
+    pub video_id: String,
+    pub kind: String,
+    #[serde(flatten)]
+    pub https: HttpsRequest,
+}
