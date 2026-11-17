@@ -15,26 +15,30 @@ struct PlaybackLabView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Playback Lab").font(.largeTitle)
-            Text("Decoder controls and controlled-peer torrent proof").foregroundStyle(.secondary)
-            if let player {
-                VideoPlayer(player: player).frame(height: 450)
-                Text(String(format: "%.1f", playbackSeconds)).font(.caption).accessibilityIdentifier("playback-seconds")
-                Text(advanced ? "Playback advanced" : "Waiting for video").accessibilityIdentifier("playback-progress")
-                if let firstFrameEvidence { Text(firstFrameEvidence).accessibilityIdentifier("first-frame-evidence") }
-                Button("Stop playback") { stop() }
+            if ProcessInfo.processInfo.environment["CUE_VLC_LAB"] == "1" {
+                VLCPlaybackLabView()
             } else {
-                ForEach(fixtures) { fixture in
-                    Button("Play \(fixture.title) — \(fixture.durationSeconds)s") { start(fixture) }
+                Text("Playback Lab").font(.largeTitle)
+                Text("Decoder controls and controlled-peer torrent proof").foregroundStyle(.secondary)
+                if let player {
+                    VideoPlayer(player: player).frame(height: 450)
+                    Text(String(format: "%.1f", playbackSeconds)).font(.caption).accessibilityIdentifier("playback-seconds")
+                    Text(advanced ? "Playback advanced" : "Waiting for video").accessibilityIdentifier("playback-progress")
+                    if let firstFrameEvidence { Text(firstFrameEvidence).accessibilityIdentifier("first-frame-evidence") }
+                    Button("Stop playback") { stop() }
+                } else {
+                    ForEach(fixtures) { fixture in
+                        Button("Play \(fixture.title) — \(fixture.durationSeconds)s") { start(fixture) }
+                    }
                 }
+                if player == nil {
+                    Button("Stream torrent fixture") { stop(); torrent.start() }
+                    Text(torrent.status)
+                }
+                Text(selected.map { "Selected fixture: \($0)" } ?? "Select a generated fixture")
+                if let error { Text(error).foregroundStyle(.orange) }
+                Text("H.264 / AAC · 1080p SDR · generated test media").font(.caption)
             }
-            if player == nil {
-                Button("Stream torrent fixture") { stop(); torrent.start() }
-                Text(torrent.status)
-            }
-            Text(selected.map { "Selected fixture: \($0)" } ?? "Select a generated fixture")
-            if let error { Text(error).foregroundStyle(.orange) }
-            Text("H.264 / AAC · 1080p SDR · generated test media").font(.caption)
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

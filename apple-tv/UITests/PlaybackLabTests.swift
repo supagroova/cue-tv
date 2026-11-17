@@ -2,6 +2,27 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testMKVPlaybackWithVLCCandidate() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
+        app.launchEnvironment["CUE_VLC_LAB"] = "1"
+        app.launch()
+        let play = app.buttons["Play MKV with VLC"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCTAssertTrue(play.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
+        let frame = XCTAttachment(screenshot: app.screenshot())
+        frame.name = "VLCKit MKV playback"
+        frame.lifetime = .keepAlways
+        add(frame)
+        let stop = app.buttons["Stop VLC fixture"]
+        XCTAssertTrue(stop.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testTorrentFixtureAdvancesPlayback() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"

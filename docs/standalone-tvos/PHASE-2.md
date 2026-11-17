@@ -16,6 +16,14 @@ Local Rust suite: 16 tests passed, including four storage tests covering oversiz
 
 `make apple-build` passed for the unsigned arm64 Apple TV target with the storage wrapper linked. No physical device result is claimed. Sustained playback remains manual-only and is not part of routine push/PR CI.
 
+## Candidate decoder evidence
+
+VLCKit is pinned to the full revision and binary checksum documented in DEPENDENCIES.md. A debug-only candidate screen is enabled with CUE_PLAYBACK_LAB=1 and CUE_VLC_LAB=1. The generated MKV fixture is a remux of the owned 1080p H.264 High / AAC LC clip; its source/output hashes, duration and stream profiles are in Resources/PlaybackLab/mkv-manifest.json. Regenerate using scripts/fixtures/generate-mkv.py.
+
+The simulator UI test `PlaybackLabTests/testMKVPlaybackWithVLCCandidate` passed: explicit remote selection, playback clock beyond 500 ms, screenshot attachment and remote Stop returning to the start control. The blue fixture image was visually confirmed. The initial test exposed focus moving to the unrelated AVPlayer lab controls; the candidate now uses its own lab screen. The final test took 7.465 seconds. The candidate also compiles for unsigned arm64 tvOS.
+
+This proves one local MKV decoding path only. Audible audio, HEVC, alternate tracks, subtitles, torrent streaming through VLC, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
+
 ## Remaining work
 
 Select and integrate a player supporting the required MKV/MP4 codec, audio and subtitle matrix; implement the typed playback coordinator and cache lifetime; measure CPU/memory and set justified limits; classify failures with bounded timeouts; qualify simulator and subsequently physical-device behavior. The isolated VLCKit compile probe is candidate evidence only, not production player selection.

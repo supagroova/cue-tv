@@ -1,0 +1,25 @@
+{
+  "permission": "Remux of project-owned synthetic colors and sine audio; no third-party media.",
+  "generator": "scripts/fixtures/generate-mkv.py",
+  "source_sha256": "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb",
+  "filename": "episode01.mkv",
+  "bytes": 172792,
+  "sha256": "2b51b5a5b371bca85cf03afdd20d80f0089771d190a64a2d9cb29276a4a44ec0",
+  "duration_seconds": 12.021,
+  "streams": [
+    {
+      "codec_type": "video",
+      "codec_name": "h264",
+      "profile": "High",
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "profile": "LC",
+      "sample_rate": "48000",
+      "channels": 1
+    }
+  ]
+}
