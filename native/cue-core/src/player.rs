@@ -9,7 +9,7 @@ use stremio_core::{
         player::{Player, Selected},
     },
     runtime::{
-        UpdateWithCtx,
+        Env, UpdateWithCtx,
         msg::{Action, ActionLoad, ActionPlayer, Msg},
     },
 };
@@ -207,6 +207,52 @@ impl Playback {
         self.update(Action::Player(action), ctx);
         self.progress()
     }
+    /// Project only this owner's playback state onto the current Core record.
+    /// Admission and durable acknowledgement are separate session responsibilities.
+    pub fn checkpoint_item(
+        &self,
+        ctx: &Ctx,
+    ) -> Result<stremio_core::types::library::LibraryItem, &'static str> {
+        let played = self.model.library_item.as_ref().ok_or("invalid_playback")?;
+        let latest = ctx.library.items.get(&played.id);
+        if latest.is_some_and(|item| item.r#type != played.r#type) {
+            return Err("library_identity_conflict");
+        }
+        let mut item = latest.unwrap_or(played).clone();
+        // Keep the latest metadata, membership and notification preference.
+        // Explicit completion can clear/advance resume; preserve that decision
+        // for this owner instead of resurrecting its decoder's older position.
+        if self.manual_watched != Some(true) || latest.is_none() {
+            item.state = played.state.clone();
+            if let Some(latest) = latest {
+                item.state.no_notif = latest.state.no_notif;
+            }
+        }
+        if played.r#type == "series" {
+            let meta = self
+                .model
+                .meta_item
+                .as_ref()
+                .and_then(|page| page.content.as_ref())
+                .and_then(|content| content.ready())
+                .ok_or("invalid_playback")?;
+            let video = self
+                .model
+                .selected
+                .as_ref()
+                .and_then(|selected| selected.stream_request.as_ref())
+                .ok_or("invalid_playback")?;
+            let mut bits = latest
+                .unwrap_or(played)
+                .state
+                .watched_bitfield(&meta.videos);
+            bits.set_video(&video.path.id, self.progress()?.watched);
+            item.state.watched = Some(bits.into());
+        }
+        item.mtime = item.mtime.max(NativeEnv::now());
+        Ok(item)
+    }
+
     fn progress(&self) -> Result<Progress, &'static str> {
         let item = self.model.library_item.as_ref().ok_or("invalid_playback")?;
         let video = self
@@ -243,6 +289,55 @@ mod tests {
     use super::*;
     use crate::environment::Environment;
     use stremio_core::{models::common::ResourceLoadable, types::profile::Profile};
+
+    #[tokio::test]
+    async fn movie_checkpoint_preserves_manual_completion_and_unwatched_progress() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let mut ctx = crate::restore::context(Profile::default()).await.unwrap();
+            let selected: Selected = serde_json::from_value(serde_json::json!({
+                "stream":{"infoHash":"0123456789abcdef0123456789abcdef01234567","fileIdx":0},
+                "metaRequest":{"base":"https://owned.test/manifest.json","path":{"resource":"meta","type":"movie","id":"film","extra":[]}},
+                "streamRequest":{"base":"https://owned.test/manifest.json","path":{"resource":"stream","type":"movie","id":"film","extra":[]}},
+                "subtitlesPath":null
+            })).unwrap();
+            let details = MetaDetails {
+                meta_items: vec![ResourceLoadable {
+                    request: selected.meta_request.clone().unwrap(),
+                    content: Some(Loadable::Ready(serde_json::from_value(serde_json::json!({
+                        "id":"film","type":"movie","name":"Film"
+                    })).unwrap())),
+                }],
+                ..Default::default()
+            };
+            let mut owner = Playback::new(1, selected, &details, &ctx).unwrap();
+            owner.event(PlaybackEvent::TimeChanged { time: 400, duration: 1000 }, &ctx).unwrap();
+            let initial = owner.checkpoint_item(&ctx).unwrap();
+            assert_eq!(initial.state.time_offset, 400);
+            assert_eq!(initial.state.time_watched, 400);
+            assert!(!initial.watched());
+            ctx.library.items.insert("film".into(), initial);
+            owner.override_watched("movie", "film", None, true);
+            let current = ctx.library.items.get_mut("film").unwrap();
+            current.mark_as_watched::<NativeEnv>(true);
+            current.mtime = NativeEnv::now() + chrono::Duration::days(1);
+            let future_mtime = current.mtime;
+            owner.event(PlaybackEvent::TimeChanged { time: 800, duration: 1000 }, &ctx).unwrap();
+            let marked = owner.checkpoint_item(&ctx).unwrap();
+            assert_eq!(marked.state.time_offset, 0);
+            assert_eq!(marked.state.times_watched, 1);
+            assert_eq!(marked.mtime, future_mtime);
+            ctx.library.items.insert("film".into(), marked);
+            owner.override_watched("movie", "film", None, false);
+            ctx.library.items.get_mut("film").unwrap().mark_as_watched::<NativeEnv>(false);
+            owner.event(PlaybackEvent::TimeChanged { time: 900, duration: 1000 }, &ctx).unwrap();
+            let unmarked = owner.checkpoint_item(&ctx).unwrap();
+            assert_eq!(unmarked.state.time_offset, 900);
+            assert_eq!(unmarked.state.time_watched, 900);
+            assert!(!unmarked.watched());
+        }).await;
+        env.shutdown().await;
+    }
 
     #[tokio::test]
     async fn episode_override_is_identity_scoped_and_new_play_reenables_completion() {
@@ -286,6 +381,40 @@ mod tests {
             let bits = fresh.model.library_item.as_ref().unwrap().state.watched_bitfield(&meta.videos);
             assert!(bits.get_video("owned:1:1"));
             assert!(!bits.get_video("owned:1:2"));
+            // A checkpoint must merge into the latest library record, not the
+            // player's older copy of membership, metadata or other episode bits.
+            let current = ctx.library.items.get_mut("owned").unwrap();
+            current.removed = true;
+            current.temp = false;
+            current.name = "Updated name".into();
+            current.state.no_notif = true;
+            let current_bits = current.state.watched_bitfield(&meta.videos);
+            current.mark_video_as_watched::<NativeEnv>(&current_bits, &meta.videos[1], true);
+            let checkpoint = fresh.checkpoint_item(&ctx).unwrap();
+            assert!(checkpoint.removed);
+            assert!(!checkpoint.temp);
+            assert_eq!(checkpoint.name, "Updated name");
+            assert!(checkpoint.state.no_notif);
+            assert_eq!(checkpoint.state.time_offset, 902);
+            let merged = checkpoint.state.watched_bitfield(&meta.videos);
+            assert!(merged.get_video("owned:1:1"));
+            assert!(merged.get_video("owned:1:2"));
+            assert!(!ctx.library.items["owned"].state.watched_bitfield(&meta.videos).get_video("owned:1:1"), "Projection must not mutate Core before admission");
+
+            // A manual completed episode may move resume to the next episode.
+            // A late checkpoint must not restore the playing episode's pointer.
+            fresh.override_watched("series", "owned", Some("owned:1:1"), true);
+            let current = ctx.library.items.get_mut("owned").unwrap();
+            let current_bits = current.state.watched_bitfield(&meta.videos);
+            current.mark_video_as_watched::<NativeEnv>(&current_bits, &meta.videos[0], true);
+            current.advance_to_video("owned:1:2");
+            fresh.event(PlaybackEvent::TimeChanged { time: 950, duration: 1000 }, &ctx).unwrap();
+            let checkpoint = fresh.checkpoint_item(&ctx).unwrap();
+            assert_eq!(checkpoint.state.video_id.as_deref(), Some("owned:1:2"));
+            assert_eq!(checkpoint.state.time_offset, 1);
+            assert_eq!(checkpoint.state.time_watched, 0);
+            ctx.library.items.get_mut("owned").unwrap().r#type = "movie".into();
+            assert_eq!(fresh.checkpoint_item(&ctx).unwrap_err(), "library_identity_conflict");
         }).await;
         env.shutdown().await;
     }

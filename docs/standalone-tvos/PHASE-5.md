@@ -261,3 +261,15 @@ retry values survive reopening, and an oversized batch cannot partially delete a
 key. A successful update-plus-delete also survives reopening. Full native tests
 pass (record aeaf8ac5ee654186a41931be0e221dce). This prerequisite is not yet used
 by playback checkpoints; atomic library/journal integration remains outstanding.
+
+## Checkpoint projection
+
+The native Player can now project its progress onto the latest Core library record
+without replacing current membership, metadata, notification preferences or watched
+bits for other episodes. Manual completion retains the stored cleared/advanced resume
+pointer for the remainder of that owner; manual unwatched permits progress while
+suppressing automatic completion. Conflicting title types are rejected and future
+modification times are preserved. Projection itself does not mutate Core or acknowledge
+a save. Film/episode model tests, the full native suite and unsigned tvOS build pass.
+The session checkpoint queue, atomic library/journal write and Swift callbacks are
+still outstanding.

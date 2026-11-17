@@ -258,3 +258,20 @@ device build passes: a088ce0eb1bd4753a940fd48a8a8a6a9; all 15 harness tests pass
 No checkpoint caller exists yet. Root worktree's unrelated doc edits remain untouched. PR13 at
 70e9972 has passing native/device, Android and harness checks, simulator still
 running at last observation. PR7 current head 2006470 has all six checks passing.
+
+### Phase 5 checkpoint projection
+
+`Playback::checkpoint_item` merges the owner's progress into current Core metadata,
+membership and notification state, preserving other episode bits. Explicit completed
+resume semantics survive late callbacks; unwatched remains false while progress
+continues. The projector is pure and rejects a conflicting current title type.
+Missing API red: c1efbfbb77de4eaca4c8a6d6a151b1cd. Episode green:
+6218f3eaf6e9462a906edeff9239b011. Added film completion/unwatched and future-clock
+coverage; full native suite passes 0fbe694bb3dd488db555c282eb417ce0; unsigned device
+build passes 3c7d72d170f540788a5cb1c10d64ea68. No C/Swift consumer yet.
+Next: session-owned acknowledged checkpoint queue using atomic recent/older storage;
+serialize alongside existing sequential Core writes, without awaiting that queue
+inside the actor (its completion messages need the actor to drain). Integrate journal
+atomically before account release. Projection is not a durability receipt.
+PR13 at70e9972 all checks pass; simulator9m05, native/device4m36. No open review
+threads across current PRs at the latest audit. Full phase stack remains incomplete.
