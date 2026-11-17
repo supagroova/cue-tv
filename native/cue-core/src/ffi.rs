@@ -68,6 +68,7 @@ pub extern "C" fn cue_core_create() -> u64 {
     create(None)
 }
 struct Persistence {
+    account: Option<String>,
     directory: std::path::PathBuf,
     key: [u8; 32],
 }
@@ -79,6 +80,43 @@ pub unsafe extern "C" fn cue_core_create_persistent(
     path_length: usize,
     key: *const u8,
     key_length: usize,
+) -> u64 {
+    unsafe { persistent(path, path_length, key, key_length, None) }
+}
+/// Restore an identity selected by protected app storage. All inputs are copied.
+/// # Safety
+/// Non-null inputs must be readable for their supplied lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_restore_account(
+    path: *const u8,
+    path_length: usize,
+    key: *const u8,
+    key_length: usize,
+    user: *const u8,
+    user_length: usize,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if user.is_null() || user_length == 0 || user_length > 512 {
+            return 0;
+        }
+        let Ok(user) =
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(user, user_length) })
+        else {
+            return 0;
+        };
+        if user.chars().any(char::is_control) {
+            return 0;
+        }
+        unsafe { persistent(path, path_length, key, key_length, Some(user.to_owned())) }
+    }))
+    .unwrap_or(0)
+}
+unsafe fn persistent(
+    path: *const u8,
+    path_length: usize,
+    key: *const u8,
+    key_length: usize,
+    account: Option<String>,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         if path.is_null()
@@ -107,7 +145,11 @@ pub unsafe extern "C" fn cue_core_create_persistent(
         else {
             return 0;
         };
-        create(Some(Persistence { directory, key }))
+        create(Some(Persistence {
+            directory,
+            key,
+            account,
+        }))
     }))
     .unwrap_or(0)
 }
@@ -150,6 +192,9 @@ async fn own(
     mut inbox: mpsc::Receiver<Command>,
     persistence: Option<Persistence>,
 ) {
+    let expected_user = persistence
+        .as_ref()
+        .and_then(|config| config.account.clone());
     let environment = match persistence {
         Some(config) => Environment::persistent(&config.directory, &config.key),
         None => Environment::new(),
@@ -162,9 +207,14 @@ async fn own(
             return;
         }
     };
-    let setup = AssertUnwindSafe(CoreSession::guest(env.clone()))
-        .catch_unwind()
-        .await;
+    let setup = AssertUnwindSafe(async {
+        match expected_user {
+            Some(user) => CoreSession::restore_account(env.clone(), &user).await,
+            None => CoreSession::guest(env.clone()).await,
+        }
+    })
+    .catch_unwind()
+    .await;
     let mut session = match setup {
         Ok(Ok(session)) => session,
         _ => {

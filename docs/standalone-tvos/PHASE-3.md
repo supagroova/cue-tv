@@ -567,3 +567,9 @@ This does not authenticate against Stremio, validate token freshness, restore al
 Startup now restores library/recent-library, streams, server URLs, notifications, search history and dismissed events into Ctx. Every bucket must match the profile UID, including guest `None`; absent buckets are initialized for that identity. Recent library data merges by Core modification-time semantics. Restore itself does not rewrite stored data.
 
 Tests verify newer recent progress wins, search history survives, original storage stays unchanged, and each of the seven bucket keys accepts matching identity but rejects a foreign one. Full native suite passes (`d350efe5a02945c79eb89a7c4e86c3aa`); expanded per-bucket matrix passes (`a208ea7c582549658a0ba51dad47ed8e`); Swift simulator suite passes (`9f23bb2e588c4d64a752b8026249826e`). Remote-config/analytics state and separate calendar models are not restored here. Account login/sign-out and library UI/sync remain unfinished.
+
+### C account restoration boundary
+
+`cue_core_restore_account` copies and validates the expected identity alongside the encrypted-store path/key, then selects identity-checked account restoration. Guest creation remains separate. Identity mismatch reports the fixed startup failure and releases the storage lock after stop/release; a subsequent correct identity can reopen the same store. Caller identity buffers may be changed immediately after admission. Snapshots do not disclose credentials.
+
+The full locked native Core suite passes (`b3713a7616ab43fe82c0ffa16aba2aac`). Initial fixture failures exposed an undeclared temporary-directory dependency and a Core environment future constructed outside its task-local scope; both were corrected without adding dependencies or weakening assertions. Swift account startup, active-account selection, authentication and sign-out remain outstanding. This API restores stored state; it does not validate token freshness with the remote service.
