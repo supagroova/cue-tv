@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 action=${1:-build}
-case "$action" in build|test|ui-test|lab-test|long-test) ;; *) echo "usage: apple.sh build|test|ui-test|lab-test|long-test" >&2; exit 2;; esac
+case "$action" in build|test|ui-test|lab-test|ci-test|long-test) ;; *) echo "usage: apple.sh build|test|ui-test|lab-test|ci-test|long-test" >&2; exit 2;; esac
 command -v xcodegen >/dev/null || { echo 'Install XcodeGen before generating the project.' >&2; exit 2; }
 command -v xcodebuild >/dev/null || { echo 'Select a supported Xcode installation first.' >&2; exit 2; }
 if [[ "$action" != build && -z "${DESTINATION:-}" ]]; then
@@ -26,5 +26,9 @@ else
   [[ "$action" == ui-test ]] && target=SittingRoomTVUITests
   [[ "$action" == lab-test ]] && target=SittingRoomTVUITests/PlaybackLabTests
   [[ "$action" == long-test ]] && target=SittingRoomTVUITests/LongPlaybackTests
-  xcodebuild "${args[@]}" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= AppIdentifierPrefix=CueTVSimulator. -destination "$DESTINATION" -only-testing:"$target" test
+  selectors=(-only-testing:"$target")
+  if [[ "$action" == ci-test ]]; then
+    selectors=(-only-testing:SittingRoomTVTests -only-testing:SittingRoomTVUITests/PlaybackLabTests)
+  fi
+  xcodebuild "${args[@]}" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= AppIdentifierPrefix=CueTVSimulator. -destination "$DESTINATION" "${selectors[@]}" test
 fi

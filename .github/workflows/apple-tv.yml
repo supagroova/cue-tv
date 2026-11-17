@@ -18,74 +18,61 @@ concurrency:
   group: apple-tv-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_BUILD_JOBS: 4
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.agent-work/native-target
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
 jobs:
-  build-and-test:
+  native-device:
+    name: Native tests and tvOS device build
     runs-on: macos-26
-    timeout-minutes: 30
-    env:
-      CARGO_BUILD_JOBS: 4
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-      CARGO_TARGET_DIR: ${{ github.workspace }}/.agent-work/native-target
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           submodules: recursive
-      - name: Restore native and Swift package build caches
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: ./.github/actions/setup-apple
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            .agent-work/native-target
-            .agent-work/DerivedData/SourcePackages
-          key: apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}
-          restore-keys: |
-            apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-
-            apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
-      - name: Install project generator and report toolchain
-        run: |
-          set -euo pipefail
-          mkdir -p .agent-work/toolchain/xcodegen-2.46.0
-          curl --fail --location --retry 3 https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip --output .agent-work/xcodegen-2.46.0.zip
-          echo '4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  .agent-work/xcodegen-2.46.0.zip' | shasum -a 256 --check
-          unzip -q -o .agent-work/xcodegen-2.46.0.zip -d .agent-work/toolchain/xcodegen-2.46.0
-          echo "$GITHUB_WORKSPACE/.agent-work/toolchain/xcodegen-2.46.0/xcodegen/bin" >> "$GITHUB_PATH"
-          .agent-work/toolchain/xcodegen-2.46.0/xcodegen/bin/xcodegen --version
-          xcodebuild -version
-          xcodebuild -showsdks
-      - name: Install pinned native toolchain
-        run: rustup toolchain install 1.100.0 --profile minimal --target aarch64-apple-tvos,aarch64-apple-tvos-sim
-      - name: Test and cross-compile Stremio Core environment
+          cache-role: native-device
+      - name: Test native Core, peer transfer and range adapter
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .agent-work
           cargo +1.100.0 test --locked --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
-          PLATFORM_NAME=appletvos bash scripts/native/build-core.sh 2>&1 | tee .agent-work/core-device-build.log
-          PLATFORM_NAME=appletvsimulator bash scripts/native/build-core.sh 2>&1 | tee .agent-work/core-simulator-build.log
-      - name: Test native peer transfer and range adapter
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .agent-work
           cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
-          cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
-      - name: Install optional media generator
-        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
-        run: brew install ffmpeg
-      - name: Generate sustained playback fixture
-        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
-        run: python3 scripts/fixtures/generate-long.py
-      - name: Build unsigned Apple TV app
+      - name: Build unsigned Apple TV app and native device libraries
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .agent-work
           make apple-build 2>&1 | tee .agent-work/apple-build.log
+      - name: Upload native and device results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: apple-tv-native-device-results
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            .agent-work/core-test.log
+            .agent-work/native-test.log
+            .agent-work/apple-build.log
+
+  simulator-tests:
+    name: Apple TV simulator tests
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          submodules: recursive
       - name: Select available Apple TV simulator
         shell: bash
         run: |
@@ -109,16 +96,26 @@ jobs:
               env.write(f"SIMULATOR_UDID={device['udid']}\n")
           PY
           xcrun simctl list devices available
-      - name: Boot simulator
-        run: |
-          xcrun simctl boot "$SIMULATOR_UDID"
-          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
-      - name: Run Apple TV unit tests
+      - name: Start simulator boot while tools and caches load
+        run: xcrun simctl boot "$SIMULATOR_UDID"
+      - uses: ./.github/actions/setup-apple
+        with:
+          cache-role: simulator-tests
+      - name: Install optional media generator
+        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
+        run: brew install ffmpeg
+      - name: Generate sustained playback fixture
+        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
+        run: python3 scripts/fixtures/generate-long.py
+      - name: Build fixture seeder
+        shell: bash
+        run: cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
+      - name: Wait for simulator readiness
         shell: bash
         run: |
           set -euo pipefail
-          make apple-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-test.log
-      - name: Run standalone Playback Lab UI test
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b 2>&1 | tee .agent-work/simulator-boot.log
+      - name: Run unit and short playback tests in one build
         shell: bash
         run: |
           set -euo pipefail
@@ -130,7 +127,7 @@ jobs:
             sleep 1
           done
           grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
-          make apple-lab-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-lab-test.log
+          make apple-ci-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-ci-test.log
       - name: Verify ten minutes of direct torrent playback
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         shell: bash
@@ -145,24 +142,32 @@ jobs:
           done
           grep -q 'Fixture peer ready' .agent-work/long-seeder.log
           make apple-long-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-long-test.log
-      - name: Upload build logs and test results
+      - name: Upload simulator results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: apple-tv-results
+          name: apple-tv-simulator-results
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
           path: |
+            .agent-work/apple-ci-test.log
+            .agent-work/simulator-boot.log
+            .agent-work/fixture-seeder.log
             .agent-work/apple-long-test.log
             .agent-work/long-seeder.log
             .agent-work/long-playback/manifest.json
-            .agent-work/core-test.log
-            .agent-work/core-device-build.log
-            .agent-work/core-simulator-build.log
-            .agent-work/native-test.log
-            .agent-work/fixture-seeder.log
-            .agent-work/apple-build.log
-            .agent-work/apple-test.log
-            .agent-work/apple-lab-test.log
             .agent-work/DerivedData/Logs/Test/*.xcresult
+
+  # Preserve the existing required check while both independent lanes run in parallel.
+  build-and-test:
+    if: always()
+    needs: [native-device, simulator-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every Apple TV lane to pass
+        env:
+          NATIVE_RESULT: ${{ needs.native-device.result }}
+          SIMULATOR_RESULT: ${{ needs.simulator-tests.result }}
+        run: test "$NATIVE_RESULT" = success && test "$SIMULATOR_RESULT" = success
