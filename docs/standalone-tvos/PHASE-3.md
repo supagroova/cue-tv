@@ -595,3 +595,27 @@ Unit fixtures replace only the HTTP response boundary under cfg(test), with no f
 The authentication fixture now uses encrypted storage, stops/releases the first environment, and restores the authenticated identity in a fresh environment. It verifies plaintext credentials are absent from ciphertext. Native logout resets browsing models/generations, invokes Core logout, and rejects logout during an in-flight login. The test verifies persisted profile auth is removed, seven persisted buckets have no account UID, the old account cannot restore, and explicit guest restoration succeeds.
 
 This exposed a pinned Core omission: streaming_server_urls retained the account UID after logout (`1059b985c98247349ed664bf39f0dedd`), causing our strict restore to reject mixed identity. The wrapper resets that bucket and invokes Core's existing persistence event, without modifying the dependency. Full native suite passes (`ce668a21cdbb40e19f72617ad01ca3e7`). This is fresh-session evidence in one test process, not an OS-process relaunch. Login cancellation, late account effects, protected active-account removal and C/Swift/UI sign-out remain unverified or unimplemented.
+
+### Login storage admission boundary
+
+Guest startup and account restoration now reject login admission. Only new_account, which requires an empty store before schema migration, enables login; sign-out disables it for that session. Failed authentication may retry within the fresh account session. This replaces the earlier caller-only convention and prevents credentials from being admitted into normal guest sessions. Existing success/failure fixtures now explicitly create account sessions.
+
+The guest regression reproduced admission before the guard (`14561fe045dc44f98675ed252e07b45b`). Full native suite passes (`9813c8d76cd84f809440af5929493846`), including rejection by guest, restored and signed-out sessions and rejection of populated storage as a new account. Swift still needs to allocate the opaque dedicated namespace and manage its protected active-account record.
+
+### C login/account startup boundary
+
+The bridge exposes create_account for an empty dedicated encrypted store, a copy-only credential entry with independent UTF-8 email/password limits, and JSON logout dispatch. Explicit startup variants keep guest, fresh account and restored identity distinct. Login admission is asynchronous and does not mean successful authentication. Credentials never enter JSON snapshots.
+
+Bridge tests verify guest login rejection, snapshot redaction, fresh-store startup, logout dispatch, acknowledged release and rejection of the used store. Full native suite passes (`760e88ad7fa947e1b0639ee40960da88`). The existing full-capacity handle-table test initially collided with the new concurrent tests (`d26ebbace59e43c893ec08866ca103cd`); tests sharing that process-global table now take an exclusive test lock, retaining all capacity assertions. Successful account login through C and the Swift/UI path remain to be verified.
+
+### Swift account commands
+
+NativeCoreService now selects an explicit guest/new-account/restored-account startup mode. Fresh accounts require persistence; Swift rejects login on other modes and copies credentials into the dedicated C entry. CoreService exposes login/logout admission, with authentication completion still observed separately. The existing restoration test retains identity-mismatch behavior.
+
+The real simulator bridge verifies fresh startup, malformed-credential rejection, logout admission, failure to restart a used store as fresh, and guest login rejection. Full Swift suite passes (`65879f77640a48899d234e75e5b009cd`); missing Swift API failure retained (`f38bb9ee2c744126905e60d170796040`). These tests do not authenticate a real account or prove the successful C/Swift login response path. Protected active selection, account coordination and user-facing login remain outstanding.
+
+### Protected active-account record
+
+CoreAccountSelection stores a versioned opaque namespace UUID and expected provider user ID in nonsynchronizing, AfterFirstUnlockThisDeviceOnly Keychain storage. It stores no password or auth token. Missing selection returns none; malformed/unknown-version or invalid identity records fail explicitly. A namespace-matched clear operation prevents a late sign-out from deleting a newer selection. Production coordination must use its shared actor and save only a verified native identity.
+
+Real simulator Keychain tests verify recreation, replacement, stale-sign-out protection, deletion, invalid records and accessibility/synchronization attributes. Full Swift suite passes (`6e3751db928b4a81a4ce2991938951a2`). Missing-type reproduction is retained (`aa677c94b53c476ca5756299cbf39d28`). The record is not yet wired into startup/login; account-directory deletion and successful C/Swift authentication still remain.

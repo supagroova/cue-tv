@@ -1,5 +1,7 @@
 use cue_core::ffi::*;
 use std::time::{Duration, Instant};
+// These tests exercise one process-global handle table, including its full capacity.
+static BRIDGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn state(handle: u64) -> serde_json::Value {
     let mut bytes = vec![0u8; 4096];
     let len = unsafe { cue_core_snapshot(handle, bytes.as_mut_ptr(), bytes.len()) };
@@ -15,6 +17,7 @@ fn until(mut condition: impl FnMut() -> bool) {
 }
 #[test]
 fn native_boundary_owns_commands_snapshots_and_shutdown() {
+    let _exclusive = BRIDGE.lock().unwrap();
     assert_eq!(cue_core_abi_version(), 1);
     let handle = cue_core_create();
     assert_ne!(handle, 0);
@@ -160,5 +163,73 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     cue_core_stop(restored);
     until(|| cue_core_stop_status(restored) == 1);
     assert_eq!(cue_core_release(restored), 1);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn guest_login_is_rejected_without_publishing_credentials() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    assert_ne!(handle, 0);
+    until(|| state(handle)["status"] == "ready");
+    let email = b"fixture@example.test";
+    let password = b"synthetic-password";
+    assert_eq!(
+        unsafe {
+            cue_core_login(
+                handle,
+                email.as_ptr(),
+                email.len(),
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        0
+    );
+    until(|| state(handle)["error"] == "account_login_unavailable");
+    let snapshot = state(handle).to_string();
+    assert!(!snapshot.contains("synthetic-password"));
+    assert!(!snapshot.contains("fixture@example.test"));
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+}
+
+#[test]
+fn new_account_requires_empty_storage_and_owns_shutdown() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "cue-account-ffi-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.to_str().unwrap().as_bytes();
+    let key = [57; 32];
+    for expected in ["ready", "stopped"] {
+        let handle =
+            unsafe { cue_core_create_account(path.as_ptr(), path.len(), key.as_ptr(), key.len()) };
+        assert_ne!(handle, 0);
+        until(|| state(handle)["status"] != "starting");
+        assert_eq!(state(handle)["status"], expected);
+        if expected == "ready" {
+            let revision = state(handle)["model"]["revision"].as_u64().unwrap();
+            let command = br#"{"version":1,"action":"logout"}"#;
+            assert_eq!(
+                unsafe { cue_core_dispatch(handle, command.as_ptr(), command.len()) },
+                0
+            );
+            until(|| state(handle)["model"]["revision"].as_u64().unwrap() > revision);
+            assert_eq!(state(handle)["model"]["authenticated"], false);
+        } else {
+            assert_eq!(state(handle)["error"], "core_start_failed");
+        }
+        cue_core_stop(handle);
+        until(|| cue_core_stop_status(handle) == 1);
+        assert_eq!(cue_core_release(handle), 1);
+    }
     std::fs::remove_dir_all(directory).unwrap();
 }

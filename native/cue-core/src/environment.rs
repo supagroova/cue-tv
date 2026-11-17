@@ -100,6 +100,12 @@ impl Environment {
         }, &runtime);
         Ok(env)
     }
+    pub(crate) fn storage_is_empty(&self) -> Result<bool, EnvError> {
+        self.storage
+            .lock()
+            .map(|values| values.is_empty())
+            .map_err(|_| EnvError::StorageUnavailable)
+    }
     pub async fn scope<T>(self: &Arc<Self>, future: impl Future<Output = T>) -> T {
         CONTEXT.scope(self.clone(), future).await
     }

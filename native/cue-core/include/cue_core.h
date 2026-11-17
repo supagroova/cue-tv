@@ -12,6 +12,13 @@ uint64_t cue_core_create(void);
 // supplies a credential-store key. Startup/lock errors appear in the snapshot.
 // Stop acknowledgement includes storage-lock release.
 uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length);
+// Same directory/key contract; requires an empty dedicated account store.
+// Guest and restored sessions do not admit login. Nonempty storage fails startup.
+uint64_t cue_core_create_account(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length);
+// Copies UTF-8 credentials, email 1..512 bytes, password 1..4096 bytes.
+// No control characters in email, no NUL in password. Never log these inputs.
+// Same admission result codes as dispatch; watch model.authenticated/model.error.
+int32_t cue_core_login(uint64_t handle, const uint8_t *email, size_t email_length, const uint8_t *password, size_t password_length);
 // Restore an existing account from the same encrypted directory/key contract.
 // Expected user ID is copied UTF-8, 1..512 bytes, no control characters.
 // It must come from protected app identity storage, not an arbitrary source URL.
@@ -26,6 +33,7 @@ uint64_t cue_core_restore_account(const uint8_t *path, size_t path_length, const
 // Title details from an index in the displayed content window: {"version":1,"action":"load_details","index":N,"revision":N}.
 // Episode/video window: {"version":1,"action":"details_videos","offset":N,"revision":N}.
 // Load sources for a displayed video index (null for a movie without videos): {"version":1,"action":"load_sources","index":N,"revision":N}.
+// Sign out: {"version":1,"action":"logout"}; wait for state/effects before retiring storage.
 // Source window: {"version":1,"action":"source_window","offset":N,"revision":N}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
 int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
