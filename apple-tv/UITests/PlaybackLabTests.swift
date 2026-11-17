@@ -2,6 +2,36 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testVLCPauseSeekAndResume() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
+        app.launchEnvironment["CUE_VLC_LAB"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["Play MKV with VLC"].waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(app.buttons["Pause"].hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["VLC paused"].waitForExistence(timeout: 5))
+        let clock = app.staticTexts["vlc-time"]
+        let pausedAt = try XCTUnwrap(Int(clock.label))
+        let stable = NSPredicate { _, _ in abs((Int(clock.label) ?? -9999) - pausedAt) > 100 }
+        let moved = XCTNSPredicateExpectation(predicate: stable, object: clock)
+        moved.isInverted = true
+        wait(for: [moved], timeout: 0.5)
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(app.buttons["Seek to 8 seconds"].hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCUIRemote.shared.press(.up)
+        XCTAssertTrue(app.buttons["Resume"].hasFocus)
+        XCUIRemote.shared.press(.select)
+        let sought = NSPredicate { _, _ in (Int(clock.label) ?? 0) >= 8500 }
+        expectation(for: sought, evaluatedWith: clock)
+        waitForExpectations(timeout: 5)
+    }
+
+    @MainActor
     func testHEVCWithAlternateAudioAndSubtitles() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
