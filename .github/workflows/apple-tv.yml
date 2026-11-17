@@ -30,7 +30,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.agent-work/native-target
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
           submodules: recursive
@@ -48,8 +48,13 @@ jobs:
             apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
       - name: Install project generator and report toolchain
         run: |
-          brew install xcodegen
-          xcodegen --version
+          set -euo pipefail
+          mkdir -p .agent-work/toolchain/xcodegen-2.46.0
+          curl --fail --location --retry 3 https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip --output .agent-work/xcodegen-2.46.0.zip
+          echo '4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  .agent-work/xcodegen-2.46.0.zip' | shasum -a 256 --check
+          unzip -q -o .agent-work/xcodegen-2.46.0.zip -d .agent-work/toolchain/xcodegen-2.46.0
+          echo "$GITHUB_WORKSPACE/.agent-work/toolchain/xcodegen-2.46.0/xcodegen/bin" >> "$GITHUB_PATH"
+          .agent-work/toolchain/xcodegen-2.46.0/xcodegen/bin/xcodegen --version
           xcodebuild -version
           xcodebuild -showsdks
       - name: Install pinned native toolchain
@@ -142,7 +147,7 @@ jobs:
           make apple-long-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-long-test.log
       - name: Upload build logs and test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: apple-tv-results
           include-hidden-files: true
