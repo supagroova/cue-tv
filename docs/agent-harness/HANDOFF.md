@@ -646,3 +646,16 @@ implementation restored; all native library unit tests pass
 b1d70673335a4e788f51a9d78c800be6. Full native integration/device checks await transfer
 into root after its ten-cycle run. Network scheduler, journal restore and routing
 all account writes through this seam remain required.
+
+
+### Phase 5 — journal foundation integrated after relaunch qualification
+
+Preserved the ten-cycle results in84446df, then cherry-picked isolated journal work
+as02766e5 and1ac0bb6. The sole handoff append conflict was resolved preserving both
+the measured relaunch section and journal notes. Full native suite passes
+58de8cd7718f452fae856284af5237a3; unsigned tvOS build passes
+d1d6265ed50b45c090aac9fd89be08bd on the integrated tree. Journal/atomic writer remain
+unwired to account-session mutations and uploads; their passing tests do not establish
+account sync. Next implement restore and admission routing, conflict merge and network
+revision acknowledgments/backoff. No additional simulator qualification rerun is
+claimed for the dormant journal module. Root unrelated dirty documents remain intact.
