@@ -28,3 +28,5 @@ Branch `codex/apple-ci-speed` is based on `614b74d`. The workflow now runs nativ
 
 
 CI follow-up: warm role-cache run `44113416860` passed all checks in 9m02s queue-inclusive, with the simulator lane taking 8m52s. An ordering-only experiment now defers simulator boot until after cache/tool setup; local 12-test harness and actionlint pass, remote timing remains to be measured. See [Apple CI measurements](APPLE-CI.md).
+
+CI artifact-cache follow-up: exact native-content simulator artifacts avoid repeating Cargo builds on matching inputs while preserving every test and device build. Local 15-test harness, workflow lint and shell syntax pass; remote cold/hit measurements remain required. See APPLE-CI.md for scope and invalidation rules.

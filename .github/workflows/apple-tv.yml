@@ -99,6 +99,22 @@ jobs:
       - uses: ./.github/actions/setup-apple
         with:
           cache-role: simulator-tests
+      - name: Fingerprint simulator native artifact inputs
+        id: native-key
+        run: echo "key=$(python3 scripts/native/artifact-cache.py key)" >> "$GITHUB_OUTPUT"
+      - name: Restore exact simulator native artifacts
+        id: native-artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .agent-work/native-artifacts
+          key: simulator-native-v1-${{ runner.arch }}-${{ steps.native-key.outputs.key }}
+      - name: Verify and install cached native artifacts
+        if: steps.native-artifacts.outputs.cache-hit == 'true'
+        env:
+          NATIVE_KEY: ${{ steps.native-key.outputs.key }}
+        run: |
+          python3 scripts/native/artifact-cache.py restore "$NATIVE_KEY"
+          echo "CUE_NATIVE_CACHE_KEY=$NATIVE_KEY" >> "$GITHUB_ENV"
       - name: Start simulator boot while fixture seeder builds
         run: xcrun simctl boot "$SIMULATOR_UDID"
       - name: Install optional media generator
@@ -108,6 +124,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         run: python3 scripts/fixtures/generate-long.py
       - name: Build fixture seeder
+        if: steps.native-artifacts.outputs.cache-hit != 'true'
         shell: bash
         run: cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
       - name: Wait for simulator readiness
@@ -128,6 +145,11 @@ jobs:
           done
           grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
           make apple-ci-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-ci-test.log
+      - name: Stage verified simulator native artifacts
+        if: steps.native-artifacts.outputs.cache-hit != 'true'
+        env:
+          NATIVE_KEY: ${{ steps.native-key.outputs.key }}
+        run: python3 scripts/native/artifact-cache.py save "$NATIVE_KEY"
       - name: Verify ten minutes of direct torrent playback
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         shell: bash
