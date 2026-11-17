@@ -82,3 +82,8 @@ The verified final-artifact warm run still restored a 1.43 GB combined dependenc
 The native v2 cache has legacy restore prefixes for migration; the smaller Swift cache uses separate role keys so parallel jobs do not race to save a shared key. New keys have a one-time population cost. No test selectors or assertions change, and sustained playback remains manual-only. The artifact fingerprint remains deliberately conservative: narrowing workflow/project inputs without first moving all compiler-affecting configuration into a separately validated contract risks stale binaries.
 
 Local validation: all 15 portable tests pass, including existing artifact hit/miss/invalidation/corruption coverage; actionlint validates the workflow/composite. No local simulator was used. Remote miss and same-scope exact-hit verification remain necessary before claiming a measured speed gain for this routing change.
+
+
+## Remove duplicate cross-platform builds
+
+The separate Build workflow previously ran twice for each feature-branch update with an open PR. For phase4 head `325a664`, push run `44146493809` used 4m33s and PR run `44146511806` used 5m54s; both executed the same Ubuntu build job. Restricting its push trigger to main preserves PR merge-context checks, merged-main checks and manual dispatch under the same job name while removing the redundant feature-push run. This reduces Ubuntu runner usage; it does not resolve macOS hosted-runner capacity shortages. The Companion Python peer setup and Android test/report steps remain unchanged.
