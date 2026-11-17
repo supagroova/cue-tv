@@ -70,3 +70,6 @@ apple-tv/TVConfig.plist
 
 # Also exclude symlinked local dependency folders
 **/node_modules
+
+# Local Apple CI build output
+.agent-work/
