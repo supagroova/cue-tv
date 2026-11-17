@@ -221,9 +221,7 @@ Evidence (task `phase-4-ui`):
   the run). `make check` passes all 15 portable harness tests.
 
 Limits: hash-dependent subtitle providers are not supported without known media
-hints. Live permitted add-on and physical-device validation remain open. A direct
-in-flight Core selection-change test is still needed beyond current wrong-ID
-and generation checks. Phase 4 and the overall implementation stack remain draft.
+hints. Live permitted add-on and physical-device validation remain open. Phase 4 and the overall implementation stack remain draft.
 
 
 #### Renderer resize and manual fixture follow-up
@@ -250,3 +248,12 @@ and 12 existing UI tests after the renderer fix. Only manual-fixture metadata
 logging changed during that run, not application or test code. Python fixture
 scripts compile and portable checks pass. Final unsigned device build
 `05b9a8e5cce64336a300dd9c17c80cb7` passes.
+
+
+In-flight selection proof: the real HTTP fixture holds a subtitle response while
+Core reselects the same title/type/video. The response is rejected solely because
+its generation is obsolete (`9162d60dda834ae8adb3080b0893ed22`). Temporarily
+removing that generation comparison makes the new assertion fail
+(`ba27db07e3b845dfb0079d4dd01d1ef5`). The exact production source was restored;
+all six subtitle tests then pass (`d6e249583e6b4464a5faebd87a41f426`). This closes
+the earlier in-flight selection-change coverage gap without changing behavior.

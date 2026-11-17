@@ -226,3 +226,128 @@ async fn discovery_deadline_bounds_fanout_and_counts_unfinished_providers() {
     let _ = server.await;
     env.shutdown().await;
 }
+
+#[tokio::test]
+async fn session_rejects_subtitles_from_a_previous_selection_of_the_same_video() {
+    use cue_core::{
+        environment::{Environment, NativeEnv},
+        session::CoreSession,
+    };
+    use stremio_core::{
+        constants::{PROFILE_STORAGE_KEY, SCHEMA_VERSION, SCHEMA_VERSION_STORAGE_KEY},
+        runtime::Env,
+        types::profile::Profile,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (received, waiting) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let mut received = Some(received);
+        let mut released = Some(released);
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let count = socket.read(&mut bytes).await.unwrap();
+            let path = std::str::from_utf8(&bytes[..count])
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap();
+            let body = match path {
+                "/catalog/movie/owned.json" => {
+                    r#"{"metas":[{"id":"owned","type":"movie","name":"Owned"}]}"#
+                }
+                "/meta/movie/owned.json" => {
+                    r#"{"meta":{"id":"owned","type":"movie","name":"Owned","videos":[]}}"#
+                }
+                "/stream/movie/owned.json" => {
+                    r#"{"streams":[{"url":"https://fixture.test/video.mp4"}]}"#
+                }
+                "/subtitles/movie/owned.json" => {
+                    received.take().unwrap().send(()).unwrap();
+                    released.take().unwrap().await.unwrap();
+                    r#"{"subtitles":[{"id":"old-generation","lang":"eng","url":"https://fixture.test/old.vtt"}]}"#
+                }
+                other => panic!("Unexpected fixture resource: {other}"),
+            };
+            let _ = socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                )
+                .await;
+        }
+    });
+    let environment = Environment::new().unwrap();
+    let mut profile = Profile::default();
+    profile.addons = vec![serde_json::from_value(serde_json::json!({
+        "transportUrl":format!("http://{address}/manifest.json"),
+        "manifest":{"id":"owned","name":"Owned","version":"1.0.0","description":"Owned fixture",
+            "resources":["catalog","meta","stream","subtitles"],"types":["movie"],"catalogs":[{"id":"owned","type":"movie"}]}
+    })).unwrap()];
+    environment
+        .scope(async {
+            NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
+                .await
+                .unwrap();
+            NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+                .await
+                .unwrap();
+        })
+        .await;
+    let mut session = CoreSession::guest(environment).await.unwrap();
+    session
+        .load_catalog(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .load_sources(None, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    let (result, ()) = tokio::join!(
+        session.discover_subtitles(
+            "owned",
+            "owned",
+            "movie",
+            tokio_util::sync::CancellationToken::new()
+        ),
+        async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+                .await
+                .unwrap()
+                .unwrap();
+            // Same title/type/video: only the generation distinguishes this selection.
+            session
+                .load_sources(None, session.snapshot().revision)
+                .await
+                .unwrap();
+            release.send(()).unwrap();
+        }
+    );
+    assert!(matches!(result, Err("stale_subtitle_identity")));
+    session.stop().await;
+    server.abort();
+    let _ = server.await;
+}
