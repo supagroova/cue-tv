@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Network
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
@@ -33,4 +34,56 @@ import Testing
     try await service.stop()
 }
 
+@Test func swiftCoreLoadsManifestOverSimulatorHTTP() async throws {
+    let fixture = try await CoreHTTPFixture.start()
+    defer { fixture.listener.cancel() }
+    let service = NativeCoreService()
+    try await service.start()
+    try await service.loadAddon("http://127.0.0.1:\(fixture.port)/private-config/manifest.json")
+    var state = try await service.snapshot()
+    for _ in 0..<200 {
+        if state.model?.addon?.status == .ready { break }
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await service.snapshot()
+    }
+    #expect(state.model?.addon?.status == .ready)
+    #expect(state.model?.addon?.id == "org.cue.simulator")
+    #expect(state.model?.addon?.name == "Simulator fixture")
+    try await service.stop()
+}
+
+}
+
+
+nonisolated private final class CoreHTTPFixture: Sendable {
+    let listener: NWListener
+    let port: UInt16
+    init(listener: NWListener, port: UInt16) { self.listener = listener; self.port = port }
+    static func start() async throws -> CoreHTTPFixture {
+        let listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: .global())
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, _, _ in
+                let body = #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":[],"types":[],"catalogs":[]}"#
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    listener.stateUpdateHandler = nil
+                    continuation.resume(returning: listener.port!.rawValue)
+                case .failed(let error):
+                    listener.stateUpdateHandler = nil
+                    listener.cancel()
+                    continuation.resume(throwing: error)
+                default: break
+                }
+            }
+            listener.start(queue: .global())
+        }
+        return CoreHTTPFixture(listener: listener, port: port)
+    }
 }

@@ -230,3 +230,28 @@ async fn stale_manifest_failure_cannot_replace_newer_selection() {
     first.await.unwrap(); second.await.unwrap();
     session.stop().await;
 }
+
+#[tokio::test]
+async fn failed_addon_can_be_retried_at_the_same_url() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/manifest.json", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        for success in [false, true] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0;4096];
+            socket.read(&mut request).await.unwrap();
+            let body = if success { r#"{"id":"retry","name":"Recovered","version":"1.0.0","description":"Fixture","resources":[],"types":[],"catalogs":[]}"# } else { "invalid JSON" };
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        }
+    });
+    let mut session = CoreSession::guest(Environment::new().unwrap()).await.unwrap();
+    session.load_addon(&url).await.unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    assert_eq!(state.addon.unwrap().status, "failed");
+    session.load_addon(&url).await.unwrap();
+    let state = tokio::time::timeout(Duration::from_secs(2), session.settled()).await.unwrap().unwrap();
+    assert_eq!(state.addon.unwrap().name.as_deref(), Some("Recovered"));
+    server.await.unwrap();
+    session.stop().await;
+}

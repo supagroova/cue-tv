@@ -197,3 +197,18 @@ and all 23 simulator unit tests pass; Swift also verifies local-file add-on URLs
 are rejected. The successful network round trip is currently host-native evidence,
 not yet simulator/device network qualification. Add-on installation, catalogue,
 metadata, search, sources, same-URL retry policy and account operations remain.
+
+## Simulator network path and retry
+
+A test-owned Network.framework listener now serves a manifest inside the tvOS
+simulator. The Swift service loads it through the C boundary and real Core HTTP
+transport, then observes the expected parsed ID/name. The two focused service
+tests pass in 0.133 seconds, including the network round trip; no external add-on
+or companion server is required by these tests.
+
+A host regression reproduced Core retaining a failed manifest when the user
+reselected its URL. Explicit loading now unloads a failed preview before retrying;
+it does not discard a successful preview or duplicate the same in-flight load.
+The test first returns invalid JSON, then a valid manifest from the same URL and
+observes recovery. All 17 native tests pass. Further rapid A→B→A selection stress,
+durable guest state and account/browsing operations remain required.

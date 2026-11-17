@@ -11,7 +11,7 @@ use stremio_core::{
         ctx::Ctx,
     },
     runtime::{
-        Effect, EffectFuture, Env, EnvError, Update, UpdateWithCtx,
+        Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
         msg::{Action, ActionCtx, ActionLoad, Event, Msg},
     },
     types::{notifications::NotificationsBucket, profile::Profile, server_urls::ServerUrlsBucket},
@@ -260,7 +260,13 @@ async fn run(
                 }
                 continue;
             }
-            let effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message).join(
+            // Core caches a failed descriptor by URL. Explicit reselection permits
+            // retry without unloading an in-flight request or a successful preview.
+            let retry = if matches!(&message, Msg::Action(Action::Load(ActionLoad::AddonDetails(_))))
+                && addon.remote_addon.as_ref().is_some_and(|value| value.content.is_err()) {
+                <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &Msg::Action(Action::Unload), &ctx)
+            } else { Effects::none().unchanged() };
+            let effects = retry.join(<Ctx as Update<NativeEnv>>::update(&mut ctx, &message)).join(
                 <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &message, &ctx),
             );
             if effects.has_changed {
