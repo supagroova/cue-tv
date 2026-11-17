@@ -14,13 +14,20 @@ use std::{
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Default)]
+struct Handoff {
+    ticket: u64,
+    reply: Option<Vec<u8>>,
+}
 struct Entry {
+    handoff: Mutex<Handoff>,
     commands: mpsc::Sender<Command>,
     snapshot: Mutex<Vec<u8>>,
     stop: CancellationToken,
     stopped: AtomicBool,
 }
 static ENTRIES: OnceLock<Mutex<BTreeMap<u64, Arc<Entry>>>> = OnceLock::new();
+static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
 static NEXT: AtomicU64 = AtomicU64::new(1);
 fn entries() -> &'static Mutex<BTreeMap<u64, Arc<Entry>>> {
     ENTRIES.get_or_init(Default::default)
@@ -123,6 +130,7 @@ fn create(persistence: Option<Persistence>) -> u64 {
         let (commands, inbox) = mpsc::channel(64);
         let entry = Arc::new(Entry {
             commands,
+            handoff: Mutex::new(Handoff::default()),
             snapshot: Mutex::new(Vec::new()),
             stop: CancellationToken::new(),
             stopped: AtomicBool::new(false),
@@ -180,6 +188,19 @@ async fn own(
                     tokio::select! { biased;
                         _ = entry.stop.cancelled() => break,
                         result = async { match command {
+                            Command::PrepareTorrent { ticket, index, revision } => {
+                                let result = session.prepare_torrent(index, revision).await;
+                                let value = match result {
+                                    Ok(request) => json!({"version":1,"session":handle,"ticket":ticket,"request":request,"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
@@ -220,11 +241,20 @@ async fn own(
     drop(session);
     drop(env);
     entry.stop.cancel();
+    if let Ok(mut handoff) = entry.handoff.lock() {
+        *handoff = Handoff::default();
+    }
     entry.stopped.store(true, Ordering::Release);
 }
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    #[serde(skip)]
+    PrepareTorrent {
+        ticket: u64,
+        index: usize,
+        revision: u64,
+    },
     SetLanguage {
         version: u32,
         language: String,
@@ -276,6 +306,7 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
+            Self::PrepareTorrent { .. } => false,
             Self::InstallAddon { version, .. }
             | Self::DetailsVideos { version, .. }
             | Self::LoadSources { version, .. }
@@ -355,6 +386,9 @@ pub extern "C" fn cue_core_stop(handle: u64) -> i32 {
             return -1;
         };
         entry.stop.cancel();
+        if let Ok(mut handoff) = entry.handoff.lock() {
+            *handoff = Handoff::default();
+        }
         i32::from(entry.stopped.load(Ordering::Acquire))
     }))
     .unwrap_or(-1)
@@ -378,4 +412,100 @@ pub extern "C" fn cue_core_release(handle: u64) -> i32 {
     }
     all.remove(&handle);
     1
+}
+
+/// Starts one bounded handoff per session. Zero means unavailable or busy.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_torrent(handle: u64, index: usize, revision: u64) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        handoff.reply = None;
+        if entry
+            .commands
+            .try_send(Command::PrepareTorrent {
+                ticket,
+                index,
+                revision,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+/// # Safety
+/// Non-null output must be writable for capacity bytes. A successful full copy consumes
+/// the reply. Length queries/undersized buffers retain it. Zero is pending; -1 invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_take_torrent(
+    handle: u64,
+    ticket: u64,
+    output: *mut u8,
+    capacity: usize,
+) -> isize {
+    catch_unwind(AssertUnwindSafe(|| {
+        if output.is_null() && capacity != 0 {
+            return -1;
+        }
+        let Some(entry) = lookup(handle) else {
+            return -1;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return -1;
+        };
+        if ticket == 0
+            || handoff.ticket != ticket
+            || entry.stop.is_cancelled()
+            || entry.stopped.load(Ordering::Acquire)
+        {
+            return -1;
+        }
+        let Some(bytes) = &handoff.reply else {
+            return 0;
+        };
+        let length = bytes.len();
+        if capacity >= length && !output.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), output, length);
+            }
+            *handoff = Handoff::default();
+        }
+        length as isize
+    }))
+    .unwrap_or(-1)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_discard_torrent(handle: u64, ticket: u64) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(entry) = lookup(handle) else {
+            return -1;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return -1;
+        };
+        if ticket == 0 || handoff.ticket != ticket {
+            return -1;
+        }
+        *handoff = Handoff::default();
+        1
+    }))
+    .unwrap_or(-1)
 }

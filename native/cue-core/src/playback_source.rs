@@ -3,6 +3,7 @@
 use reqwest::Url;
 use stremio_core::types::resource::{Stream, StreamSource};
 
+#[derive(serde::Serialize)]
 pub struct TorrentRequest {
     pub magnet: String,
     pub file_index: Option<u16>,

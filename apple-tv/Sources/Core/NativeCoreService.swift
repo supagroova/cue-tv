@@ -42,6 +42,20 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     let error: String?
 }
 
+nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    let magnet: String
+    let fileIndex: UInt16?
+    let fileMustInclude: [String]
+}
+
+nonisolated private struct CoreTorrentReply: Decodable, Sendable {
+    let version: Int
+    let session: UInt64
+    let ticket: UInt64
+    let request: CoreTorrentRequest?
+    let error: String?
+}
+
 nonisolated protocol CoreService: Sendable {
     func start() async throws
     func snapshot() async throws -> CoreSnapshot
@@ -55,12 +69,14 @@ nonisolated protocol CoreService: Sendable {
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
+    func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest
     func stop() async throws
 }
 
 /// Serializes native admission off the UI actor. No account data crosses this initial service.
 actor NativeCoreService: CoreService {
-    enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout }
+    enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
+        case requestFailed(String) }
     private let persistence: CorePersistenceConfiguration?
     init(persistence: CorePersistenceConfiguration? = nil) { self.persistence = persistence }
     nonisolated static func guest() async throws -> NativeCoreService {
@@ -145,6 +161,35 @@ actor NativeCoreService: CoreService {
     func showCatalogItems(offset: Int, expectedRevision: UInt64) throws {
         guard offset >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "catalog_items", "offset": offset, "revision": expectedRevision])
+    }
+
+    func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest {
+        try Task.checkCancellation()
+        guard index >= 0 else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let ticket = cue_core_request_torrent(handle, index, expectedRevision)
+        guard ticket != 0 else { throw Failure.busy }
+        defer { _ = cue_core_discard_torrent(handle, ticket) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        var bytes = [UInt8](repeating: 0, count: 256 * 1024)
+        while true {
+            try Task.checkCancellation()
+            guard self.handle == handle, retirement == nil else { throw Failure.stopped }
+            let length = bytes.withUnsafeMutableBufferPointer { cue_core_take_torrent(handle, ticket, $0.baseAddress, $0.count) }
+            guard length >= 0 else { throw Failure.unavailable }
+            if length > 0 {
+                guard length <= bytes.count else { throw Failure.malformedSnapshot }
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                let reply = try decoder.decode(CoreTorrentReply.self, from: Data(bytes.prefix(length)))
+                guard reply.version == 1, reply.session == handle, reply.ticket == ticket else { throw Failure.malformedSnapshot }
+                if let error = reply.error { throw Failure.requestFailed(error) }
+                guard let request = reply.request else { throw Failure.malformedSnapshot }
+                return request
+            }
+            guard ContinuousClock.now < deadline else { throw Failure.requestTimeout }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func dispatch(_ command: [String: Any]) throws {

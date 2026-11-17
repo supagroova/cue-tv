@@ -20,6 +20,32 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     assert_ne!(handle, 0);
     assert_eq!(cue_core_release(handle), 0);
     until(|| state(handle)["status"] == "ready");
+    let revision = state(handle)["model"]["revision"].as_u64().unwrap();
+    let ticket = cue_core_request_torrent(handle, 0, revision);
+    assert_ne!(ticket, 0);
+    assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
+    until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
+    let mut short = [77u8; 1];
+    assert!(unsafe { cue_core_take_torrent(handle, ticket, short.as_mut_ptr(), 1) } > 1);
+    assert_eq!(short, [77]);
+    let mut result = vec![0; 4096];
+    let length =
+        unsafe { cue_core_take_torrent(handle, ticket, result.as_mut_ptr(), result.len()) };
+    let result: serde_json::Value = serde_json::from_slice(&result[..length as usize]).unwrap();
+    assert_eq!(result["ticket"], ticket);
+    assert_eq!(result["error"], "invalid_source");
+    assert_eq!(
+        unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) },
+        -1
+    );
+    let cancelled = cue_core_request_torrent(handle, 0, revision);
+    assert_ne!(cancelled, ticket);
+    assert_eq!(cue_core_discard_torrent(handle, cancelled), 1);
+    assert_eq!(
+        unsafe { cue_core_take_torrent(handle, cancelled, std::ptr::null_mut(), 0) },
+        -1
+    );
+
     assert_eq!(
         unsafe { cue_core_dispatch(handle, std::ptr::null(), 2) },
         -2
@@ -50,7 +76,18 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     let mut tiny = [91u8; 2];
     assert!(unsafe { cue_core_snapshot(handle, tiny.as_mut_ptr(), tiny.len()) } > 2);
     assert_eq!(tiny, [91, 91]);
+    let retired_ticket = cue_core_request_torrent(
+        handle,
+        0,
+        state(handle)["model"]["revision"].as_u64().unwrap(),
+    );
+    assert_ne!(retired_ticket, 0);
     assert_eq!(cue_core_stop(handle), 0);
+    assert_eq!(
+        unsafe { cue_core_take_torrent(handle, retired_ticket, std::ptr::null_mut(), 0) },
+        -1
+    );
+    assert_eq!(cue_core_request_torrent(handle, 0, 0), 0);
     until(|| cue_core_stop_status(handle) == 1);
     assert_eq!(state(handle)["status"], "stopped");
     assert_eq!(cue_core_stop(handle), 1);

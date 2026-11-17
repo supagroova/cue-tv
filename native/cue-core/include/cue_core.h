@@ -28,6 +28,13 @@ int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
 // Writes only when capacity is sufficient. NULL with capacity 0 queries size.
 // Caller owns the buffer; pointers must refer to valid memory for the supplied size.
 intptr_t cue_core_snapshot(uint64_t handle, uint8_t *output, size_t capacity);
+// One private handoff slot per session; 0 is busy/unavailable. Tickets are never reused.
+uint64_t cue_core_request_torrent(uint64_t handle, size_t index, uint64_t revision);
+// JSON v1 reply includes session, ticket, request or fixed error; at most 256 KiB.
+// Returns 0 pending, -1 invalid, or byte count. Only a full non-null copy consumes it.
+// NULL/0 queries length. Undersized buffers stay untouched. Stop discards the reply.
+intptr_t cue_core_take_torrent(uint64_t handle, uint64_t ticket, uint8_t *output, size_t capacity);
+int32_t cue_core_discard_torrent(uint64_t handle, uint64_t ticket);
 // Stop is idempotent. Status: 0 joining, 1 fully stopped, -1 invalid handle.
 int32_t cue_core_stop(uint64_t handle);
 int32_t cue_core_stop_status(uint64_t handle);

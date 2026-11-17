@@ -115,6 +115,13 @@ import Security
     }
     #expect(state.model?.sources?.items.count == 6)
     #expect(state.model?.sources?.items.last?.name == "Source 29")
+    let handoff = try await service.prepareTorrent(index: 29, expectedRevision: try #require(state.model?.revision))
+    #expect(handoff.magnet.contains("0123456789abcdef0123456789abcdef01234567"))
+    #expect(handoff.fileIndex == nil)
+    #expect(handoff.fileMustInclude.isEmpty)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {
+        try await service.prepareTorrent(index: 29, expectedRevision: 0)
+    }
     for offset in [24, 27, 30] {
         try await service.showCatalogItems(offset: offset, expectedRevision: try #require(state.model?.revision))
         for _ in 0..<200 {
