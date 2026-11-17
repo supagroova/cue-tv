@@ -10,3 +10,11 @@ All new standalone dependencies must use exact versions or full Git revisions. K
 The inherited Python bridge and JavaScript/Android applications are separate from the standalone runtime. Their existing dependency policies are not claimed to be fully pinned by this work: Python includes floating cryptography/tzdata declarations and JavaScript uses version ranges with checked-in npm lockfiles.
 
 The manual MPV comparison probe separately pins MPVKit to `d9194243bdc68b87d8989376ab52aee7da6c8e0b`. It is not linked into Cue TV. Its pinned package declares exact binary artifact checksums; see probes/mpv-player/README.md.
+
+## Stremio Core environment
+
+- Core: shallow Git submodule `native/stremio-core` at `2c89236b47dfcd5e844c1dfae5737164cb616fbf`, consumed as a path dependency by `native/cue-core`. The parent Git link pins the source; `scripts/native/build-core.sh` verifies it.
+- Core's local-search dependency: Cargo.lock revision `74fefe1da2fa17d2b4ef7e3e629da00f3946ee72`.
+- Direct crate versions and the complete transitive graph are pinned in `native/cue-core/Cargo.toml` and Cargo.lock. Builds/tests use `--locked`.
+- MIT notices: `native/licenses/Stremio-Core-MIT.txt` and `native/licenses/Stremio-Local-Search-MIT.txt`.
+- CI cache action: `actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830` (resolved v4 commit).

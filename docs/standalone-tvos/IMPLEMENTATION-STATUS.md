@@ -7,7 +7,8 @@ The user selected simulator-first development and deferred physical Apple TV pai
 | 0 | PR #4: generated media, decoder lab, unit and remote-driven simulator tests | Physical signing/install/launch qualification |
 | 1 | PR #5: embedded native engine, real peer transfer, magnet metadata, file selection, isolated HTTP/UDP/DHT fixtures, versioned C ABI, range adapter, cancellation regression, ten-minute simulator playback starting before completion | HTTPS/public swarm, stress/error cases, physical independence |
 | 2 | PR #6: native cache-root admission/write guards and acknowledged cleanup; selected pinned VLCKit after MPVKit comparison; MP4/MKV, HEVC, track and subtitle probes; serialized coordinator and startup/seek/stall deadlines; manual distant torrent seek and simulator resource samples | Remaining media/error paths, realistic resource budgets, production adapter wiring, physical decode/resource qualification |
-| 3–5 | Not implemented | Core, standalone journey, state/sync/recovery |
+| 3 | Pinned native Core environment; isolated memory storage, bounded HTTP, cancellation, FIFO effects and injectable clock; host tests and tvOS cross-compilation | Core model/action actor, Swift/FFI service, persistent guest state, protected credentials and account lifecycle |
+| 4–5 | Not implemented | Standalone journey, state/sync/recovery |
 | 6–7 | Not implemented | Qualification and reproducible personal release/handover |
 
 PR #2 was merged by the user into the planning branch. Its merge commit is included downstream, and Phase 0 now targets that planning branch. No implementation PR has been merged by the agent.
