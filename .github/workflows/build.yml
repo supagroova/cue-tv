@@ -1,4 +1,4 @@
-# Builds both TV apps and checks the bridge on every push and pull request, so a change that
+# Builds both TV apps and checks the bridge on main pushes and pull requests, so a change that
 # breaks the build is seen straight away. The APKs it makes are test builds, signed with the
 # runner's own throwaway key: they install on a TV that has no couch-tv yet, but cannot update one
 # installed from the Releases page (Android refuses an update signed with a different key).
@@ -9,6 +9,7 @@ name: Build
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
