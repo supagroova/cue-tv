@@ -273,6 +273,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 XCUIRemote.shared.press(.down)
             }
             XCTAssertTrue(app.buttons["Close"].hasFocus)
+            let lastVisibleSeconds = try XCTUnwrap(Int(clock.label.dropLast()))
             XCUIRemote.shared.press(captions ? .menu : .select)
             XCTAssertTrue(source.waitForExistence(timeout: 5))
             expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
@@ -296,6 +297,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 let savedLabel = resumeButton.label
                 let savedSeconds = try XCTUnwrap(Int(savedLabel.replacingOccurrences(of: "Resume from ", with: "").dropLast()))
                 XCTAssertGreaterThanOrEqual(savedSeconds, 8)
+                XCTAssertLessThanOrEqual(abs(savedSeconds - lastVisibleSeconds), 15, "Restored position meets the resume tolerance")
                 XCTAssertFalse(app.otherElements["vlc-video-surface"].exists, "Resume choice precedes decoder startup")
                 XCUIRemote.shared.press(.menu)
                 XCTAssertTrue(source.waitForExistence(timeout: 5))
@@ -310,6 +312,10 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 XCTAssertTrue(clock.waitForExistence(timeout: 25))
                 expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= savedSeconds - 1 }, evaluatedWith: nil)
                 waitForExpectations(timeout: 5)
+                if relaunch {
+                    let resumedSeconds = try XCTUnwrap(Int(clock.label.dropLast()))
+                    print("CUE_RESUME_MEASUREMENT last=\(lastVisibleSeconds) restored=\(savedSeconds) resumed=\(resumedSeconds)")
+                }
                 XCTAssertFalse(app.staticTexts["source-accounting-error"].exists)
                 XCUIRemote.shared.press(.menu)
                 XCTAssertTrue(source.waitForExistence(timeout: 5))

@@ -432,3 +432,25 @@ encrypted persistence it passes 70e56573aad544ea852d45120297b5e2, including expl
 cleanup. Unsigned tvOS build passes 537200b5b3cb43a6bfc21da0e397506e. Routine CI still
 excludes these long journeys. This proves one simulator process-relaunch cycle,
 not ten cycles, cache purge, Home/sleep or physical-device qualification.
+
+
+### Phase 5 — ten simulator relaunch measurements completed
+
+Opt-in command `python3 scripts/fixtures/check-resume-cycles.py
+'platform=tvOS Simulator,id=2058C8D1-FCB2-4384-ACD2-B86EF556BE60'` passes ten independent
+real-peer journeys with encrypted UUID-scoped state. Each uses graceful Close before
+process termination/relaunch, then Resume/cancel/Restart and cleanup. All ten saved
+and restored the displayed9s position (0s loss at whole-second display precision).
+Decoder resume observations were8s or9s, within1s of restored state and the15s bound.
+Canonical sanitized results: [resume measurements](evidence/resume-cycles-2026-11-18.json).
+Exact local task evidence18e4aa17200547fba0f811c571756cec; raw per-cycle logs under
+.agent-work/resume-cycles/4d6831bc4f544eb4b9488e4a5c088beb. Before/after content digests
+match; isolated journal development did not alter the tested app between cycles.
+
+Scope: Xcode26.6/tvOS26.5 simulator, owned36s H.264/AAC peer fixture, media cache may
+be warm, separate encrypted fixture namespace each cycle. This is not a cold-cache
+qualification, abrupt-kill checkpoint measurement, Home/sleep test or physicalA2737
+proof. Account journal/network conflict/retry and failed-save UI gates remain open.
+Routine CI does not invoke this runner. PR13 head64c4e1f is green; PR14 cache warm-hit
+validation remains underway. Next bring the isolated journal commits ee21c5d and
+0cb8c21 into the phase5 branch and validate full native/device builds.

@@ -1,0 +1,107 @@
+{
+  "scope": "simulator, graceful Close followed by process termination; independent encrypted fixture namespaces",
+  "required_cycles": 10,
+  "cycles": [
+    {
+      "cycle": 1,
+      "exit_code": 0,
+      "log": "cycle-01.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 2,
+      "exit_code": 0,
+      "log": "cycle-02.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 3,
+      "exit_code": 0,
+      "log": "cycle-03.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 8,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 4,
+      "exit_code": 0,
+      "log": "cycle-04.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 5,
+      "exit_code": 0,
+      "log": "cycle-05.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 6,
+      "exit_code": 0,
+      "log": "cycle-06.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 8,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 7,
+      "exit_code": 0,
+      "log": "cycle-07.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 8,
+      "exit_code": 0,
+      "log": "cycle-08.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 9,
+      "exit_code": 0,
+      "log": "cycle-09.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 9,
+      "restore_error_seconds": 0,
+      "passed": true
+    },
+    {
+      "cycle": 10,
+      "exit_code": 0,
+      "log": "cycle-10.log",
+      "last_seconds": 9,
+      "restored_seconds": 9,
+      "resumed_seconds": 8,
+      "restore_error_seconds": 0,
+      "passed": true
+    }
+  ],
+  "complete": true
+}
