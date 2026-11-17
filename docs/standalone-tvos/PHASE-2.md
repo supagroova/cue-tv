@@ -32,7 +32,7 @@ The simulator UI test `PlaybackLabTests/testMKVPlaybackWithVLCCandidate` passed:
 
 A follow-up simulator test connects VLC to the real embedded torrent engine and controlled local seeder through the loopback HTTP adapter, waits for playback progress, then stops through the remote. All four short Playback Lab UI tests passed in 31.103 seconds, including the existing AVPlayer regressions. Transfer cancellation is requested on Stop, disappearance and backgrounding; the production coordinator still requires lifecycle qualification. The torrent fixture is MP4 and is small, so this does not establish streamed MKV or playback before complete download in VLC.
 
-This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
+This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, background teardown and the MPV comparison remain unverified. VLCKit is selected for continued implementation after the MPV comparison in decisions/002-player-selection.md; release qualification remains outstanding.
 
 The generated `hevc-tracks.mkv` fixture adds 1080p HEVC Main 8-bit video, two distinct AAC LC audio tones, and SRT/WebVTT subtitle tracks. Its manifest records exact stream metadata, source/output hashes and the macOS VideoToolbox encoder used by `scripts/fixtures/generate-player-matrix.py`. The installed FFmpeg 7.1 libx265 encoder crashed on a minimal input; VideoToolbox generation succeeded. This is a fixture-generation issue, not evidence about the tvOS decoder.
 
@@ -52,4 +52,4 @@ The VLC lab now exposes pause/resume and a fixed eight-second seek for qualifica
 
 ## Remaining work
 
-Select and integrate a player supporting the required MKV/MP4 codec, audio and subtitle matrix; implement the typed playback coordinator and cache lifetime; measure CPU/memory and set justified limits; classify failures with bounded timeouts; qualify simulator and subsequently physical-device behavior. The isolated VLCKit compile probe is candidate evidence only, not production player selection.
+Complete the selected player integration supporting the required MKV/MP4 codec, audio and subtitle matrix; implement the typed playback coordinator and cache lifetime; measure CPU/memory and set justified limits; classify failures with bounded timeouts; qualify simulator and subsequently physical-device behavior. The isolated VLCKit compile probe is candidate evidence only, not production player selection.
