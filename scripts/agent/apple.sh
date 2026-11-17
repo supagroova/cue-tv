@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 action=${1:-build}
-case "$action" in build|test|ui-test) ;; *) echo "usage: apple.sh build|test|ui-test" >&2; exit 2;; esac
+case "$action" in build|test|ui-test|lab-test) ;; *) echo "usage: apple.sh build|test|ui-test|lab-test" >&2; exit 2;; esac
 command -v xcodegen >/dev/null || { echo 'Install XcodeGen before generating the project.' >&2; exit 2; }
 command -v xcodebuild >/dev/null || { echo 'Select a supported Xcode installation first.' >&2; exit 2; }
 if [[ "$action" != build && -z "${DESTINATION:-}" ]]; then
@@ -22,5 +22,6 @@ if [[ "$action" == build ]]; then
 else
   target=SittingRoomTVTests
   [[ "$action" == ui-test ]] && target=SittingRoomTVUITests
+  [[ "$action" == lab-test ]] && target=SittingRoomTVUITests/PlaybackLabTests
   xcodebuild "${args[@]}" -destination "$DESTINATION" -only-testing:"$target" test
 fi

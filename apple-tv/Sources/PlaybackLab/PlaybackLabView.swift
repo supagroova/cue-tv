@@ -26,6 +26,9 @@ struct PlaybackLabView: View {
             Text("H.264 / AAC · 1080p SDR · generated test media").font(.caption)
         }
         .padding(60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.black.ignoresSafeArea())
+        .tint(.blue)
         .task {
             do { fixtures = try PlaybackFixture.load(from: .main) }
             catch { self.error = "The bundled fixture manifest could not be loaded." }

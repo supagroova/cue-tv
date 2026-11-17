@@ -1,4 +1,4 @@
-.PHONY: help doctor check staged-check harness-test apple-build apple-test apple-ui-test hooks
+.PHONY: help doctor check staged-check harness-test apple-build apple-test apple-ui-test apple-lab-test hooks
 help:
 	@echo "doctor | check (portable harness) | staged-check | harness-test | apple-build | apple-test DESTINATION=... | apple-ui-test DESTINATION=... | hooks"
 doctor:
@@ -16,5 +16,7 @@ apple-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh test
 apple-ui-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh ui-test
+apple-lab-test:
+	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh lab-test
 hooks:
 	bash scripts/agent/install-hooks.sh

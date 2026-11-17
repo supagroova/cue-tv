@@ -66,6 +66,11 @@ jobs:
         run: |
           set -euo pipefail
           make apple-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-test.log
+      - name: Run standalone Playback Lab UI test
+        shell: bash
+        run: |
+          set -euo pipefail
+          make apple-lab-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-lab-test.log
       - name: Upload build logs and test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -77,4 +82,5 @@ jobs:
           path: |
             .agent-work/apple-build.log
             .agent-work/apple-test.log
+            .agent-work/apple-lab-test.log
             .agent-work/DerivedData/Logs/Test/*.xcresult

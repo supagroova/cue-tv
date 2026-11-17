@@ -10,11 +10,11 @@ Three 12-second 1080p SDR H.264/AAC clips are generated from solid colors and si
 
 ## Verification
 
-The new fixture tests initially failed because PlaybackFixture did not exist. After implementation, seven Swift Testing tests pass on tvOS 26.5 simulator, including the existing five tests. Path traversal in fixture filenames is rejected and every bundled manifest entry resolves to a resource. Existing harness tests remain required in CI. Generated project files and local signing settings are not committed.
+The new fixture tests initially failed because PlaybackFixture did not exist. After implementation, seven Swift Testing tests pass on tvOS 26.5 simulator, including the existing five tests. Path traversal in fixture filenames is rejected and every bundled manifest entry resolves to a resource. The simulator UI test also passes (one test): it launches the lab without pairing, starts a fixture using the remote and stops it. CI runs that test alongside the unit suite. Existing harness tests remain required in CI. Generated project files and local signing settings are not committed.
 
 ## Physical gate
 
-The available Mac has Xcode 26.6 (17F113), and signing identities exist. Device listing showed no paired Apple TV. The user has been asked to pair the target in Xcode. Its actual OS/build, team/profile provisioning, signed installation, detached launch and storage remain unverified. Do not mark G0 complete or this stack release-ready from CI alone.
+The available Mac has Xcode 26.6 (17F113), and signing identities exist. Device listing showed no paired Apple TV. The user explicitly chose simulator-first implementation and deferred physical pairing. Simulator checks may advance the development PR stack; physical tests remain release qualifications. Its actual OS/build, team/profile provisioning, signed installation, detached launch and storage remain unverified. Do not mark G0 complete or this stack release-ready from CI alone.
 
 ## Next
 
