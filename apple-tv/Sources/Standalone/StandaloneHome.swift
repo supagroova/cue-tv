@@ -242,6 +242,10 @@ struct StandaloneHome: View {
                 onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },
                 onSuccess: { showSignIn = false; screen = .catalogs; restart = UUID() })
         }
-        .fullScreenCover(item: $selectedSource, onDismiss: { focusedRow = rememberedRows[.sources] }) { SourcePlaybackView(request: $0.request, discoverSubtitles: model.subtitleDiscovery(for: $0.request)) }
+        .fullScreenCover(item: $selectedSource, onDismiss: { focusedRow = rememberedRows[.sources] }) { source in
+            SourcePlaybackView(request: source.request,
+                               acquireAccounting: { await model.accounting(for: source.request) },
+                               discoverSubtitles: model.subtitleDiscovery(for: source.request))
+        }
     }
 }

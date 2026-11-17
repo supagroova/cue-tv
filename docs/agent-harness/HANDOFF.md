@@ -489,3 +489,40 @@ after replacement had retired it (59be243520144343abfc540df451d765). start() now
 rejects closing owners before enqueueing. Full suite passes 73 tests in six suites
 c8f049839e1842218fdd050665460d0d; unsigned device build passes
 9c206c61e9f9496db1c0346e3a363e95. No device playback or production UI integration claim.
+
+
+### Phase 5 — player screen integration (18 November)
+
+StandaloneHome now supplies the parent-owned accounting session to SourcePlaybackView.
+Core Start/Pause completes before transfer/decoder startup. A saved position offers
+Resume/Start from beginning; Close at this choice retires without saving. VLC timing,
+duration, pause and reposition markers feed the generation-guarded accounting owner,
+which applies its five-second cadence. Close/Back/deactivation stop resources and
+await accounting Close; failed saves expose retry and remain parent-owned. Unexpected
+view disappearance also attempts retirement. The debug standalone HTTPS fixture has
+no Core selection and intentionally omits this provider.
+
+Opt-in peer journey initially failed the missing Resume/Restart and decoder-before-
+choice assertions (ce244638b26c479988a70d93eec26449). Integration passed
+c46370960afe4edf9e6ca120298285f3. Extended journey plays at least eight seconds,
+closes, opens and cancels Resume, reopens with the identical saved label, and resumes
+to within one second of the saved position within five seconds of decoder display.
+Its first run d33414e8bac0492a89fd256a347e905d passed resume assertions but sent Back
+before dismissal restored focus. Added the same source-focus wait used by the first
+Close; full journey passes 5457ab4885f34286b71c1dd558d91bce. Subtitle on/off/reselection
+journey passes 641a49e45f1346dea337611a2d9a40f3. These remain opt-in; routine CI still
+selects unit tests and PlaybackLabTests only. Full 73-test suite passes
+9e79f9cc2e4243508ce00fc40bf3562f; unsigned device build passes
+a7f4ca94d24f4a039407faa0935910ac.
+
+Remaining: exercise Restart, failed-save/disappearance UI, ten encrypted relaunch
+cycles, and account intent journal/conflict/retry/isolation. Native private replies
+share one ticket slot: assess long subtitle discovery competing with playback
+commands (busy is unadmitted; cancellation/timeouts are not rollback). Do not infer
+safe replay from stale tokens. No physical suspension/seek/playback qualification.
+
+CI-speed helper verified prior 7m43 run reused exact artifacts and skipped Cargo
+setup/seeder build. Core-only change in 07e7d20 invalidated the combined artifact cache,
+recompiling seeder (71s) and torrent (26s). Next potential optimization: split Core
+and torrent/seeder artifact caches with complete inputs. First measure Swift-only
+push reuse of existing bb38dc cache; no workflow change in this slice.

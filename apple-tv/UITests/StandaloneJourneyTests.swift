@@ -4,7 +4,7 @@ import CoreGraphics
 /// Opt-in: scripts/fixtures/serve-addon.py supplies real Stremio protocol resources.
 nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
-    @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true) }
+    @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true, resume: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
     @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws { try movieJourney(library: false) }
@@ -158,7 +158,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertEqual(search.value as? String, query)
     }
     @MainActor func testEpisodeWatchedControlChangesOnlySelectedEpisodeAndPreservesBackFocus() throws { try journey(play: false, watched: true) }
-    @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
+    @MainActor private func journey(play: Bool, resume: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -214,7 +214,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             XCUIRemote.shared.press(.select)
             let clock = app.staticTexts["source-playback-time"]
             XCTAssertTrue(clock.waitForExistence(timeout: 25))
-            expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= 3 }, evaluatedWith: nil)
+            expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= (resume ? 8 : 3) }, evaluatedWith: nil)
             waitForExpectations(timeout: 20)
             XCTAssertFalse(app.staticTexts["source-playback-error"].exists)
             XCTAssertEqual(clock.value as? String, "Duration: 36 seconds", "Duration must come from the selected decoded fixture")
@@ -267,6 +267,34 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
             waitForExpectations(timeout: 5)
             XCTAssertTrue(source.hasFocus, "Closing playback restores the chosen source")
+            if resume {
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(app.buttons["source-resume"].waitForExistence(timeout: 10))
+                XCTAssertTrue(app.buttons["source-restart"].exists)
+                let resumeButton = app.buttons["source-resume"]
+                let savedLabel = resumeButton.label
+                let savedSeconds = try XCTUnwrap(Int(savedLabel.replacingOccurrences(of: "Resume from ", with: "").dropLast()))
+                XCTAssertGreaterThanOrEqual(savedSeconds, 8)
+                XCTAssertFalse(app.otherElements["vlc-video-surface"].exists, "Resume choice precedes decoder startup")
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(source.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(resumeButton.waitForExistence(timeout: 10))
+                XCTAssertEqual(resumeButton.label, savedLabel, "Cancelling Resume must not overwrite the saved clock")
+                for _ in 0..<3 where !resumeButton.hasFocus { XCUIRemote.shared.press(.up) }
+                XCTAssertTrue(resumeButton.hasFocus)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(clock.waitForExistence(timeout: 25))
+                expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= savedSeconds - 1 }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertFalse(app.staticTexts["source-accounting-error"].exists)
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(source.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+            }
         }
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(episode.waitForExistence(timeout: 5))
