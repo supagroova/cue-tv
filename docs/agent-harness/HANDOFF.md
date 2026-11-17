@@ -528,3 +528,57 @@ and torrent/seeder artifact caches with complete inputs. First measure Swift-onl
 push reuse of existing bb38dc cache; no workflow change in this slice.
 
 CI component-cache follow-up: isolated `codex/apple-ci-component-cache` splits final Core artifacts from torrent/seeder artifacts, preserving full checks and independent source verification. All19 portable tests and workflow/shell lint pass; remote cold/full-hit/partial-hit validation remains required. See APPLE-CI.md.
+
+### Phase 5 — playback waits for unadmitted private tickets
+
+The shared reply slot was a confirmed integration problem: while owned subtitle
+HTTP was held, playback immediately failed busy. Extended the actual native HTTP
+fixture with two pending playback requests: cancel one while the slot is occupied,
+then release subtitle discovery and require the other to reach Core's expected
+stale_playback error for the already-closed token. Red
+96a4d5b81ad04c989ce41d1a8500bdad returned busy for both assertions.
+NativeCoreService.playback now waits in cancellable 20ms intervals for up to five
+seconds ONLY while its ticket is zero (nothing admitted). Each retry verifies the
+same live native handle and no retirement. Once admitted, existing receipt handling
+runs once; no replay follows cancellation, timeout or native errors. Other service
+operations retain their existing immediate-busy behavior. The admission wait and
+existing five-second reply wait are separate bounds.
+Full 73-test suite passes 7a53703eb6cc4e2899281c89cf7347fa; unsigned device build passes
+8dcf18302f29468e94c1b54ad193f25c. Ambiguous accepted operations still need reconciliation;
+this change only resolves contention before admission. Prior playback UI/relaunch,
+account journal and physical gates remain as recorded above.
+
+
+### Phase 5 — Restart decoder verification
+
+Extended the opt-in selected-episode journey after successful Resume: reopen the
+source, choose Start from beginning with the remote, wait for actual decoder time
+of at least one second and require it below five seconds (the saved position was
+at least eight). Close then restores source focus and Back restores episode/title
+focus. Full peer journey passes 36c273e643f84f639258832de78b9454. No production change
+or routine-CI expansion in this slice. This establishes Restart in the running app,
+not encrypted process relaunch or physical suspension. Next: a dedicated debug-only
+persistent fixture namespace and opt-in relaunch measurements, then account journal
+and ambiguous receipt reconciliation.
+
+
+### Phase 5 — encrypted process relaunch fixture
+
+Debug JourneyFixtureView accepts only a UUID in CUE_JOURNEY_STORAGE, using a dedicated
+Application Support/CueJourneyTests/<UUID> directory and CoreStorage's encrypted
+state/Keychain path. Normal guest/account directories are untouched. Without the
+variable the existing in-memory fixture remains unchanged. A cleanup-only launch
+with CUE_JOURNEY_CLEAR_STORAGE=1 removes that UUID's test storage and key before
+creating any Core owner; the UI test waits for its acknowledgment and terminates.
+Invalid UUIDs fail instead of falling back to another store.
+
+New opt-in testProgressSurvivesProcessRelaunch plays the peer fixture for at least
+eight seconds, closes durably, terminates the app, launches the same test namespace,
+navigates back through catalogue/title/episode/source, and requires Resume. It then
+runs cancellation/preserved-label, actual resume within one second of the saved
+clock, Restart and Back-focus assertions. The test failed at missing Resume/Restart
+against the original in-memory fixture (808eadbc37ac430ba433207eff9619dc). With
+encrypted persistence it passes 70e56573aad544ea852d45120297b5e2, including explicit
+cleanup. Unsigned tvOS build passes 537200b5b3cb43a6bfc21da0e397506e. Routine CI still
+excludes these long journeys. This proves one simulator process-relaunch cycle,
+not ten cycles, cache purge, Home/sleep or physical-device qualification.

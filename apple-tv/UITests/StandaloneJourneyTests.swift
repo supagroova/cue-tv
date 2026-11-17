@@ -5,6 +5,7 @@ import CoreGraphics
 nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true, resume: true) }
+    @MainActor func testProgressSurvivesProcessRelaunch() throws { try journey(play: true, resume: true, relaunch: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
     @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws { try movieJourney(library: false) }
@@ -158,9 +159,19 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertEqual(search.value as? String, query)
     }
     @MainActor func testEpisodeWatchedControlChangesOnlySelectedEpisodeAndPreservesBackFocus() throws { try journey(play: false, watched: true) }
-    @MainActor private func journey(play: Bool, resume: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
+    @MainActor private func journey(play: Bool, resume: Bool = false, relaunch: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        if relaunch { app.launchEnvironment["CUE_JOURNEY_STORAGE"] = UUID().uuidString }
+        defer {
+            if relaunch {
+                app.terminate()
+                app.launchEnvironment["CUE_JOURNEY_CLEAR_STORAGE"] = "1"
+                app.launch()
+                XCTAssertTrue(app.staticTexts["Journey storage cleared"].waitForExistence(timeout: 10))
+                app.terminate()
+            }
+        }
         app.launch()
         let catalog = app.buttons["Owned series · series"]
         XCTAssertTrue(catalog.waitForExistence(timeout: 20))
@@ -268,6 +279,16 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             waitForExpectations(timeout: 5)
             XCTAssertTrue(source.hasFocus, "Closing playback restores the chosen source")
             if resume {
+                if relaunch {
+                    app.terminate()
+                    app.launch()
+                    for (index, button) in [catalog, title, episode, source].enumerated() {
+                        XCTAssertTrue(button.waitForExistence(timeout: 20))
+                        for _ in 0..<20 where !button.hasFocus { XCUIRemote.shared.press(.down) }
+                        XCTAssertTrue(button.hasFocus)
+                        if index < 3 { XCUIRemote.shared.press(.select) }
+                    }
+                }
                 XCUIRemote.shared.press(.select)
                 XCTAssertTrue(app.buttons["source-resume"].waitForExistence(timeout: 10))
                 XCTAssertTrue(app.buttons["source-restart"].exists)
@@ -289,6 +310,21 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 XCTAssertTrue(clock.waitForExistence(timeout: 25))
                 expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= savedSeconds - 1 }, evaluatedWith: nil)
                 waitForExpectations(timeout: 5)
+                XCTAssertFalse(app.staticTexts["source-accounting-error"].exists)
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(source.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCUIRemote.shared.press(.select)
+                let restart = app.buttons["source-restart"]
+                XCTAssertTrue(restart.waitForExistence(timeout: 10))
+                for _ in 0..<3 where !restart.hasFocus { XCUIRemote.shared.press(.up) }
+                XCTAssertTrue(restart.hasFocus)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(clock.waitForExistence(timeout: 25))
+                expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= 1 }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertLessThan(try XCTUnwrap(Int(clock.label.dropLast())), 5, "Restart must decode from the beginning, not the saved position")
                 XCTAssertFalse(app.staticTexts["source-accounting-error"].exists)
                 XCUIRemote.shared.press(.menu)
                 XCTAssertTrue(source.waitForExistence(timeout: 5))

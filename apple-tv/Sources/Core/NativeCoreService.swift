@@ -341,7 +341,18 @@ actor NativeCoreService: CoreService {
         guard token > 0, time <= UInt64(Int64.max), duration <= UInt64(Int64.max),
               action == .seek || action == .played || (time == 0 && duration == 0) else { throw Failure.invalidRequest }
         guard let handle, retirement == nil else { throw Failure.stopped }
-        let ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        var ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        let admissionDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        // A zero ticket admits nothing. Subtitle discovery may own this slot;
+        // wait cancellably rather than treating contention as a failed save.
+        // Never replay after a nonzero ticket, including timeout/unknown outcome.
+        while ticket == 0 {
+            guard ContinuousClock.now < admissionDeadline else { throw Failure.busy }
+            try await Task.sleep(for: .milliseconds(20))
+            try Task.checkCancellation()
+            guard self.handle == handle, retirement == nil else { throw Failure.stopped }
+            ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        }
         let receipt: PlaybackReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
         guard receipt.token == token, receipt.action == action.rawValue,
               (receipt.progress != nil) == action.returnsProgress else { throw Failure.malformedSnapshot }

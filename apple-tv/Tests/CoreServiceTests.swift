@@ -220,9 +220,18 @@ import Security
     let reachedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
     while await fixture.subtitles.requests < 2, ContinuousClock.now < reachedDeadline { try await Task.sleep(for: .milliseconds(5)) }
     try #require(await fixture.subtitles.requests == 2)
+    // Playback must wait for an unadmitted ticket instead of failing a save just
+    // because subtitle HTTP currently owns the private reply slot.
+    let waitingPlayback = Task { try await service.playback(token: handoff.playbackToken, action: .pause) }
+    let cancelledPlayback = Task { try await service.playback(token: handoff.playbackToken, action: .pause) }
+    try await Task.sleep(for: .milliseconds(50))
+    cancelledPlayback.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelledPlayback.value }
     let cancelStarted = ContinuousClock.now
     stalled.cancel()
     await #expect(throws: CancellationError.self) { try await stalled.value }
+    // This token was closed above: after admission, preserve its native error.
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_playback")) { try await waitingPlayback.value }
     let closedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
     while !(await fixture.subtitles.closed), ContinuousClock.now < closedDeadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(await fixture.subtitles.closed)

@@ -410,3 +410,25 @@ cycles, and account intent journal/conflict/retry/isolation. Native private repl
 share one ticket slot: assess long subtitle discovery competing with playback
 commands (busy is unadmitted; cancellation/timeouts are not rollback). Do not infer
 safe replay from stale tokens. No physical suspension/seek/playback qualification.
+
+
+### Phase 5 — encrypted process relaunch fixture
+
+Debug JourneyFixtureView accepts only a UUID in CUE_JOURNEY_STORAGE, using a dedicated
+Application Support/CueJourneyTests/<UUID> directory and CoreStorage's encrypted
+state/Keychain path. Normal guest/account directories are untouched. Without the
+variable the existing in-memory fixture remains unchanged. A cleanup-only launch
+with CUE_JOURNEY_CLEAR_STORAGE=1 removes that UUID's test storage and key before
+creating any Core owner; the UI test waits for its acknowledgment and terminates.
+Invalid UUIDs fail instead of falling back to another store.
+
+New opt-in testProgressSurvivesProcessRelaunch plays the peer fixture for at least
+eight seconds, closes durably, terminates the app, launches the same test namespace,
+navigates back through catalogue/title/episode/source, and requires Resume. It then
+runs cancellation/preserved-label, actual resume within one second of the saved
+clock, Restart and Back-focus assertions. The test failed at missing Resume/Restart
+against the original in-memory fixture (808eadbc37ac430ba433207eff9619dc). With
+encrypted persistence it passes 70e56573aad544ea852d45120297b5e2, including explicit
+cleanup. Unsigned tvOS build passes 537200b5b3cb43a6bfc21da0e397506e. Routine CI still
+excludes these long journeys. This proves one simulator process-relaunch cycle,
+not ten cycles, cache purge, Home/sleep or physical-device qualification.
