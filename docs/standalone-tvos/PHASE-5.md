@@ -121,3 +121,24 @@ UI failed-save retry still need their own controlled tests.
 
 Final restored-source run: all 60 Swift tests pass
 (`e20236255b054007845c0b862068b558`). All 15 portable checks pass.
+
+## Native library browsing
+
+Snapshots now include a 24-item library window, offset and total. Only permanent,
+non-removed members with admissible identity appear. Ordering is deterministic by
+name, type and ID; names are bounded and control characters removed. When a library
+shrinks, both rendering and selection clamp to the same last valid window.
+
+CoreSession now supports revision-guarded page changes and library-title selection.
+Selection reuses the existing metadata loading/generation-retirement path without
+starting source discovery. Tests cover 50 members across three pages, removed/temp
+entries, invalid IDs, empty/shrinking windows, out-of-range indexes and stale
+revision rejection through the real session. Missing-module red:
+`a62a23ac39a84976946acfd5a2e6e0e5`; an intermediate fixture omitted required Core
+state fields (`5a6879a5d8584a589578d4820b56ff7b`) and was corrected rather than
+changing production decoding. Full native suite passes:
+`4cb6534b19ef4ab19804f8db1ea7d69d`.
+
+These browsing commands are not yet exposed through FFI/Swift or a library screen.
+The seeded session test proves selected identity without add-ons, not successful
+remote metadata retrieval; the next UI fixture must cover that complete route.

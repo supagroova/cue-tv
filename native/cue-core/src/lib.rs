@@ -20,3 +20,5 @@ mod restore;
 
 #[cfg(test)]
 mod auth_tests;
+
+pub mod library;

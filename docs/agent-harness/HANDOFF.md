@@ -76,3 +76,8 @@ sensitive mutation test. Restored source passes all 60 Swift tests
 next PR13 push; its previous run is terminal (nativepass, simulatorcapacitycancel).
 Next implementation: bounded library browsing, watched controls and Core Player
 checkpoints, while retaining the documented UI failure/disappearance test gaps.
+
+Native library browsing now has 24-item windows and revision-guarded selection;
+full Core suite passes (`4cb6534b19ef4ab19804f8db1ea7d69d`). Next: expose
+show_library/load_library_details through FFI and Swift, then My library UI with
+origin-aware Back focus and an owned add→browse→reopen→remove journey.

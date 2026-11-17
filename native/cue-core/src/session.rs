@@ -59,6 +59,7 @@ pub struct Snapshot {
     pub details: Option<crate::details::View>,
     pub sources: Option<crate::sources::View>,
     pub details_in_library: Option<bool>,
+    pub library: crate::library::View,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
@@ -85,7 +86,8 @@ enum Command {
     ),
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
-    Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Details(usize, u64, bool, oneshot::Sender<Result<(), &'static str>>),
+    LibraryWindow(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsSeason(Option<u32>, u64, oneshot::Sender<Result<(), &'static str>>),
     Sources(
@@ -174,6 +176,7 @@ impl CoreSession {
             &MetaDetails::default(),
             0,
             None,
+            0,
             0,
             0,
             0,
@@ -346,6 +349,28 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn show_library(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::LibraryWindow(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn load_library_details(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Details(index, expected_revision, true, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn load_details(
         &self,
         index: usize,
@@ -353,7 +378,7 @@ impl CoreSession {
     ) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
-            .try_send(Command::Details(index, expected_revision, reply))
+            .try_send(Command::Details(index, expected_revision, false, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -502,6 +527,7 @@ fn snapshot(
     selected_season: Option<u32>,
     source_offset: usize,
     catalog_choices_offset: usize,
+    library_offset: usize,
     catalog_item_offset: usize,
     revision: u64,
     pending_effects: usize,
@@ -510,6 +536,7 @@ fn snapshot(
 ) -> Snapshot {
     let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
+        library: crate::library::view(&ctx.library, library_offset),
         details_in_library: crate::details::selected_preview(details).map(|meta| {
             ctx.library
                 .items
@@ -582,6 +609,7 @@ async fn run(
     let mut selected_season = None;
     let mut source_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
+    let mut library_offset = 0usize;
     let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
     let mut revision = 0;
@@ -659,6 +687,7 @@ async fn run(
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
                 catalog_choices_offset = 0;
+                library_offset = 0;
                 catalog_item_offset = 0;
                 video_offset = 0;
                 selected_season = None;
@@ -816,6 +845,7 @@ async fn run(
                         selected_season,
                         source_offset,
                         catalog_choices_offset,
+                        library_offset,
                         catalog_item_offset,
                         revision,
                         pending,
@@ -825,6 +855,38 @@ async fn run(
                     let _ = reply.send(Ok(()));
                     continue;
                 }
+            }
+            Command::LibraryWindow(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_library"));
+                    continue;
+                }
+                let total = crate::library::view(&ctx.library, 0).total;
+                if offset != 0 && offset >= total {
+                    let _ = reply.send(Err("invalid_library_offset"));
+                    continue;
+                }
+                library_offset = offset;
+                error = None;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    &details,
+                    video_offset,
+                    selected_season,
+                    source_offset,
+                    catalog_choices_offset,
+                    library_offset,
+                    catalog_item_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
             }
             Command::CatalogChoices(offset, expected, reply) => {
                 if expected != revision {
@@ -852,6 +914,7 @@ async fn run(
                     selected_season,
                     source_offset,
                     catalog_choices_offset,
+                    library_offset,
                     catalog_item_offset,
                     revision,
                     pending,
@@ -965,6 +1028,7 @@ async fn run(
                     selected_season,
                     source_offset,
                     catalog_choices_offset,
+                    library_offset,
                     catalog_item_offset,
                     revision,
                     pending,
@@ -997,6 +1061,7 @@ async fn run(
                     selected_season,
                     source_offset,
                     catalog_choices_offset,
+                    library_offset,
                     catalog_item_offset,
                     revision,
                     pending,
@@ -1030,6 +1095,7 @@ async fn run(
                     selected_season,
                     source_offset,
                     catalog_choices_offset,
+                    library_offset,
                     catalog_item_offset,
                     revision,
                     pending,
@@ -1039,15 +1105,34 @@ async fn run(
                 let _ = reply.send(Ok(()));
                 continue;
             }
-            Command::Details(index, expected, reply) => {
+            Command::Details(index, expected, from_library, reply) => {
                 if expected != revision {
-                    let _ = reply.send(Err("stale_catalog"));
+                    let _ = reply.send(Err(if from_library {
+                        "stale_library"
+                    } else {
+                        "stale_catalog"
+                    }));
                     continue;
                 }
-                let item = crate::catalog::view(&catalog, catalog_item_offset)
-                    .and_then(|view| view.items.into_iter().nth(index));
-                let Some(item) = item else {
-                    let _ = reply.send(Err("invalid_catalog_item"));
+                let selected = if from_library {
+                    crate::library::selection(&ctx.library, library_offset, index)
+                } else {
+                    crate::catalog::view(&catalog, catalog_item_offset)
+                        .and_then(|view| view.items.into_iter().nth(index))
+                        .map(|item| DetailsSelected {
+                            meta_path: stremio_core::types::addon::ResourcePath::without_extra(
+                                "meta", &item.kind, &item.id,
+                            ),
+                            stream_path: None,
+                            guess_stream: false,
+                        })
+                };
+                let Some(selected) = selected else {
+                    let _ = reply.send(Err(if from_library {
+                        "invalid_library_item"
+                    } else {
+                        "invalid_catalog_item"
+                    }));
                     continue;
                 };
                 let Some(next) = details_generation.checked_add(1) else {
@@ -1066,13 +1151,6 @@ async fn run(
                 selected_season = None;
                 source_offset = 0;
                 error = None;
-                let selected = DetailsSelected {
-                    meta_path: stremio_core::types::addon::ResourcePath::without_extra(
-                        "meta", &item.kind, &item.id,
-                    ),
-                    stream_path: None,
-                    guess_stream: false,
-                };
                 (
                     Msg::Action(Action::Load(ActionLoad::MetaDetails(selected))),
                     Some(reply),
@@ -1224,6 +1302,7 @@ async fn run(
             selected_season,
             source_offset,
             catalog_choices_offset,
+            library_offset,
             catalog_item_offset,
             revision,
             pending,
@@ -1249,6 +1328,7 @@ async fn run(
         selected_season,
         source_offset,
         catalog_choices_offset,
+        library_offset,
         catalog_item_offset,
         revision,
         0,
