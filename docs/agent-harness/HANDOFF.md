@@ -275,3 +275,21 @@ inside the actor (its completion messages need the actor to drain). Integrate jo
 atomically before account release. Projection is not a durability receipt.
 PR13 at70e9972 all checks pass; simulator9m05, native/device4m36. No open review
 threads across current PRs at the latest audit. Full phase stack remains incomplete.
+
+### Phase 5 explicit checkpoint receipt
+
+Added `checkpoint.rs` atomic library serialization and session Checkpoint/CheckpointDone
+commands. Canonical memory is updated on admission so subsequent Core library writes
+snapshot current progress; the caller receives success only after queued encrypted
+storage succeeds. One pending checkpoint maximum; concurrent save/retire return busy,
+logout/login refuse while pending. Completion returns through the actor without
+blocking its command drain. No network upload is scheduled by the checkpoint.
+
+New `tests/checkpoint.rs` uses real Core models and a three-request owned HTTP fixture.
+Missing API red b7b51639ba9f4b1d8e57b0fd50c4034b; initial test fixture wrongly called
+source pagination and failed98ed74f64f644fe29051c8e83e7d7a67; corrected source load
+passes68a5430454f240a8bc5b4cb604fb26a1. Extended held-write/busy/logout/progress-order
+and encrypted failure/retry/reopen assertions pass in full native suite
+28ed3bb084e14f89a34da07521d59244. Device build70691f02e7d94a6388ebde052c2c6009 passes.
+Next: lifecycle barriers/coalescing, resume lookup and Swift callback receipt bridge;
+atomic account journal remains required. Retirement still does not auto-checkpoint.

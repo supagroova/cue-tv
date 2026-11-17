@@ -273,3 +273,19 @@ modification times are preserved. Projection itself does not mutate Core or ackn
 a save. Film/episode model tests, the full native suite and unsigned tvOS build pass.
 The session checkpoint queue, atomic library/journal write and Swift callbacks are
 still outstanding.
+
+## Native acknowledged checkpoints
+
+`CoreSession::checkpoint_playback` now captures one current-owner checkpoint, admits
+its Core library state in memory, and writes both library buckets atomically through
+the existing sequential writer. The receipt waits for that write. A concurrent save
+or retirement returns busy; account transition commands also wait for the pending
+checkpoint. This is a bounded explicit-save primitive, not the periodic coalescer.
+
+The real session/HTTP test holds the writer to prove no early acknowledgement, checks
+that later played progress does not change the captured receipt's stored position,
+then saves the newer position. It induces a disk failure, verifies the old stored
+position remains, retries and reopens encrypted storage. Retired tokens are rejected.
+Full native tests and the unsigned tvOS build pass. No Swift consumer, close-save
+barrier, automatic cadence or sync journal is connected yet; retirement alone still
+does not imply a save. Account-mode release remains gated on journal/conflict tests.

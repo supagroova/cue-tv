@@ -26,3 +26,5 @@ pub mod library;
 mod addon_transport;
 
 pub mod player;
+
+mod checkpoint;

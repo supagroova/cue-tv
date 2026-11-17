@@ -68,6 +68,11 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    Checkpoint(u64, oneshot::Sender<Result<(), &'static str>>),
+    CheckpointDone(
+        Result<(), &'static str>,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
     StartPlayback(u64, oneshot::Sender<Result<(), &'static str>>),
     PlaybackEvent(
         u64,
@@ -506,6 +511,15 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Acknowledges one local durable checkpoint. Concurrent requests return busy.
+    /// Periodic coalescing and lifecycle barriers are separate integration work.
+    pub async fn checkpoint_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Checkpoint(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     /// Retires accounting only. Durable close barriers are not yet exposed to Swift.
     pub async fn retire_playback(&self, token: u64) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
@@ -708,6 +722,7 @@ async fn run(
     let mut source_generation = 0u64;
     let mut pending_playback: Option<PendingPlayback> = None;
     let mut playback: Option<crate::player::Playback> = None;
+    let mut checkpoint_pending = false;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -859,7 +874,7 @@ async fn run(
                 )
             }
             Command::Logout(reply) => {
-                if matches!(ctx.status, CtxStatus::Loading(_)) {
+                if checkpoint_pending || matches!(ctx.status, CtxStatus::Loading(_)) {
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
@@ -895,7 +910,10 @@ async fn run(
                     let _ = reply.send(Err("account_login_unavailable"));
                     continue;
                 }
-                if ctx.profile.auth.is_some() || matches!(ctx.status, CtxStatus::Loading(_)) {
+                if checkpoint_pending
+                    || ctx.profile.auth.is_some()
+                    || matches!(ctx.status, CtxStatus::Loading(_))
+                {
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
@@ -1169,6 +1187,68 @@ async fn run(
                 let _ = reply.send(result);
                 continue;
             }
+            Command::Checkpoint(token, reply) => {
+                let Some(owner) = playback.as_ref().filter(|owner| owner.token == token) else {
+                    let _ = reply.send(Err("stale_playback"));
+                    continue;
+                };
+                if checkpoint_pending {
+                    let _ = reply.send(Err("checkpoint_busy"));
+                    continue;
+                }
+                let item = match owner.checkpoint_item(&ctx) {
+                    Ok(item) => item,
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        continue;
+                    }
+                };
+                let mut library = ctx.library.clone();
+                library.merge_items(vec![item]);
+                let write = match crate::checkpoint::write(&library) {
+                    Ok(write) => write,
+                    Err(_) => {
+                        let _ = reply.send(Err("checkpoint_write_failed"));
+                        continue;
+                    }
+                };
+                // Later library actions snapshot this admitted progress. Writes
+                // share Core's sequential queue, preserving admission order.
+                ctx.library = library;
+                checkpoint_pending = true;
+                pending += 1;
+                revision += 1;
+                error = None;
+                let sender = outgoing.clone();
+                NativeEnv::exec_sequential(async move {
+                    let result = write.await.map_err(|_| "checkpoint_write_failed");
+                    let _ = sender.send(Command::CheckpointDone(result, reply)).await;
+                });
+                (
+                    Msg::Internal(Internal::LibraryChanged(true)),
+                    None,
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::CheckpointDone(result, reply) => {
+                checkpoint_pending = false;
+                pending = pending.saturating_sub(1);
+                if let Err(failure) = result {
+                    error = Some(failure);
+                }
+                let _ = reply.send(result);
+                (
+                    Msg::Internal(Internal::LibraryChanged(true)),
+                    None,
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
             Command::StartPlayback(token, reply) => {
                 let result = if playback.is_some() {
                     Err("playback_busy")
@@ -1196,7 +1276,9 @@ async fn run(
                 continue;
             }
             Command::RetirePlayback(token, reply) => {
-                let result = if playback.as_ref().is_some_and(|owner| owner.token == token) {
+                let result = if checkpoint_pending {
+                    Err("checkpoint_busy")
+                } else if playback.as_ref().is_some_and(|owner| owner.token == token) {
                     playback = None;
                     Ok(())
                 } else {
