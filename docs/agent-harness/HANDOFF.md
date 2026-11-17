@@ -624,3 +624,25 @@ root branch: finish its relaunch qualification, preserve its measurements, then
 merge this code and run full native/device checks. Next implement atomic journal+
 library persistence and suppress/replace Core's unjournaled concurrent account
 writes; add revision-matched network acknowledgments, remote-merge policy and backoff.
+
+
+### Phase 5 — atomic library/journal storage seam
+
+Added checkpoint::write_with_journal in the isolated journal worktree. It validates
+account UID and every pending title/type against the paired Core library, then writes
+recent bucket, older bucket/deletion and cue_sync_intents_v1 in one encrypted batch.
+The existing checkpoint::write path is unchanged; session callers have NOT adopted
+the journal yet. Guest, different-owner, missing-title and type-mismatch pairs are
+rejected before admission. Journal structural bounds are revalidated at this seam.
+
+Missing API red c61684accc5c420eaac337d034ecb77c also exposed fixture UserId conversion;
+88f0f7cf6b7345ea9a81af47f0a628b8 corrected UserId/newtype and StorageBatch visibility.
+Encrypted directory-failure/reopen test passes507a1218fb264e14bd3a9ebe51c5a307: both old
+position100 and revision1 survive failure; retry reopens at200/revision2. Quota test
+leaves enough room for the new library plus OLD journal, but not the entire new pair.
+A deliberate two-write mutation failed8315557ee36c4ca5a193f637b71ec0dd with position200
+instead of100, proving sensitivity to a lost-intent partial commit. Single-batch
+implementation restored; all native library unit tests pass
+b1d70673335a4e788f51a9d78c800be6. Full native integration/device checks await transfer
+into root after its ten-cycle run. Network scheduler, journal restore and routing
+all account writes through this seam remain required.

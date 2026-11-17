@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub(crate) const STORAGE_KEY: &str = "cue_sync_intents_v1";
+
 const MAX_TITLES: usize = 256;
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -90,6 +92,27 @@ impl Journal {
             next.entries.remove(id);
         }
         Ok(next)
+    }
+    pub(crate) fn validate_library(
+        &self,
+        library: &stremio_core::types::library::LibraryBucket,
+    ) -> Result<(), Error> {
+        let uid = library
+            .uid
+            .as_ref()
+            .map(|uid| uid.0.as_str())
+            .ok_or(Error::Identity)?;
+        Self::decode(uid, &self.encode()?)?;
+        for (id, pending) in &self.entries {
+            if !library
+                .items
+                .get(id)
+                .is_some_and(|item| item.id == *id && item.r#type == pending.kind)
+            {
+                return Err(Error::Identity);
+            }
+        }
+        Ok(())
     }
     pub(crate) fn encode(&self) -> Result<Vec<u8>, Error> {
         let bytes = serde_json::to_vec(self).map_err(|_| Error::Invalid)?;

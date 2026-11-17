@@ -144,7 +144,7 @@ fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, EnvError> {
     serde_json::from_slice(bytes).map_err(|_| EnvError::Serde("Invalid JSON".into()))
 }
 
-type StorageBatch = BTreeMap<String, Option<Vec<u8>>>;
+pub(crate) type StorageBatch = BTreeMap<String, Option<Vec<u8>>>;
 
 fn write_storage_values(
     env: Result<Arc<Environment>, EnvError>,
