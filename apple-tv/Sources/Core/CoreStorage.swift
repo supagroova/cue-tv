@@ -25,13 +25,33 @@ actor CoreStorage {
         let base = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("CueCore/accounts-v1", isDirectory: true)
         let name = id.uuidString.lowercased()
-        return CoreStorage(directory: base.appendingPathComponent(name, isDirectory: true),
+        return CoreStorage(accountDirectory: base.appendingPathComponent(name, isDirectory: true),
                            keyAccount: "account-v1:" + name)
     }
 
     private let directory: URL
     private let keyAccount: String
-    init(directory: URL, keyAccount: String) { self.directory = directory; self.keyAccount = keyAccount }
+    private let removableAccount: Bool
+    init(directory: URL, keyAccount: String) {
+        self.directory = directory; self.keyAccount = keyAccount; self.removableAccount = false
+    }
+    private init(accountDirectory: URL, keyAccount: String) {
+        self.directory = accountDirectory; self.keyAccount = keyAccount; self.removableAccount = true
+    }
+    /// Only the owning service calls this after native stop acknowledgement.
+    func removeAccount(expectedDirectory: URL) throws {
+        guard removableAccount, directory == expectedDirectory, directory.isFileURL else { throw Failure.unsafeDirectory }
+        if FileManager.default.fileExists(atPath: directory.path) {
+            let values = try directory.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+            guard values.isSymbolicLink != true, values.isDirectory == true else { throw Failure.unsafeDirectory }
+            try FileManager.default.removeItem(at: directory)
+        }
+        // Keep the key if filesystem removal fails, so retained ciphertext stays recoverable.
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.keyService, kSecAttrAccount as String: keyAccount]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.keychain(status) }
+    }
 
     func prepare() throws -> CorePersistenceConfiguration {
         guard directory.isFileURL else { throw Failure.unsafeDirectory }

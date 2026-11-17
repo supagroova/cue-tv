@@ -98,10 +98,12 @@ actor NativeCoreService: CoreService {
         let configuration = try await CoreStorage.shared.prepare()
         return NativeCoreService(persistence: configuration)
     }
+    private var retiringAccount = false
     private var handle: UInt64?
     private var retirement: Task<Void, any Error>?
 
     func start() throws {
+        guard !retiringAccount else { throw Failure.stopped }
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
         if case .newAccount = startup, persistence == nil { throw Failure.invalidRequest }
@@ -275,6 +277,16 @@ actor NativeCoreService: CoreService {
         case -3: throw Failure.busy
         default: throw Failure.stopped
         }
+    }
+
+    /// Permanently retires this owner before deleting its dedicated account storage.
+    /// Failed shutdown retains the owner and storage so cleanup can be retried.
+    func discardAccountStorage(_ storage: CoreStorage) async throws {
+        guard let persistence else { throw Failure.invalidRequest }
+        if case .guest = startup { throw Failure.invalidRequest }
+        retiringAccount = true
+        try await stop()
+        try await storage.removeAccount(expectedDirectory: persistence.directory)
     }
 
     func stop() async throws {

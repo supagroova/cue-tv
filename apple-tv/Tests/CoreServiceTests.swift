@@ -375,3 +375,31 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     #expect(SecItemUpdate(query as CFDictionary, [kSecValueData as String: invalid] as CFDictionary) == errSecSuccess)
     await #expect(throws: CoreAccountSelection.Failure.invalidRecord) { try await store.load() }
 }
+
+@Test func discardingAccountStopsOwnerAndPreservesOtherAccount() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let firstID = UUID(), secondID = UUID()
+    let firstStore = CoreStorage.account(id: firstID, root: root)
+    let secondStore = CoreStorage.account(id: secondID, root: root)
+    let first = try await firstStore.prepare(), second = try await secondStore.prepare()
+    defer {
+        for id in [firstID, secondID] {
+            SecItemDelete([kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:CoreStorage.keyService,
+                kSecAttrAccount as String:"account-v1:" + id.uuidString.lowercased()] as CFDictionary)
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+    let service = NativeCoreService(persistence: first, startup: .newAccount)
+    try await service.start()
+    try await service.discardAccountStorage(firstStore)
+    #expect(!FileManager.default.fileExists(atPath: first.directory.path))
+    let keyQuery: [String: Any] = [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:CoreStorage.keyService,
+        kSecAttrAccount as String:"account-v1:" + firstID.uuidString.lowercased()]
+    #expect(SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecItemNotFound)
+    #expect(try await secondStore.prepare().key == second.key)
+    await #expect(throws: NativeCoreService.Failure.stopped) { try await service.start() }
+    try await service.discardAccountStorage(firstStore)
+    let guest = NativeCoreService(persistence: second)
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await guest.discardAccountStorage(secondStore) }
+    #expect(FileManager.default.fileExists(atPath: second.directory.path))
+}
