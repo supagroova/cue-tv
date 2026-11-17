@@ -603,3 +603,24 @@ proof. Account journal/network conflict/retry and failed-save UI gates remain op
 Routine CI does not invoke this runner. PR13 head64c4e1f is green; PR14 cache warm-hit
 validation remains underway. Next bring the isolated journal commits ee21c5d and
 0cb8c21 into the phase5 branch and validate full native/device builds.
+
+
+
+### Phase 5 — isolated pending-revision journal foundation
+
+Developed in the detached phase5/.agent-work/phase5-journal worktree at64c4e1f while
+root's ten-cycle simulator run holds its inputs fixed. sync_journal.rs plans immutable,
+UID-scoped mutations: at most256 titles/1MiB encoded storage, coalesced per-title
+revision, monotonic counter retained after acknowledgment/reopen, exact matching
+acknowledgments only, and strict schema/identity validation. No credentials, stream
+URLs or duplicate library payload fields exist in the journal schema. Full intended
+state remains in Core's library; integration MUST persist it and the pending revision
+in one encrypted batch. The component is not wired to storage or network yet.
+Missing-API red c4c3cfcf823f433087f7c83c5737a68a; first stale-ack test green
+ed7b0666132e45e4bfb1f4a0b7131ce6; all six journal tests green
+0aca01cdecce4a4084493c76d1b742f2. Evidence lives in that isolated worktree's task
+phase-5-sync-journal. No concurrent Xcode build was run. Before integrating into the
+root branch: finish its relaunch qualification, preserve its measurements, then
+merge this code and run full native/device checks. Next implement atomic journal+
+library persistence and suppress/replace Core's unjournaled concurrent account
+writes; add revision-matched network acknowledgments, remote-merge policy and backoff.
