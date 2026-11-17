@@ -2,6 +2,21 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testDefaultEntryIsNativeGuestWithoutAndroidPairing() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Stremio · Guest"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Popular · movie"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Popular · series"].exists)
+        XCTAssertFalse(app.textFields["TV address"].exists)
+        XCTAssertFalse(app.secureTextFields["Six-digit connection code"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Native guest entry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testTorrentFailureReturnsToSourceChoicePromptly() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
