@@ -219,3 +219,46 @@ fn film_watched_projection_uses_core_completion_not_resume_position() {
     model.selected.as_mut().unwrap().meta_path.id = "different-film".into();
     assert_eq!(view(&model, 0).unwrap().watched, None);
 }
+
+#[test]
+fn player_selection_retains_the_chosen_provider_and_rejects_stale_resources() {
+    use stremio_core::types::addon::ResourcePath;
+    let mut model = series();
+    let path = ResourcePath::without_extra("stream", "series", "owned-series:1:30");
+    model.selected.as_mut().unwrap().stream_path = Some(path.clone());
+    for (provider, file) in [("first", 0), ("second", 7)] {
+        model.streams.push(ResourceLoadable {
+            request: serde_json::from_value(serde_json::json!({
+                "base":format!("https://{provider}.test/private/manifest.json"), "path":path
+            }))
+            .unwrap(),
+            content: Some(Loadable::Ready(vec![
+                serde_json::from_value(serde_json::json!({
+                    "infoHash":"0123456789abcdef0123456789abcdef01234567", "fileIdx":file
+                }))
+                .unwrap(),
+            ])),
+        });
+    }
+    model.meta_streams.push(model.streams.remove(0));
+    let selected = cue_core::sources::player_selection(&model, 1).unwrap();
+    let request = selected.stream_request.unwrap();
+    assert_eq!(
+        request.base.as_str(),
+        "https://second.test/private/manifest.json"
+    );
+    assert_eq!(request.path.id, "owned-series:1:30");
+    assert_eq!(selected.meta_request.unwrap().path.id, "owned-series");
+    assert_eq!(
+        cue_core::playback_source::torrent(&selected.stream)
+            .unwrap()
+            .file_index,
+        Some(7)
+    );
+    assert!(cue_core::sources::player_selection(&model, 2).is_err());
+    model.streams[0].request.path.id = "owned-series:1:1".into();
+    assert!(cue_core::sources::player_selection(&model, 1).is_err());
+    model.streams[0].request.path.id = "owned-series:1:30".into();
+    model.meta_items[0].request.path.id = "different-title".into();
+    assert!(cue_core::sources::player_selection(&model, 1).is_err());
+}

@@ -146,3 +146,25 @@ Final title/video-scoped control identity passes the episode journey again
 .agent-work/phase5-pr-update.json; apply it after the next authorized branch push.
 Next playback sources are apple-tv/Sources/Playback/SourcePlaybackModel.swift
 and SourcePlaybackView.swift; Core Player still throttles storage to180seconds.
+
+PR13 watched/UI work pushed atab91481;14changed remote blobs verified and PR body
+rewritten around actual behavior/remaining gates. Priorhead14b340b fullygreen:
+run44174360266sim16m58/native5m48. CI helper found all3cachemisses: seeder4m23,
+VLCKitresolve2m34,nativecrosscompile2m43,actualunit12s/UI2m16; caches saved.
+Newhead Apple run44178385942: native134375797264running,sim134375797739queued
+at21:20UTC. Recheck before superseding.
+
+Next Core Player prerequisite now builds a private Player Selected from the exact
+chosen stream/provider plus matching ready metadata request. Torrent/HTTPS prepare
+share it and reject stale resource identity. Mixed metadata-stream/provider pages
+retain source index and file7. Missinghelperred49f14ebc51984118bcc9a519d97e832c;
+fullnativegreen c83150df66ef44d19dda1174747c3485; strengthened mixedpage testgreen
+8c028f849e884833880757e50a42a4f8.60Swift tests pass
+ba10886617cf459bb73324c81d8ace8e; unsignedbuild44adb4e8dfc242138bb23916bc62d363.
+This constructs selection only: CoreSession does not yet own Player or receive
+progress. Next retain admitted selection behind a bounded playback-generation
+handoff, own Player/effects independently of catalog/detail generations, and bridge
+Seek/TimeChanged/pause/end with acknowledged local checkpoints. Review automatic
+addon event/intro-outro network behavior before enabling Player; Event messages are
+currently dropped by session except fixed error categories, collect_seek_logs defaults
+false. Do not mistake that for a complete no-telemetry audit of Player futures.
