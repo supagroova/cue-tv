@@ -43,3 +43,42 @@ import Testing
     #expect(session.pendingCleanups == 0)
     #expect(!FileManager.default.fileExists(atPath: second.path))
 }
+
+@Test @MainActor func playbackCoordinatorRejectsRetiredCallbacks() async {
+    let coordinator = PlaybackSessionCoordinator()
+    var stopped = 0
+    let first = await coordinator.begin { stopped += 1 }
+    #expect(first != nil)
+    coordinator.receive(.playing, generation: first!)
+    let second = await coordinator.begin { stopped += 1 }
+    #expect(stopped == 1)
+    #expect(second != first)
+    coordinator.receive(.failed(.decoder), generation: first!)
+    #expect(coordinator.state == .resolving)
+    coordinator.receive(.buffering, generation: second!)
+    coordinator.receive(.playing, generation: second!)
+    #expect(coordinator.state == .playing)
+    await coordinator.stop()
+    coordinator.receive(.playing, generation: second!)
+    #expect(coordinator.state == .idle)
+    #expect(stopped == 2)
+}
+
+@Test @MainActor func playbackCoordinatorSerializesOverlappingSourceSwitches() async throws {
+    let coordinator = PlaybackSessionCoordinator()
+    var release: CheckedContinuation<Void, Never>?
+    _ = await coordinator.begin {
+        await withCheckedContinuation { release = $0 }
+    }
+    let second = Task { await coordinator.begin {} }
+    for _ in 0..<100 where release == nil { await Task.yield() }
+    let barrier = try #require(release)
+    let third = Task { await coordinator.begin {} }
+    for _ in 0..<10 { await Task.yield() }
+    #expect(coordinator.state == .stopping)
+    barrier.resume()
+    #expect(await second.value == nil)
+    #expect(await third.value != nil)
+    #expect(coordinator.state == .resolving)
+    await coordinator.stop()
+}

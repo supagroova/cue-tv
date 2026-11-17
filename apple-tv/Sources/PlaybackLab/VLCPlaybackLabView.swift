@@ -8,11 +8,17 @@ struct VLCPlaybackLabView: View {
     @State private var url: URL?
     @State private var torrent = TorrentLabSession()
     @State private var milliseconds = 0
+    @State private var lifecycle = PlaybackSessionCoordinator()
+    @State private var token: UUID?
     @FocusState private var stopFocused: Bool
     var body: some View {
         VStack {
             if let url {
-                VLCFixtureSurface(url: url, milliseconds: $milliseconds)
+                VLCFixtureSurface(url: url) { [generation = token] value in
+                    guard let generation, generation == token else { return }
+                    milliseconds = value
+                    if value > 500 { lifecycle.receive(.playing, generation: generation) }
+                }
                     .id(url).frame(height: 360)
                 Text(milliseconds > 500 ? "VLC playback advanced" : "Waiting for VLC").accessibilityIdentifier("vlc-progress")
                 Button("Stop VLC fixture") { stop() }
@@ -20,43 +26,65 @@ struct VLCPlaybackLabView: View {
                     .task { stopFocused = true }
             } else {
                 Button("Play MKV with VLC") {
-                    stop()
-                    url = Bundle.main.url(forResource: "episode01", withExtension: "mkv")
+                    start(torrentSource: false)
                 }
-                Button("Stream torrent with VLC") { stop(); torrent.start() }
+                Button("Stream torrent with VLC") { start(torrentSource: true) }
                 Text(torrent.status)
             }
         }
         .onChange(of: torrent.url) { _, value in
             guard let value else { return }
+            guard let token else { return }
+            lifecycle.receive(.buffering, generation: token)
             url = value
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { stop() } }
         .onDisappear { stop() }
     }
+    private func start(torrentSource: Bool) {
+        url = nil; milliseconds = 0; token = nil
+        Task {
+            let next = await lifecycle.begin {
+                torrent.stop()
+                while torrent.pendingCleanups > 0 {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+            guard let next else { return }
+            token = next
+            if torrentSource {
+                lifecycle.receive(.discovering, generation: next)
+                torrent.start()
+            } else {
+                url = Bundle.main.url(forResource: "episode01", withExtension: "mkv")
+                lifecycle.receive(url == nil ? .failed(.invalidMetadata) : .buffering, generation: next)
+            }
+        }
+    }
     private func stop() {
         url = nil
         milliseconds = 0
-        torrent.stop()
+        token = nil
+        Task { await lifecycle.stop() }
     }
 }
 
 private struct VLCFixtureSurface: UIViewRepresentable {
     let url: URL
-    @Binding var milliseconds: Int
+    var progress: @MainActor (Int) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .black
         context.coordinator.player.drawable = view
         do {
+            let report = progress
             context.coordinator.player.media = VLCMedia(url: url)
             context.coordinator.player.play()
             let coordinator = context.coordinator
-            let progress = $milliseconds
             coordinator.polling = Task { @MainActor in
                 while !Task.isCancelled {
-                    progress.wrappedValue = Int(coordinator.player.time.intValue)
+                    report(Int(coordinator.player.time.intValue))
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }

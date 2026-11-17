@@ -34,6 +34,14 @@ A follow-up simulator test connects VLC to the real embedded torrent engine and 
 
 This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, HEVC, alternate tracks, subtitles, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
 
+## Coordinator integration
+
+`PlaybackSessionCoordinator` now serializes retirement, assigns a generation to each accepted start, and rejects events from retired generations. Its typed state vocabulary includes idle, resolving, discovering, buffering, playing, paused, seeking, stopping and categorized failure. A start superseded while waiting for old resource cleanup returns no generation and cannot proceed. The VLC lab uses it for local/torrent start, playback progress and stop; progress callbacks capture their original generation instead of updating a later session.
+
+Validation: all ten Swift unit tests and four simulator Playback Lab UI tests passed. The coordinator tests cover stale failure/playback events and overlapping starts while teardown is held open.
+
+This is initial lifecycle integration, not complete production playback: pause/seek controls, automatic failure teardown, bounded discovery/decoder waits and a stable product snapshot still need implementation. The existing lab's shutdown ticket bounds cache-cleanup waiting separately.
+
 ## Remaining work
 
 Select and integrate a player supporting the required MKV/MP4 codec, audio and subtitle matrix; implement the typed playback coordinator and cache lifetime; measure CPU/memory and set justified limits; classify failures with bounded timeouts; qualify simulator and subsequently physical-device behavior. The isolated VLCKit compile probe is candidate evidence only, not production player selection.
