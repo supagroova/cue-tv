@@ -51,3 +51,34 @@ fn selecting_an_episode_uses_the_full_video_id_from_the_current_window() {
     assert!(cue_core::sources::selection(&model, 24, Some(6)).is_none());
     assert!(cue_core::sources::selection(&model, 0, None).is_none());
 }
+
+#[test]
+fn an_empty_provider_does_not_hide_other_pending_source_results() {
+    use stremio_core::{models::common::ResourceError, types::addon::ResourcePath};
+    let mut model = series();
+    model.selected.as_mut().unwrap().stream_path = Some(ResourcePath::without_extra(
+        "stream",
+        "series",
+        "owned-series:1:1",
+    ));
+    let request = model.meta_items[0].request.clone();
+    model.streams = vec![
+        ResourceLoadable {
+            request: request.clone(),
+            content: Some(Loadable::Err(ResourceError::EmptyContent)),
+        },
+        ResourceLoadable {
+            request,
+            content: Some(Loadable::Loading),
+        },
+    ];
+    let pending = cue_core::sources::view(&model, 0).unwrap();
+    assert_eq!(pending.status, "loading");
+    assert!(pending.loading);
+    assert_eq!(pending.total, 0);
+    model.streams[1].content = Some(Loadable::Err(ResourceError::EmptyContent));
+    let empty = cue_core::sources::view(&model, 0).unwrap();
+    assert_eq!(empty.status, "ready");
+    assert!(!empty.loading);
+    assert!(empty.items.is_empty());
+}

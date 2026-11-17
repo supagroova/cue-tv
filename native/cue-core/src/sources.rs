@@ -61,10 +61,12 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
         )
     });
     Some(View {
-        status: if total > 0 || successful {
+        status: if total > 0 {
             "ready"
         } else if loading {
             "loading"
+        } else if successful {
+            "ready"
         } else {
             "failed"
         },

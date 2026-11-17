@@ -457,3 +457,7 @@ Source requests have their own generation, separate from metadata. Reselecting a
 All 29 native tests pass (8da9146675eb48b2ae51672cffb765ce.log), the unsigned device build passes (abde34da202040a6a2c184d3414a97ac.log), and all 25 simulator unit tests pass (6faac77374de4b57b02a2315b2aefbf0.log). One intermediate native run exposed a storage test fixture collision from parallel timestamp-only temporary-directory names; an atomic process-local sequence now disambiguates them. The failure evidence is retained (c4fdc4967daa414f95a89fdd0aab07c4.log).
 
 Still required before readiness: validated source-to-playback handoff, malformed/partial/multiple-provider source cases, bounded retained model memory, search/filter and artwork, account/library/progress operations, standalone UI and hardware qualification. The growing session owner should be refactored without weakening its lifecycle assertions as further operations are added.
+
+### Pending multi-provider sources
+
+An empty result from one provider no longer marks an otherwise empty source list ready while another provider is still pending. Nonempty results remain usable while additional providers load; a completed all-empty result is ready and empty. The mixed empty/loading fixture failed before the fix (4232f30cd91b41f5a301cb58ed75954c.log); all 30 native tests pass afterward (31bec9da1da24b74a005e0d5c63050d5.log). This is a source-status correction; the playback admission handoff remains pending.
