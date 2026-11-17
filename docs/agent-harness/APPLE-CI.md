@@ -58,3 +58,12 @@ Both runs passed every required lane. The first restored the legacy 1.85 GB cach
 The original 6–7 minute estimate was not achieved. Simulator setup took 186s then 115s, compared with 55s then 50s on the native lane. In the warm run, the simulator cache-hit message appeared about 47s after setup began; cache download/extraction then took about 45s, versus 34s on the native lane. This repeated slowdown supports testing whether simulator boot competes with setup for CPU and disk resources, but does not prove causation.
 
 The next experiment moves only simulator boot after cache/tool setup, retaining overlap with fixture seeder compilation and the existing readiness gate. All required tests, pinning and optional sustained playback remain intact. Workflow lint and portable checks validate the change locally; another remote run is needed to measure its effect. No speedup is claimed for this ordering change yet.
+
+
+## Exact native artifact reuse
+
+Fresh checkout timestamps repeatedly rebuilt local Rust crates despite dependency-cache hits: recent simulator logs show roughly 35–53s for Core, 20–30s for the torrent library, and 36–103s for the fixture seeder. The simulator lane now has a separate exact-content cache for its two static libraries and seeder executable. Its fingerprint includes every tracked native source, recursive submodule contents and Gitlink revision, native build scripts, project configuration, workflow/setup configuration, and explicit Rust/Xcode/platform/profile identity. There are no partial restore keys.
+
+An exact hit validates every artifact against a saved SHA-256 manifest before copying any into build outputs. Missing, empty, corrupt or source-mismatched artifacts fail closed. Only CI simulator builds with the matching fingerprint bypass Cargo compilation; device builds and all native/Swift/UI tests still execute. Cache misses compile normally and stage artifacts only after successful simulator tests. Long playback remains manual-only. The cache action remains pinned to its existing full SHA.
+
+Portable tests cover exact restoration, a cache miss, source invalidation and corruption without partial installation. Remote cold-population and subsequent exact-hit runs are still required before claiming a measured latency reduction; source changes correctly miss this cache.
