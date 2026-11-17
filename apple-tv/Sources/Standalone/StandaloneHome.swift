@@ -4,6 +4,7 @@ struct StandaloneHome: View {
     @State private var model = StandaloneModel()
     @State private var screen = Screen.catalogs
     @State private var manifest = ""
+    @State private var search = ""
     @State private var selectedSource: SelectedSource?
     enum Screen { case catalogs, titles, details, sources }
     struct SelectedSource: Identifiable { let id = UUID(); let request: CoreTorrentRequest }
@@ -18,8 +19,18 @@ struct StandaloneHome: View {
                     VStack(alignment: .leading, spacing: 18) {
                         switch screen {
                         case .catalogs:
+                            TextField("Search titles in a catalog", text: $search).autocorrectionDisabled()
                             ForEach(state.catalogs, id: \.index) { catalog in
-                                Button("\(catalog.name) · \(catalog.kind)") { Task { await model.perform { try await $0.loadCatalog(index: catalog.index, expectedRevision: $1) }; screen = .titles } }
+                                Button("\(catalog.name) · \(catalog.kind)") {
+                                    let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    Task {
+                                        await model.perform { service, revision in
+                                            if query.isEmpty { try await service.loadCatalog(index: catalog.index, expectedRevision: revision) }
+                                            else { try await service.searchCatalog(index: catalog.index, query: query, expectedRevision: revision) }
+                                        }
+                                        screen = .titles
+                                    }
+                                }.disabled(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !catalog.searchable)
                             }
                             if state.catalogChoicesOffset > 0 { Button("Previous catalogs") { Task { await model.perform { try await $0.showCatalogChoices(offset: max(0, state.catalogChoicesOffset - 16), expectedRevision: $1) } } } }
                             if state.catalogChoicesOffset + 16 < state.catalogTotal { Button("More catalogs") { Task { await model.perform { try await $0.showCatalogChoices(offset: state.catalogChoicesOffset + 16, expectedRevision: $1) } } } }
