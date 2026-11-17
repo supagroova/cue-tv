@@ -32,6 +32,10 @@ uint64_t cue_metadata_start(const uint8_t *input, size_t length);
 // Returns required byte count or -1. Null/short output is a non-consuming size query;
 // short buffers remain untouched. Caller owns output. No torrent bytes are exported.
 intptr_t cue_metadata_snapshot(uint64_t handle, size_t offset, uint8_t *output, size_t capacity);
+// Consume ready metadata into a playback handle using an explicit original file index.
+// Input JSON: api_version=1, output, optional cache_root; maximum 12 KiB.
+// Success invalidates the metadata handle. Zero leaves it available for retry.
+uint64_t cue_metadata_play(uint64_t handle, size_t file_index, const uint8_t *input, size_t length);
 // Requests cancellation: 0 pending, 1 resolver owner finished, -1 unknown.
 // Normal shutdown awaits upstream session.stop; not a guarantee every upstream task joined.
 int32_t cue_metadata_stop(uint64_t handle);
