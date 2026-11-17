@@ -13,3 +13,5 @@ The user selected simulator-first development and deferred physical Apple TV pai
 PR #2 was merged by the user into the planning branch. Its merge commit is included downstream, and Phase 0 now targets that planning branch. No implementation PR has been merged by the agent.
 
 See PHASE-0.md, PHASE-1.md and decisions/001-torrent-proof.md for commands, measured evidence and limits. The original PRD and implementation plan still define the complete scope; this status does not replace their acceptance criteria.
+
+Remote CI currently cannot start some jobs: GitHub Actions annotations report failed account payments or a spending limit. Local verification continues; the stack is not claimed green. The account owner needs to restore Actions billing before final remote qualification.

@@ -13,8 +13,8 @@ output = media / 'hevc-tracks.mkv'
 with tempfile.TemporaryDirectory() as scratch:
     srt = Path(scratch) / 'fixture.srt'
     vtt = Path(scratch) / 'fixture.vtt'
-    srt.write_text('1\n00:00:00,000 --> 00:00:11,500\nCue TV SRT fixture\n')
-    vtt.write_text('WEBVTT\n\n00:00.000 --> 00:11.500\nCue TV WebVTT fixture\n')
+    srt.write_text('\n'.join(f'{i+1}\n00:00:{i:02d},000 --> 00:00:{i+1:02d},000\nCue TV SRT fixture\n' for i in range(12)))
+    vtt.write_text('WEBVTT\n\n' + '\n'.join(f'00:{i:02d}.000 --> 00:{i+1:02d}.000\nCue TV WebVTT fixture\n' for i in range(12)))
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(source),
         '-f', 'lavfi', '-i', 'sine=frequency=880:sample_rate=48000:duration=12',
         '-i', str(srt), '-i', str(vtt), '-map', '0:v', '-map', '0:a', '-map', '1:a',

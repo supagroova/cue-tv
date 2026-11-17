@@ -13,8 +13,22 @@ nonisolated final class PlaybackLabTests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["Audio tracks: 2; subtitle tracks: 2"].waitForExistence(timeout: 5))
+        let audio = app.buttons["Next audio track"]
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(audio.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let subtitles = app.buttons["Next subtitle track"]
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(subtitles.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Selected audio: 2; subtitle: 2"].waitForExistence(timeout: 5))
+        let clock = app.staticTexts["vlc-time"]
+        let selectedAt = Int(clock.label) ?? 0
+        let nextCue = NSPredicate { _, _ in (Int(clock.label) ?? 0) >= selectedAt + 1200 }
+        expectation(for: nextCue, evaluatedWith: clock)
+        waitForExpectations(timeout: 4)
         let frame = XCTAttachment(screenshot: app.screenshot())
-        frame.name = "HEVC with embedded subtitle fixture"
+        frame.name = "HEVC with selected WebVTT subtitle"
         frame.lifetime = .keepAlways
         add(frame)
     }
