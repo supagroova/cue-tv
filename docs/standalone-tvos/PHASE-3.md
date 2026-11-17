@@ -503,3 +503,7 @@ Metadata resolver review added checks for rejection of input above 16 MiB before
 ### Explicit resolved-file admission
 
 The native metadata result now validates an explicit original torrent file index before playback: unknown indexes, padding, empty files and files exceeding the 4 GiB cache cap are rejected. It does not infer file zero, replace disk/boundary-piece admission, or yet connect file selection to Swift/UI. Tests cover non-contiguous original indexes and the owned multi-episode fixture. Recorded red compilation evidence `18b65bc154944286a56296740ef6a26b` and green five-test metadata suite `c9ca1bf6c5ce43ed94b9f47c58067b87` under the phase-3-core task. C/Swift resolution lifecycle and production selection remain outstanding.
+
+### Resolved metadata to native playback
+
+`PlaybackSession::start_resolved` consumes resolved metadata and discovered peers, validates the explicit original file index, then enters the existing budgeted playback/cache-root path. Direct magnet peer fixtures now use this production entry point without reinjecting the seeder address; unchanged byte/range assertions verify selected content. The peer-stream suite passes (`d7e584b8f17f429cb1b9bc6f73e1fb31`), after the missing-entry-point red test (`f6bf93fcbbf142dc9314d51d9340a807`). This proves the native handoff with controlled peers, not Swift integration, public swarm discovery or physical playback. The C/Swift metadata handle and file-selection lifecycle remain next.

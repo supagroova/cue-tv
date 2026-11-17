@@ -212,31 +212,40 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
             assert_eq!(std::fs::read_dir(download.path()).unwrap().count(), 0);
             assert_eq!(result.files[index].index, index);
             assert_eq!(result.files[index].bytes, bytes.len() as u64);
-            Some(result.torrent_bytes)
+            Some(result)
         } else {
             None
         };
-        let playback = PlaybackSession::start_source(
-            if let Some(metadata) = resolved {
-                TorrentSource::Bytes(metadata)
-            } else if magnet {
-                TorrentSource::Magnet(format!(
-                    "magnet:?xt=urn:btih:{}&tr={tracker_url}",
-                    seed.info_hash().as_string()
-                ))
-            } else {
-                TorrentSource::Bytes(torrent)
-            },
-            index,
-            download.path().to_owned(),
-            if tracker { vec![] } else { vec![address] },
-            Discovery {
-                trackers: tracker && protocol != "dht",
-                dht: protocol == "dht",
-                bootstrap: Some(vec![dht_address.to_string()]),
-            },
-        )
-        .await
+        let playback = if let Some(metadata) = resolved {
+            PlaybackSession::start_resolved(
+                metadata,
+                index,
+                download.path().to_owned(),
+                Discovery::default(),
+                None,
+            )
+            .await
+        } else {
+            PlaybackSession::start_source(
+                if magnet {
+                    TorrentSource::Magnet(format!(
+                        "magnet:?xt=urn:btih:{}&tr={tracker_url}",
+                        seed.info_hash().as_string()
+                    ))
+                } else {
+                    TorrentSource::Bytes(torrent)
+                },
+                index,
+                download.path().to_owned(),
+                if tracker { vec![] } else { vec![address] },
+                Discovery {
+                    trackers: tracker && protocol != "dht",
+                    dht: protocol == "dht",
+                    bootstrap: Some(vec![dht_address.to_string()]),
+                },
+            )
+            .await
+        }
         .unwrap();
         let client = reqwest::Client::new();
         let tail = client
