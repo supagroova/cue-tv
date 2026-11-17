@@ -15,7 +15,9 @@ fi
 if [[ ! -f apple-tv/TVConfig.plist ]]; then
   cp apple-tv/TVConfig.example.plist apple-tv/TVConfig.plist
 fi
-xcodegen generate --spec apple-tv/project.yml
+spec=apple-tv/project.yml
+[[ "$action" == long-test ]] && spec=apple-tv/project-long.yml
+xcodegen generate --spec "$spec"
 args=(-project apple-tv/SittingRoomTV.xcodeproj -scheme SittingRoomTV -configuration Debug -derivedDataPath .agent-work/DerivedData CODE_SIGNING_ALLOWED=NO)
 if [[ "$action" == build ]]; then
   xcodebuild "${args[@]}" -sdk appletvos -destination 'generic/platform=tvOS' build

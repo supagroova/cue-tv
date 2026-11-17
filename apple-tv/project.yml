@@ -24,9 +24,6 @@ targets:
       - Sources
       - path: Resources/PlaybackLab
         buildPhase: resources
-      - path: ../.agent-work/long-playback/long.torrent
-        optional: true
-        buildPhase: resources
       - path: ../fixtures/torrents/single.torrent
         buildPhase: resources
       - path: TVConfig.plist

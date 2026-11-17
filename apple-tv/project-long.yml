@@ -1,0 +1,7 @@
+include:
+  - project.yml
+targets:
+  SittingRoomTV:
+    sources:
+      - path: ../.agent-work/long-playback/long.torrent
+        buildPhase: resources
