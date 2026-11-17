@@ -66,4 +66,10 @@ Fresh checkout timestamps repeatedly rebuilt local Rust crates despite dependenc
 
 An exact hit validates every artifact against a saved SHA-256 manifest before copying any into build outputs. Missing, empty, corrupt or source-mismatched artifacts fail closed. Only CI simulator builds with the matching fingerprint bypass Cargo compilation; device builds and all native/Swift/UI tests still execute. Cache misses compile normally and stage artifacts only after successful simulator tests. Long playback remains manual-only. The cache action remains pinned to its existing full SHA.
 
-Portable tests cover exact restoration, a cache miss, source invalidation and corruption without partial installation. Remote cold-population and subsequent exact-hit runs are still required before claiming a measured latency reduction; source changes correctly miss this cache.
+Portable tests cover exact restoration, a cache miss, source invalidation and corruption without partial installation. Source changes correctly miss this cache.
+
+### Verified cache runs — 2026-11-17
+
+[Run 44123474614](https://github.com/supagroova/cue-tv/actions/runs/44123474614), head `a3e22ae`, passed both attempts with 31 Swift unit tests, 10 short UI tests, native tests and the device build. Attempt 1 missed both dependency and artifact caches: simulator 14m03s, native/device 9m47s. Artifacts were saved only after successful simulator tests.
+
+Attempt 2 reused the exact artifacts: the 52.6 MB cache restored and verified in 3s, seeder compilation was skipped, and both native prebuild scripts logged verified reuse. Simulator time was **7m32s**, native/device **4m16s**, and queue-inclusive workflow time **7m47s**. Combined build/tests took 4m37s; simulator readiness waited 46s. The observed simulator reduction versus earlier warm-dependency runs (8m52s–9m12s) is 80–100 seconds, with runner variability. The larger cold-to-warm difference also includes dependency warming and cannot be attributed solely to this cache. Long playback remained manual-only.
