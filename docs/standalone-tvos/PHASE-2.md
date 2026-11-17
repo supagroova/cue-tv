@@ -22,7 +22,9 @@ VLCKit is pinned to the full revision and binary checksum documented in DEPENDEN
 
 The simulator UI test `PlaybackLabTests/testMKVPlaybackWithVLCCandidate` passed: explicit remote selection, playback clock beyond 500 ms, screenshot attachment and remote Stop returning to the start control. The blue fixture image was visually confirmed. The initial test exposed focus moving to the unrelated AVPlayer lab controls; the candidate now uses its own lab screen. The final test took 7.465 seconds. The candidate also compiles for unsigned arm64 tvOS.
 
-This proves one local MKV decoding path only. Audible audio, HEVC, alternate tracks, subtitles, torrent streaming through VLC, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
+A follow-up simulator test connects VLC to the real embedded torrent engine and controlled local seeder through the loopback HTTP adapter, waits for playback progress, then stops through the remote. All four short Playback Lab UI tests passed in 31.103 seconds, including the existing AVPlayer regressions. Transfer cancellation is requested on Stop, disappearance and backgrounding; acknowledged shutdown/cache cleanup still requires the production coordinator. The torrent fixture is MP4 and is small, so this does not establish streamed MKV or playback before complete download in VLC.
+
+This proves one local MKV decoding path and the MP4 torrent-to-VLC connection only. Audible audio, HEVC, alternate tracks, subtitles, background teardown and the MPV comparison remain unverified. VLCKit has not yet been selected as the production player.
 
 ## Remaining work
 
