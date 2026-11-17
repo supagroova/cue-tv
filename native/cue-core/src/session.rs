@@ -12,7 +12,7 @@ use stremio_core::{
     },
     runtime::{
         Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
-        msg::{Action, ActionCtx, ActionLoad, Event, Internal, Msg},
+        msg::{Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, Event, Internal, Msg},
     },
     types::{notifications::NotificationsBucket, profile::Profile, server_urls::ServerUrlsBucket},
 };
@@ -63,6 +63,7 @@ enum Command {
     Install(u64, oneshot::Sender<Result<(), &'static str>>),
     Catalog(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Effect(Msg, u64, u64),
 }
 pub struct CoreSession {
@@ -106,6 +107,7 @@ impl CoreSession {
             &ctx,
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
+            0,
             0,
             0,
             0,
@@ -191,6 +193,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn show_catalog_items(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::CatalogItems(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -221,6 +234,7 @@ fn snapshot(
     addon: &AddonDetails,
     catalog: &crate::catalog::Catalog,
     catalog_choices_offset: usize,
+    catalog_item_offset: usize,
     revision: u64,
     pending_effects: usize,
     stopped: bool,
@@ -231,7 +245,7 @@ fn snapshot(
         catalogs,
         catalog_choices_offset,
         catalog_total,
-        catalog: crate::catalog::view(catalog),
+        catalog: crate::catalog::view(catalog, catalog_item_offset),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -274,6 +288,7 @@ async fn run(
     let mut catalog = crate::catalog::Catalog::default();
     let mut catalog_generation = 0u64;
     let mut catalog_choices_offset = 0usize;
+    let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
     let mut revision = 0;
     let mut pending = 0usize;
@@ -347,13 +362,12 @@ async fn run(
                     let _ = reply.send(Err("invalid_catalog"));
                     continue;
                 };
-                if catalog.selected.as_ref() != Some(&selected) {
-                    let Some(next) = catalog_generation.checked_add(1) else {
-                        env.fail();
-                        break;
-                    };
-                    catalog_generation = next;
-                }
+                let Some(next) = catalog_generation.checked_add(1) else {
+                    env.fail();
+                    break;
+                };
+                catalog_generation = next;
+                catalog_item_offset = 0;
                 error = None;
                 (
                     Msg::Action(Action::Load(ActionLoad::CatalogWithFilters(Some(selected)))),
@@ -361,6 +375,44 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                 )
+            }
+            Command::CatalogItems(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_catalog"));
+                    continue;
+                }
+                let total = crate::catalog::loaded_count(&catalog);
+                if catalog.selected.is_none() || offset > total {
+                    let _ = reply.send(Err("invalid_item_offset"));
+                    continue;
+                }
+                catalog_item_offset = offset;
+                if offset == total && catalog.selectable.next_page.is_some() {
+                    error = None;
+                    (
+                        Msg::Action(Action::CatalogWithFilters(
+                            ActionCatalogWithFilters::LoadNextPage,
+                        )),
+                        Some(reply),
+                        addon_generation,
+                        catalog_generation,
+                    )
+                } else {
+                    revision += 1;
+                    publish.send_replace(snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        catalog_choices_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ));
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
             }
             Command::CatalogChoices(offset, expected, reply) => {
                 if expected != revision {
@@ -384,6 +436,7 @@ async fn run(
                     &addon,
                     &catalog,
                     catalog_choices_offset,
+                    catalog_item_offset,
                     revision,
                     pending,
                     false,
@@ -495,6 +548,7 @@ async fn run(
             &addon,
             &catalog,
             catalog_choices_offset,
+            catalog_item_offset,
             revision,
             pending,
             false,
@@ -514,6 +568,7 @@ async fn run(
         &addon,
         &catalog,
         catalog_choices_offset,
+        catalog_item_offset,
         revision,
         0,
         true,

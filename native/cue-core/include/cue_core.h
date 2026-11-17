@@ -17,6 +17,7 @@ uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, con
 // Install only the displayed ready preview: {"version":1,"action":"install_addon","revision":N}.
 // Installed catalogue selector: {"version":1,"action":"load_catalog","index":N,"revision":N}.
 // Catalogue-choice window: {"version":1,"action":"catalog_choices","offset":N,"revision":N}.
+// Content window, fetching the next Core page when needed: {"version":1,"action":"catalog_items","offset":N,"revision":N}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
 int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
 // Returns required byte count, or -1 for an invalid handle. No NUL terminator.

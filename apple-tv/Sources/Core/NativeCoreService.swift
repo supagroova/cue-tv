@@ -12,7 +12,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     }
     struct CatalogChoice: Decodable, Sendable { let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
-    struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool }
+    struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
@@ -41,6 +41,7 @@ nonisolated protocol CoreService: Sendable {
     func installAddon(expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
+    func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
     func stop() async throws
 }
 
@@ -106,6 +107,11 @@ actor NativeCoreService: CoreService {
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) throws {
         guard offset >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "catalog_choices", "offset": offset, "revision": expectedRevision])
+    }
+
+    func showCatalogItems(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "catalog_items", "offset": offset, "revision": expectedRevision])
     }
 
     private func dispatch(_ command: [String: Any]) throws {

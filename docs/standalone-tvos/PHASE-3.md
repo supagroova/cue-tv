@@ -391,3 +391,25 @@ checks source fingerprints and uses locked dependencies. The first new-generatio
 run is cold. Lean-profile native tests and simulator compilation pass locally;
 the current Core simulator archive measures about 105 MiB versus 269 MiB with the
 normal debug settings. End-to-end CI timing remains to be measured.
+
+## Catalogue content windows and remote pages
+
+`catalog_items` selects a revision-checked offset in the loaded content. It serves
+24-item windows from Core's retained pages and invokes Core's `LoadNextPage` action
+when the requested offset reaches the loaded end and Core advertises another page.
+The snapshot reports its content offset, loading/error state and whether more
+results exist. Earlier loaded windows remain available. Catalogue reloads always
+advance the resource generation, including repeated loads of the same catalogue.
+
+A native HTTP regression serves 27 items, then three, then an empty response. It
+checks the actual `skip=27`/`skip=30` URLs, exact item order across windows, end-of-
+results behavior, backward navigation and rejection of an unavailable offset. The
+simulator fixture now runs through those remote pages via Swift as well. All 26
+native tests, 25 simulator unit tests (3.337 seconds) and the device app build pass.
+One device build attempt was killed while running XcodeGen, before compilation;
+the tool then responded normally and the recorded retry succeeded.
+
+Views and HTTP responses remain bounded, but Core currently retains loaded pages
+until a catalogue reload/selection change. Long-browse memory behavior, page-error
+retry, overlapping response coverage, search/filter extras, artwork and the
+standalone browsing UI remain required before this is merge-ready.

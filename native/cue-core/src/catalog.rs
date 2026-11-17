@@ -28,6 +28,7 @@ pub struct View {
     pub status: &'static str,
     pub items: Vec<Item>,
     pub has_more: bool,
+    pub offset: usize,
 }
 pub fn choices(ctx: &Ctx, offset: usize) -> (Vec<Choice>, usize) {
     let all: Vec<_> = ctx
@@ -79,38 +80,49 @@ pub fn selection(ctx: &Ctx, index: usize) -> Option<Selected> {
         ),
     })
 }
-pub fn view(catalog: &Catalog) -> Option<View> {
+fn valid_items(catalog: &Catalog) -> impl Iterator<Item = &MetaItemPreview> {
+    catalog
+        .catalog
+        .iter()
+        .flat_map(|page| {
+            page.content
+                .as_ref()
+                .and_then(|content| content.ready())
+                .into_iter()
+                .flatten()
+        })
+        .filter(|item| item.id.len() <= 512 && item.r#type.len() <= 64)
+}
+pub fn loaded_count(catalog: &Catalog) -> usize {
+    valid_items(catalog).count()
+}
+pub fn view(catalog: &Catalog, offset: usize) -> Option<View> {
     catalog.selected.as_ref()?;
-    let page = catalog.catalog.first()?;
-    Some(match &page.content {
-        None | Some(Loadable::Loading) => View {
-            status: "loading",
-            items: vec![],
-            has_more: false,
-        },
-        Some(Loadable::Err(ResourceError::EmptyContent)) => View {
-            status: "ready",
-            items: vec![],
-            has_more: false,
-        },
-        Some(Loadable::Err(_)) => View {
-            status: "failed",
-            items: vec![],
-            has_more: false,
-        },
-        Some(Loadable::Ready(items)) => View {
-            status: "ready",
-            items: items
-                .iter()
-                .filter(|item| item.id.len() <= 512 && item.r#type.len() <= 64)
-                .take(24)
-                .map(|item| Item {
-                    id: item.id.clone(),
-                    name: item.name.chars().take(128).collect(),
-                    kind: item.r#type.clone(),
-                })
-                .collect(),
-            has_more: items.len() > 24 || catalog.selectable.next_page.is_some(),
-        },
+    let tail = catalog.catalog.last()?;
+    let total = loaded_count(catalog);
+    let status = if offset < total {
+        "ready"
+    } else {
+        match &tail.content {
+            None | Some(Loadable::Loading) => "loading",
+            Some(Loadable::Err(ResourceError::EmptyContent)) | Some(Loadable::Ready(_)) => "ready",
+            Some(Loadable::Err(_)) => "failed",
+        }
+    };
+    let items: Vec<_> = valid_items(catalog)
+        .skip(offset)
+        .take(24)
+        .map(|item| Item {
+            id: item.id.clone(),
+            name: item.name.chars().take(128).collect(),
+            kind: item.r#type.clone(),
+        })
+        .collect();
+    Some(View {
+        status,
+        has_more: offset.saturating_add(items.len()) < total
+            || catalog.selectable.next_page.is_some(),
+        items,
+        offset,
     })
 }
