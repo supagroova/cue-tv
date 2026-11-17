@@ -69,3 +69,10 @@ then remaining Phase5 library browsing/watched/player checkpoint work. PR8 nativ
 job134340042364 was retried after a proven runner-capacity cancellation; PR13
 simulator134341747698 likewise never acquired a runner. PR13native remains live,
 so local Phase5 commits have not yet been pushed over that run.
+
+Pending library receipt cancellation is covered with a held HTTP response and
+sensitive mutation test. Restored source passes all 60 Swift tests
+(`e20236255b054007845c0b862068b558`). Phase5 runtime changes are ready for the
+next PR13 push; its previous run is terminal (nativepass, simulatorcapacitycancel).
+Next implementation: bounded library browsing, watched controls and Core Player
+checkpoints, while retaining the documented UI failure/disappearance test gaps.

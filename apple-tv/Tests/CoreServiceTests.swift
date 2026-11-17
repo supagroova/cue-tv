@@ -231,7 +231,38 @@ import Security
     #expect(state.model?.catalog?.hasMore == false)
     #expect(state.error == nil)
     #expect(state.model?.error == nil)
+
+    // A held network effect keeps the save receipt pending after mutation admission.
+    try await service.loadAddon("http://127.0.0.1:\(fixture.port)/held/manifest.json")
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        let requests = await fixture.heldManifest.requests
+        if state.model?.addon?.status == .loading && requests == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(await fixture.heldManifest.requests == 1)
+    try #require(state.model?.addon?.status == .loading)
+    let libraryRevision = try #require(state.model?.revision)
+    let saving = Task { try await service.setDetailsLibrary(true, expectedRevision: libraryRevision) }
+    try await Task.sleep(for: .milliseconds(100))
+    await #expect(throws: NativeCoreService.Failure.busy) {
+        try await service.prepareTorrent(index: 29, expectedRevision: libraryRevision)
+    }
+    let libraryCancelStarted = ContinuousClock.now
+    saving.cancel()
+    await #expect(throws: CancellationError.self) { try await saving.value }
+    try await service.setInterfaceLanguage("deu")
+    for _ in 0..<100 {
+        state = try await service.snapshot()
+        if state.model?.interfaceLanguage == "deu" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.interfaceLanguage == "deu")
+    #expect(state.model?.detailsInLibrary == true, "Cancellation must not pretend to roll back an admitted save")
+    #expect(libraryCancelStarted.duration(to: .now) < .seconds(2))
     try await service.stop()
+    for _ in 0..<100 where !(await fixture.heldManifest.closed) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.heldManifest.closed)
 }
 
 @Test func accountRestoreDoesNotFallBackToGuestWhenStorageIsEmpty() async throws {
@@ -310,14 +341,26 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     let listener: NWListener
     let port: UInt16
     let subtitles: SubtitleResourceProbe
-    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe) { self.listener = listener; self.port = port; self.subtitles = subtitles }
+    let heldManifest: SubtitleResourceProbe
+    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe, heldManifest: SubtitleResourceProbe) {
+        self.listener = listener; self.port = port; self.subtitles = subtitles; self.heldManifest = heldManifest
+    }
     static func start() async throws -> CoreHTTPFixture {
         let listener = try NWListener(using: .tcp, on: .any)
         let subtitles = SubtitleResourceProbe()
+        let heldManifest = SubtitleResourceProbe()
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
                 let requestText = request.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                if requestText.contains("/held/manifest.json") {
+                    Task { _ = await heldManifest.arrived() }
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, complete, error in
+                        if complete || error != nil { Task { await heldManifest.disconnected() } }
+                        connection.cancel()
+                    }
+                    return
+                }
                 if requestText.contains("/subtitles/movie/cue-fixture") {
                     Task {
                         if await subtitles.arrived() == 1 {
@@ -365,7 +408,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
             }
             listener.start(queue: .global())
         }
-        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles)
+        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles, heldManifest: heldManifest)
     }
 }
 

@@ -1,7 +1,8 @@
 # Phase 5 — resume, library and recovery
 
-Status: native library membership actions implemented; Swift/FFI integration,
-watched controls, playback checkpoints, sync and lifecycle work remain incomplete.
+Status: title-detail library membership works through Swift/FFI and Core, with
+encrypted-reopen and cancellation tests. Library browsing, watched controls,
+playback checkpoints, sync and broader lifecycle work remain incomplete.
 Earlier phases retain their outstanding gates.
 
 The contract and ordered implementation gates are in
@@ -103,3 +104,20 @@ source and verifies Back focus (`b8b5344c99d24adaafdb2c819652f8b8`). Unsigned de
 build passes (`1b8bf4c72fb84d81a6e575e1d302c58b`), as do all 15 portable checks.
 UI-level failed-save retry and disappearance during a delayed receipt still need
 controlled coverage; native write-failure tests do not prove those UI states.
+
+## Pending receipt cancellation
+
+The real HTTP fixture now holds a manifest response open while a library mutation
+has been admitted. A concurrent handoff reports busy; cancelling the save releases
+the serial bridge owner, allows a following language command within two seconds,
+and refreshes the accepted membership rather than pretending it rolled back. Stop
+closes the held socket. Initial green: `5a07a584077242169d94418f3f5a7f14`.
+Temporarily disabling the native cancellation arm causes the following-command
+and refreshed-state assertions to fail (`a13006ff3a7c4438a23cc5edcf9c643a`). The
+production source was restored byte-for-byte. The earlier compile failure
+`6837c60fed4e4117be8d731f76d7d9d2` was an await-in-autoclosure test error, not
+a product defect. This proves service-level cancellation; view disappearance and
+UI failed-save retry still need their own controlled tests.
+
+Final restored-source run: all 60 Swift tests pass
+(`e20236255b054007845c0b862068b558`). All 15 portable checks pass.
