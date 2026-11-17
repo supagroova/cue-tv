@@ -20,6 +20,25 @@ pub struct Resolved {
     pub torrent_bytes: Vec<u8>,
     pub seen_peers: Vec<SocketAddr>,
 }
+impl Resolved {
+    /// Validate an explicit torrent file index before admitting playback.
+    /// This does not replace write-time disk and boundary-piece admission checks.
+    pub fn selected_file(&self, index: usize) -> Result<&FileChoice> {
+        let file = self
+            .files
+            .iter()
+            .find(|file| file.index == index)
+            .context(FailureCode::InvalidMetadata)?;
+        if file.padding || file.bytes == 0 {
+            bail!(FailureCode::UnsupportedFormat);
+        }
+        if file.bytes > StorageBudget::default().cap_bytes {
+            bail!(FailureCode::SourceTooLarge);
+        }
+        Ok(file)
+    }
+}
+
 pub async fn resolve(
     source: TorrentSource,
     output: PathBuf,

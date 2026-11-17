@@ -29,6 +29,8 @@ async fn metadata_listing_keeps_original_indexes_without_materializing_media() {
     assert!(result.files[1].path.ends_with("episode02.mp4"));
     assert_eq!(result.files[1].bytes, 175924);
     assert_eq!(result.torrent_bytes, bytes);
+    assert_eq!(result.selected_file(1).unwrap().path, result.files[1].path);
+    assert!(result.selected_file(3).is_err());
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
@@ -100,4 +102,43 @@ async fn oversized_metadata_is_rejected_before_parsing_or_storage() {
         cue_torrent::failure::FailureCode::SourceTooLarge
     );
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn explicit_selection_rejects_padding_empty_and_oversized_files() {
+    use cue_torrent::metadata::{FileChoice, Resolved};
+    let resolved = Resolved {
+        files: vec![
+            FileChoice {
+                index: 4,
+                path: "padding".into(),
+                bytes: 100,
+                padding: true,
+            },
+            FileChoice {
+                index: 7,
+                path: "empty.mp4".into(),
+                bytes: 0,
+                padding: false,
+            },
+            FileChoice {
+                index: 9,
+                path: "large.mkv".into(),
+                bytes: 4 * 1024 * 1024 * 1024 + 1,
+                padding: false,
+            },
+            FileChoice {
+                index: 12,
+                path: "episode.mkv".into(),
+                bytes: 1024,
+                padding: false,
+            },
+        ],
+        torrent_bytes: vec![],
+        seen_peers: vec![],
+    };
+    for index in [0, 4, 7, 9] {
+        assert!(resolved.selected_file(index).is_err());
+    }
+    assert_eq!(resolved.selected_file(12).unwrap().index, 12);
 }

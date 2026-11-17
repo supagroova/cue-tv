@@ -499,3 +499,7 @@ The owned multi-file fixture lists three files with stable indexes. An initial e
 The resolver is native-only so far. Its C/Swift lifecycle, bounded file-choice presentation and production playback connection remain pending. Physical peak memory/discovery budgets remain unverified. Simulator access was reserved for the parallel CI-speed worker during this slice.
 
 Metadata resolver review added checks for rejection of input above 16 MiB before parsing/storage, and preservation of the caller's uncancelled token after successful resolution. All four resolver tests pass (1aee7f2eedff4e489f574dec3572fb8b.log). No production behavior changed in this verification-only slice.
+
+### Explicit resolved-file admission
+
+The native metadata result now validates an explicit original torrent file index before playback: unknown indexes, padding, empty files and files exceeding the 4 GiB cache cap are rejected. It does not infer file zero, replace disk/boundary-piece admission, or yet connect file selection to Swift/UI. Tests cover non-contiguous original indexes and the owned multi-episode fixture. Recorded red compilation evidence `18b65bc154944286a56296740ef6a26b` and green five-test metadata suite `c9ca1bf6c5ce43ed94b9f47c58067b87` under the phase-3-core task. C/Swift resolution lifecycle and production selection remain outstanding.

@@ -1,7 +1,7 @@
 //! Embedded byte transport. The HTTP adapter binds only to loopback.
 pub mod failure;
-pub mod metadata;
 mod ffi;
+pub mod metadata;
 use failure::FailureCode;
 pub mod storage_budget;
 use anyhow::{Context, Result, bail};
