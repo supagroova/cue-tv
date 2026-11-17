@@ -6,7 +6,7 @@ The user selected simulator-first development and deferred physical Apple TV pai
 | --- | --- | --- |
 | 0 | PR #4: generated media, decoder lab, unit and remote-driven simulator tests | Physical signing/install/launch qualification |
 | 1 | PR #5: embedded native engine, real peer transfer, magnet metadata, file selection, isolated HTTP/UDP/DHT fixtures, versioned C ABI, range adapter, cancellation regression, ten-minute simulator playback starting before completion | HTTPS/public swarm, stress/error cases, physical independence |
-| 2 | Candidate research: official VLCKit pinned package compiles for tvOS in an isolated local probe | Player matrix/selection, session coordinator, bounded storage and resource policy |
+| 2 | Native storage admission and write-time reserve guards; official VLCKit pinned package compiles for tvOS in an isolated local probe | Player matrix/selection, session coordinator, app-wide cache ownership/cleanup and measured resource policy |
 | 3–5 | Not implemented | Core, standalone journey, state/sync/recovery |
 | 6–7 | Not implemented | Qualification and reproducible personal release/handover |
 

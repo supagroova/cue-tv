@@ -1,5 +1,6 @@
 //! Embedded byte transport. The HTTP adapter binds only to loopback.
 mod ffi;
+pub mod storage_budget;
 use anyhow::{Context, Result, bail};
 use axum::{
     Router,
@@ -10,8 +11,10 @@ use axum::{
     routing::get,
 };
 use futures_util::StreamExt;
+use librqbit::storage::StorageFactoryExt;
 use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Magnet, Session, SessionOptions};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use storage_budget::{BudgetFactory, DiskProbe, StorageBudget};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
@@ -155,6 +158,28 @@ impl PlaybackSession {
         initial_peers: Vec<SocketAddr>,
         discovery: Discovery,
     ) -> Result<Self> {
+        Self::start_budgeted(
+            source,
+            index,
+            output,
+            initial_peers,
+            discovery,
+            StorageBudget::default(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_budgeted(
+        source: TorrentSource,
+        index: usize,
+        output: PathBuf,
+        initial_peers: Vec<SocketAddr>,
+        discovery: Discovery,
+        budget: StorageBudget,
+        probe: Option<DiskProbe>,
+    ) -> Result<Self> {
+        let storage = BudgetFactory::new(output.clone(), budget, probe);
         let source = match source {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
             TorrentSource::Magnet(value) => {
@@ -179,6 +204,7 @@ impl PlaybackSession {
                     ..Default::default()
                 }),
                 persistence: None,
+                default_storage_factory: Some(storage.boxed()),
                 disable_trackers: !discovery.trackers,
                 disable_local_service_discovery: true,
                 cancellation_token: Some(cancel.clone()),
