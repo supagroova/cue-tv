@@ -465,6 +465,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "futures-util",
  "librqbit",
  "reqwest 0.12.28",
  "serde",

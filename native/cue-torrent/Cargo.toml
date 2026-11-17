@@ -8,6 +8,7 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 anyhow = "1"
+futures-util = "0.3"
 axum = "0.8"
 librqbit = { git = "https://github.com/ikatson/rqbit", rev = "f23bacdddcc5318caa813418b8eb1b1d7307faaa", default-features = false, features = ["rust-tls"] }
 serde = { version = "1", features = ["derive"] }

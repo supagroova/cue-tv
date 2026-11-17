@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use futures_util::StreamExt;
 use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Magnet, Session, SessionOptions};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -102,7 +103,9 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
         }
     };
     response
-        .body(Body::from_stream(ReaderStream::new(stream.take(count))))
+        .body(Body::from_stream(
+            ReaderStream::new(stream.take(count)).take_until(state.cancel.cancelled_owned()),
+        ))
         .unwrap()
 }
 
@@ -110,6 +113,7 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
 pub struct PlaybackSession {
     pub url: String,
     session: Arc<Session>,
+    torrent: Arc<librqbit::ManagedTorrent>,
     cancel: CancellationToken,
     server: tokio::task::JoinHandle<()>,
 }
@@ -198,7 +202,7 @@ impl PlaybackSession {
             let router = Router::new()
                 .route(&path, get(serve))
                 .with_state(StreamState {
-                    torrent: handle,
+                    torrent: handle.clone(),
                     index,
                     len,
                     cancel: cancel.clone(),
@@ -209,15 +213,16 @@ impl PlaybackSession {
                     .with_graceful_shutdown(stopped.cancelled_owned())
                     .await;
             });
-            Ok::<_, anyhow::Error>((format!("http://{address}{path}"), server))
+            Ok::<_, anyhow::Error>((format!("http://{address}{path}"), server, handle))
         }
         .await;
         match setup {
-            Ok((url, server)) => {
+            Ok((url, server, torrent)) => {
                 guard.disarm();
                 Ok(Self {
                     url,
                     session,
+                    torrent,
                     cancel,
                     server,
                 })
@@ -229,6 +234,10 @@ impl PlaybackSession {
             }
         }
     }
+    pub fn downloaded_bytes(&self) -> u64 {
+        self.torrent.stats().progress_bytes
+    }
+
     pub async fn stop(self) {
         self.cancel.cancel();
         self.session.stop().await;
