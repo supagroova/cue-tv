@@ -64,7 +64,7 @@ struct StandaloneHome: View {
                                 Button("\(catalog.name) · \(catalog.kind)") {
                                     let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
                                     Task {
-                                        let admitted = await model.perform { service, revision in
+                                        let admitted = await model.perform(expectedRevision: state.revision) { service, revision in
                                             if query.isEmpty { try await service.loadCatalog(index: catalog.index, expectedRevision: revision) }
                                             else { try await service.searchCatalog(index: catalog.index, query: query, expectedRevision: revision) }
                                         }
@@ -72,22 +72,22 @@ struct StandaloneHome: View {
                                     }
                                 }.disabled(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !catalog.searchable)
                             }
-                            if state.catalogChoicesOffset > 0 { Button("Previous catalogs") { Task { await model.perform { try await $0.showCatalogChoices(offset: max(0, state.catalogChoicesOffset - 16), expectedRevision: $1) } } } }
-                            if state.catalogChoicesOffset + 16 < state.catalogTotal { Button("More catalogs") { Task { await model.perform { try await $0.showCatalogChoices(offset: state.catalogChoicesOffset + 16, expectedRevision: $1) } } } }
+                            if state.catalogChoicesOffset > 0 { Button("Previous catalogs") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogChoices(offset: max(0, state.catalogChoicesOffset - 16), expectedRevision: $1) } } } }
+                            if state.catalogChoicesOffset + 16 < state.catalogTotal { Button("More catalogs") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogChoices(offset: state.catalogChoicesOffset + 16, expectedRevision: $1) } } } }
                             TextField("Add-on manifest URL", text: $manifest).autocorrectionDisabled()
-                            Button("Preview add-on") { let url = manifest; Task { await model.perform { service, _ in try await service.loadAddon(url) } } }
+                            Button("Preview add-on") { let url = manifest; Task { await model.perform(expectedRevision: state.revision) { service, _ in try await service.loadAddon(url) } } }
                             if let addon = state.addon {
                                 Text(addon.name ?? "Add-on")
-                                if addon.status == .ready, !addon.installed { Button("Install add-on") { Task { await model.perform { try await $0.installAddon(expectedRevision: $1) } } } }
+                                if addon.status == .ready, !addon.installed { Button("Install add-on") { Task { await model.perform(expectedRevision: state.revision) { try await $0.installAddon(expectedRevision: $1) } } } }
                             }
                         case .titles:
                             if let catalog = state.catalog {
                                 ForEach(Array(catalog.items.enumerated()), id: \.offset) { index, title in
-                                    Button(title.name) { Task { if await model.perform({ try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
+                                    Button(title.name) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
                                 }
                                 if catalog.status == .loading { ProgressView() }
-                                if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
-                                if catalog.hasMore { Button("More titles") { Task { await model.perform { try await $0.showCatalogItems(offset: catalog.offset + catalog.items.count, expectedRevision: $1) } } } }
+                                if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
+                                if catalog.hasMore { Button("More titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: catalog.offset + catalog.items.count, expectedRevision: $1) } } } }
                             }
                         case .details:
                             if let details = state.details {
@@ -95,24 +95,24 @@ struct StandaloneHome: View {
                                 if let description = details.description { Text(description) }
                                 if details.status == .loading { ProgressView() }
                                 ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                    Button(video.title) { Task { if await model.perform({ try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                    Button(video.title) { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
                                 }
-                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { if await model.perform({ try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } } }
-                                if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
-                                if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
+                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } } }
+                                if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
+                                if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
                             }
                         case .sources:
                             if let sources = state.sources {
                                 if sources.loading { ProgressView("Finding sources…") }
                                 ForEach(sources.items, id: \.index) { source in
                                     Button(source.name ?? "Source \(source.index + 1)") {
-                                        Task { if let request = await model.prepare(index: source.index) { selectedSource = SelectedSource(request: request) } }
+                                        Task { if let request = await model.prepare(index: source.index, expectedRevision: state.revision) { selectedSource = SelectedSource(request: request) } }
                                     }.disabled(source.kind != .torrent)
                                     if source.kind != .torrent { Text("This source format is not supported yet.").font(.caption) }
                                 }
                                 if sources.status == .ready, sources.items.isEmpty { Text("No sources found. Install a compatible Stremio add-on.") }
-                                if sources.offset > 0 { Button("Previous sources") { Task { await model.perform { try await $0.showSources(offset: max(0, sources.offset - 24), expectedRevision: $1) } } } }
-                                if sources.offset + sources.items.count < sources.total { Button("More sources") { Task { await model.perform { try await $0.showSources(offset: sources.offset + sources.items.count, expectedRevision: $1) } } } }
+                                if sources.offset > 0 { Button("Previous sources") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showSources(offset: max(0, sources.offset - 24), expectedRevision: $1) } } } }
+                                if sources.offset + sources.items.count < sources.total { Button("More sources") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showSources(offset: sources.offset + sources.items.count, expectedRevision: $1) } } } }
                             }
                         }
                     }

@@ -137,8 +137,12 @@ final class StandaloneModel {
     }
 
     @discardableResult
-    func perform(_ action: @Sendable (any CoreService, UInt64) async throws -> Void) async -> Bool {
+    func perform(expectedRevision: UInt64? = nil, _ action: @Sendable (any CoreService, UInt64) async throws -> Void) async -> Bool {
         guard let service, let revision = snapshot?.model?.revision else { return false }
+        guard expectedRevision == nil || expectedRevision == revision else {
+            error = "That selection has changed. Please select it again."
+            return false
+        }
         let token = generation
         error = nil
         do {
@@ -151,8 +155,12 @@ final class StandaloneModel {
         }
     }
 
-    func prepare(index: Int) async -> CoreTorrentRequest? {
+    func prepare(index: Int, expectedRevision: UInt64? = nil) async -> CoreTorrentRequest? {
         guard let service, let revision = snapshot?.model?.revision else { return nil }
+        guard expectedRevision == nil || expectedRevision == revision else {
+            error = "That source has changed. Please select it again."
+            return nil
+        }
         let token = generation
         do {
             let request = try await service.prepareTorrent(index: index, expectedRevision: revision)

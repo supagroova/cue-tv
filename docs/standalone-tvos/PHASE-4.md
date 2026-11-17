@@ -71,3 +71,9 @@ The missing-storage regression verifies the visible recovery capability, retaine
 ### Authenticated restoration through Swift and native Core
 
 A test-only fixture uses CryptoKit to prepare an authenticated encrypted store containing synthetic credentials and the pinned Core schema. It derives default settings from a normally persisted guest profile, then supplies an explicit synthetic account profile. Production code has no fixture-login hook. Two independent Home models restore the account through the normal Swift/C/Rust path, preserve its language, report authentication and sign-out capability, and receive distinct native session IDs. The second model signs out and removes selection/storage. Full Swift suite passes (`4f298369263f4fa1a35f9b21cb75e3a9`). This covers service recreation, not an OS process relaunch, live authentication, token validity or sign-out remote-focus behavior.
+
+### Bind row actions to the displayed revision
+
+All indexed Home actions now carry the revision used to render their row, including catalog/title/episode/source selection and paging. The model refuses dispatch if its current revision differs; the native bridge still performs its own atomic revision validation. Previously the UI captured an index but borrowed a newer revision at dispatch, allowing that index to describe a different row after an asynchronous update.
+
+The native-backed regression advances Core after capturing a displayed revision and verifies that the old row cannot dispatch. Full Swift suite passes (`a50d127f4f3244048e22e32c3d239c0d`). Removing the admission guard reproduced both unexpected dispatch and acceptance (`2a3fe495cbe740bfa8ade69131d7bbf1`); the verified guard was restored byte-for-byte afterward. This protects selection identity but does not yet add season filtering or focus restoration.

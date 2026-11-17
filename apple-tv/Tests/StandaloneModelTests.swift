@@ -299,3 +299,22 @@ private actor ActionGate {
     #expect(try await selection.load() == nil)
     #expect(!FileManager.default.fileExists(atPath: configuration.directory.path))
 }
+
+@Test @MainActor func staleDisplayedRevisionCannotDispatchAnEpisodeSelection() async throws {
+    let service = NativeCoreService()
+    let model = StandaloneModel(service: service)
+    let run = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let displayed = try #require(model.snapshot?.model?.revision)
+    try await service.setInterfaceLanguage("fra")
+    for _ in 0..<100 where model.snapshot?.model?.revision == displayed { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.model?.revision != displayed)
+    let admitted = await model.perform(expectedRevision: displayed) { _, _ in
+        Issue.record("A stale visible row must not dispatch against a replacement list")
+    }
+    #expect(!admitted)
+    let source = await model.prepare(index: 0, expectedRevision: displayed)
+    #expect(source == nil)
+    run.cancel()
+    await run.value
+}
