@@ -70,3 +70,8 @@ apple-tv/TVConfig.plist
 
 # Also exclude symlinked local dependency folders
 **/node_modules
+
+# Local agent evidence and native build output
+.agent-work/
+__pycache__/
+*.pyc
