@@ -1,0 +1,27 @@
+[
+  {
+    "repository": "Stremio/stremio-core",
+    "branch": "development",
+    "commit": "2c89236b47dfcd5e844c1dfae5737164cb616fbf"
+  },
+  {
+    "repository": "ikatson/rqbit",
+    "branch": "main",
+    "commit": "f23bacdddcc5318caa813418b8eb1b1d7307faaa"
+  },
+  {
+    "repository": "arvidn/libtorrent",
+    "branch": "RC_2_1",
+    "commit": "a53f32a8e65d74f1f9730e32dbed7a68c9573dc9"
+  },
+  {
+    "repository": "mpvkit/MPVKit",
+    "branch": "main",
+    "commit": "d9194243bdc68b87d8989376ab52aee7da6c8e0b"
+  },
+  {
+    "repository": "nodejs-mobile/nodejs-mobile",
+    "branch": "main",
+    "commit": "d9552e0e01ed5bdbe12a31d1ce6c0877a4f39580"
+  }
+]
