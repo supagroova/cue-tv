@@ -526,3 +526,23 @@ setup/seeder build. Core-only change in 07e7d20 invalidated the combined artifac
 recompiling seeder (71s) and torrent (26s). Next potential optimization: split Core
 and torrent/seeder artifact caches with complete inputs. First measure Swift-only
 push reuse of existing bb38dc cache; no workflow change in this slice.
+
+
+### Phase 5 — playback waits for unadmitted private tickets
+
+The shared reply slot was a confirmed integration problem: while owned subtitle
+HTTP was held, playback immediately failed busy. Extended the actual native HTTP
+fixture with two pending playback requests: cancel one while the slot is occupied,
+then release subtitle discovery and require the other to reach Core's expected
+stale_playback error for the already-closed token. Red
+96a4d5b81ad04c989ce41d1a8500bdad returned busy for both assertions.
+NativeCoreService.playback now waits in cancellable 20ms intervals for up to five
+seconds ONLY while its ticket is zero (nothing admitted). Each retry verifies the
+same live native handle and no retirement. Once admitted, existing receipt handling
+runs once; no replay follows cancellation, timeout or native errors. Other service
+operations retain their existing immediate-busy behavior. The admission wait and
+existing five-second reply wait are separate bounds.
+Full 73-test suite passes 7a53703eb6cc4e2899281c89cf7347fa; unsigned device build passes
+8dcf18302f29468e94c1b54ad193f25c. Ambiguous accepted operations still need reconciliation;
+this change only resolves contention before admission. Prior playback UI/relaunch,
+account journal and physical gates remain as recorded above.
