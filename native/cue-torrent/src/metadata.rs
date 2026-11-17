@@ -39,6 +39,57 @@ impl Resolved {
     }
 }
 
+/// Owns discovery until its result is consumed or shutdown is acknowledged.
+/// Dropping requests cancellation; callers needing a teardown guarantee must await stop.
+pub struct ResolutionSession {
+    cancel: CancellationToken,
+    task: Option<tokio::task::JoinHandle<Result<Resolved>>>,
+}
+impl ResolutionSession {
+    pub fn start(
+        source: TorrentSource,
+        output: PathBuf,
+        peers: Vec<SocketAddr>,
+        discovery: Discovery,
+    ) -> Self {
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(resolve(source, output, peers, discovery, cancel.clone()));
+        Self {
+            cancel,
+            task: Some(task),
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.as_ref().is_none_or(|task| task.is_finished())
+    }
+
+    pub async fn finish(mut self) -> Result<Resolved> {
+        self.task
+            .take()
+            .expect("owned resolution task")
+            .await
+            .map_err(|_| anyhow::anyhow!("metadata_task_failed"))?
+    }
+
+    pub async fn stop(mut self) -> Result<()> {
+        self.cancel.cancel();
+        // A cancelled resolution is expected; a failed worker join is not an acknowledgement.
+        let _ = self
+            .task
+            .take()
+            .expect("owned resolution task")
+            .await
+            .map_err(|_| anyhow::anyhow!("metadata_task_failed"))?;
+        Ok(())
+    }
+}
+impl Drop for ResolutionSession {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
 pub async fn resolve(
     source: TorrentSource,
     output: PathBuf,

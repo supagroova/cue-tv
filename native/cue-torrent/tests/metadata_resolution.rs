@@ -142,3 +142,52 @@ fn explicit_selection_rejects_padding_empty_and_oversized_files() {
     }
     assert_eq!(resolved.selected_file(12).unwrap().index, 12);
 }
+
+#[tokio::test]
+async fn owned_resolution_can_be_cancelled_and_joined() {
+    use cue_torrent::metadata::ResolutionSession;
+    let directory = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let session = ResolutionSession::start(
+        TorrentSource::Magnet(
+            "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into(),
+        ),
+        directory.path().to_owned(),
+        vec![listener.local_addr().unwrap()],
+        Discovery::default(),
+    );
+    let (_socket, _) = tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!session.is_finished());
+    tokio::time::timeout(std::time::Duration::from_secs(3), session.stop())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn owned_resolution_returns_metadata_for_selection() {
+    use cue_torrent::metadata::ResolutionSession;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let directory = tempfile::tempdir().unwrap();
+    let session = ResolutionSession::start(
+        TorrentSource::Bytes(
+            std::fs::read(root.join("fixtures/torrents/multi-episode.torrent")).unwrap(),
+        ),
+        directory.path().to_owned(),
+        vec![],
+        Discovery::default(),
+    );
+    let resolved = session.finish().await.unwrap();
+    assert!(
+        resolved
+            .selected_file(1)
+            .unwrap()
+            .path
+            .ends_with("episode02.mp4")
+    );
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}

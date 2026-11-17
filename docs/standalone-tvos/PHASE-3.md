@@ -507,3 +507,7 @@ The native metadata result now validates an explicit original torrent file index
 ### Resolved metadata to native playback
 
 `PlaybackSession::start_resolved` consumes resolved metadata and discovered peers, validates the explicit original file index, then enters the existing budgeted playback/cache-root path. Direct magnet peer fixtures now use this production entry point without reinjecting the seeder address; unchanged byte/range assertions verify selected content. The peer-stream suite passes (`d7e584b8f17f429cb1b9bc6f73e1fb31`), after the missing-entry-point red test (`f6bf93fcbbf142dc9314d51d9340a807`). This proves the native handoff with controlled peers, not Swift integration, public swarm discovery or physical playback. The C/Swift metadata handle and file-selection lifecycle remain next.
+
+### Owned metadata discovery lifetime
+
+`ResolutionSession` owns a resolver task and cancellation token. `finish` transfers the metadata result; `stop` requests cancellation and joins the worker before acknowledging; drop requests cancellation but explicitly does not promise synchronous teardown. Tests exercise a real peer holding the metadata exchange open, stop/join, and metadata-to-selection success without media storage. Red evidence `a9b2470145064e9fb4a63fe08696f992`; seven metadata tests green `fba1e887aacb46018f2f32d60acea8c7`; complete locked torrent suite green `e9bbb507c5aa4ca6b68f371374b74e14`. The lifecycle is native-only pending C/Swift exposure.
