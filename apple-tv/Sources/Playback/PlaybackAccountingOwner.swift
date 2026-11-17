@@ -17,6 +17,7 @@ final class PlaybackAccountingOwner {
     private var started = false
     private var ready = false
     private var closing = false
+    private var hasObservation = false
     private var decoder: UUID?
     private var lastTime: UInt64?
     private var lastPaused: Bool?
@@ -84,6 +85,7 @@ final class PlaybackAccountingOwner {
             if needsSeek || now() >= nextCheckpoint { operations.append(.init(.checkpoint)); saves = true }
         }
         guard queue.enqueue(operations) else { rejected = operations; return false }
+        if !operations.isEmpty { hasObservation = true }
         lastTime = position; lastPaused = paused
         if saves { nextCheckpoint = now().advanced(by: .seconds(5)) }
         return true
@@ -96,10 +98,12 @@ final class PlaybackAccountingOwner {
         guard await queue.flush() else { return false }
         if let rejected {
             guard queue.enqueue(rejected), await queue.flush() else { return false }
+            if !rejected.isEmpty { hasObservation = true }
             self.rejected = nil
         }
         // Repeated close observes the sealed queue; it never starts another owner.
-        if !queue.enqueue(.close) { return await queue.flush() }
+        // An owner started only to inspect resume must not overwrite that record.
+        if !queue.enqueue(hasObservation ? .close : .retire) { return await queue.flush() }
         return await queue.flush()
     }
 }

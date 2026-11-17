@@ -421,6 +421,14 @@ production change followed the full native run. Unsigned device build passes
 Important UI sequencing: starting Core to inspect Resume is not yet decoder playback.
 If the user cancels before any decoder observation is admitted, retire without saving
 rather than checkpointing a new episode's zero state over the old continue-watching
-pointer. PlaybackAccountingOwner currently closes with a save even before a sample;
-add an explicit pre-play abort path and tests before UI integration. Parent retention
-and resume choice still required as described above.
+pointer. PlaybackAccountingOwner now retires without saving if no decoder operations were
+admitted. Decoder activation, invalid negative timing and non-playing states alone
+do not authorize saving. Successfully replayed backpressure intent counts as an
+observation; normal playback still ends with durable Close. Repeated Close remains
+single-use. The close-during-start test intentionally now expects retire rather
+than save. Red: 1ae779f808c3476abbc2293f8a587856 (three expectations expose unwanted
+save). Green: 82760ca47fb24a3eb96d660f8062fc46, all four accounting owner tests,
+including the existing seek/pause/periodic-save/durable-close ordering test.
+Fifteen portable harness tests pass. Full simulator suite and device build have not
+been rerun for this isolated Swift change. Parent retention and resume choice still
+required as described above.

@@ -48,7 +48,23 @@ import Testing
         owner.activateDecoder(decoder)
         #expect(!owner.sample(time: 100, duration: 1000, state: .playing, decoder: decoder))
         #expect(await gate.starts == 1)
-        #expect(await gate.closes == 1)
+        #expect(await gate.closes == 0)
+        #expect(await gate.retires == 1)
+    }
+
+    @Test @MainActor func closingBeforeValidTimingRetiresWithoutSaving() async {
+        let recorder = AccountingRecorder()
+        let owner = PlaybackAccountingOwner { action, time, duration in
+            await recorder.record(action, time, duration)
+        }
+        #expect(await owner.start())
+        let decoder = UUID()
+        owner.activateDecoder(decoder)
+        #expect(owner.sample(time: -1, duration: 0, state: .playing, decoder: decoder))
+        #expect(owner.sample(time: 0, duration: 0, state: .other, decoder: decoder))
+        #expect(await owner.close())
+        #expect(await owner.close())
+        #expect(await recorder.calls.map(\.action) == [.start, .retire])
     }
 
     @Test @MainActor func seekPauseAndPeriodicSaveKeepTheirOrder() async {
@@ -92,9 +108,11 @@ private actor AccountingStartGate {
     private(set) var entered = false
     private(set) var starts = 0
     private(set) var closes = 0
+    private(set) var retires = 0
     private var continuation: CheckedContinuation<Void, Never>?
     func execute(_ action: CorePlaybackAction) async {
         if action == .close { closes += 1 }
+        if action == .retire { retires += 1 }
         if action == .start {
             starts += 1; entered = true
             await withCheckedContinuation { continuation = $0 }
