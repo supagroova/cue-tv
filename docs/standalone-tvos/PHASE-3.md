@@ -336,3 +336,29 @@ simulator HTTP test also installs through Swift and observes the installed state
 and incremented add-on count. All 23 native tests, 25 simulator unit tests and the
 device application build pass. Catalogue/search/source operations, removal and
 upgrade UI, account flows and full-process relaunch remain outstanding.
+
+## Installed catalogue first-page path
+
+The owner now includes Core's `CatalogWithFilters<MetaItemPreview>`. The snapshot
+exposes bounded catalogue choices using indexes into the installed profile; a
+revision check rejects stale selection. The C/Swift `load_catalog` operation
+constructs its resource request from that installed descriptor, never from a
+caller-supplied transport URL. Catalogue resource effects have their own request
+generation so returning to a previous selection cannot admit an older resource
+result into the current catalogue model.
+
+The first view includes at most 16 catalogue choices and 24 items, with the total
+catalogue count and `has_more` reported explicitly. Display names are bounded;
+item identities are preserved rather than truncated, with oversized identities
+excluded at this boundary. Swift's bounded snapshot buffer is now 256 KiB to fit
+these views. Full enumeration, pagination, required extras/search, artwork and
+empty/error/retry UX remain unfinished and must not be treated as supported by
+this first-page slice.
+
+The owned native HTTP fixture now previews and installs an add-on, checks the
+catalogue resource URL Core requests and observes the parsed film. Disabling the
+real catalogue model makes that test fail; restoring it passes. The simulator
+fixture executes the same preview → install → catalogue chain through Swift.
+All 23 native tests, 25 simulator unit tests (3.431 seconds) and the device app
+build pass. Dedicated catalogue switching/pagination tests, metadata/sources,
+account operations and the standalone user journey remain required.

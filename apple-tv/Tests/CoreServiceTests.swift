@@ -59,6 +59,15 @@ import Security
     }
     #expect(state.model?.addon?.installed == true)
     #expect(state.model?.addonCount == originalCount.map { $0 + 1 })
+    let choice = try #require(state.model?.catalogs.first { $0.name == "Fixture catalogue" })
+    try await service.loadCatalog(index: choice.index, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.catalog?.status == .ready { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.catalog?.items.first?.id == "tt-fixture")
+    #expect(state.model?.catalog?.items.first?.name == "Simulator film")
     #expect(state.error == nil)
     #expect(state.model?.error == nil)
     try await service.stop()
@@ -107,8 +116,11 @@ nonisolated private final class CoreHTTPFixture: Sendable {
         let listener = try NWListener(using: .tcp, on: .any)
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, _, _ in
-                let body = #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":[],"types":[],"catalogs":[]}"#
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
+                let isCatalog = request.map { String(decoding: $0, as: UTF8.self).contains("/catalog/movie/fixture.json") } ?? false
+                let body = isCatalog
+                    ? #"{"metas":[{"id":"tt-fixture","type":"movie","name":"Simulator film"}]}"#
+                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue"}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
             }

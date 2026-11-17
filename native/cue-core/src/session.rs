@@ -49,6 +49,9 @@ pub struct Snapshot {
     pub stopped: bool,
     pub interface_language: String,
     pub addon_count: usize,
+    pub catalogs: Vec<crate::catalog::Choice>,
+    pub catalog_total: usize,
+    pub catalog: Option<crate::catalog::View>,
     pub addon: Option<AddonSnapshot>,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
@@ -57,7 +60,8 @@ enum Command {
     Language(String, oneshot::Sender<Result<(), &'static str>>),
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
     Install(u64, oneshot::Sender<Result<(), &'static str>>),
-    Effect(Msg, u64),
+    Catalog(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Effect(Msg, u64, u64),
 }
 pub struct CoreSession {
     environment: Arc<Environment>,
@@ -96,7 +100,15 @@ impl CoreSession {
             }
         };
         let (commands, inbox) = mpsc::channel(64);
-        let initial = snapshot(&ctx, &AddonDetails::default(), 0, 0, false, None);
+        let initial = snapshot(
+            &ctx,
+            &AddonDetails::default(),
+            &crate::catalog::Catalog::default(),
+            0,
+            0,
+            false,
+            None,
+        );
         let (publish, state) = watch::channel(initial);
         let env = environment.clone();
         let outgoing = commands.clone();
@@ -154,6 +166,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn load_catalog(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Catalog(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -182,12 +205,17 @@ impl Drop for CoreSession {
 fn snapshot(
     ctx: &Ctx,
     addon: &AddonDetails,
+    catalog: &crate::catalog::Catalog,
     revision: u64,
     pending_effects: usize,
     stopped: bool,
     error: Option<&'static str>,
 ) -> Snapshot {
+    let (catalogs, catalog_total) = crate::catalog::choices(ctx);
     Snapshot {
+        catalogs,
+        catalog_total,
+        catalog: crate::catalog::view(catalog),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -227,6 +255,8 @@ async fn run(
     env: Arc<Environment>,
 ) {
     let mut addon = AddonDetails::default();
+    let mut catalog = crate::catalog::Catalog::default();
+    let mut catalog_generation = 0u64;
     let mut addon_generation = 0u64;
     let mut revision = 0;
     let mut pending = 0usize;
@@ -236,7 +266,7 @@ async fn run(
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
         };
-        let (message, reply, origin) = match command {
+        let (message, reply, origin, catalog_origin) = match command {
             Command::Language(language, reply) => {
                 error = None;
                 let mut settings = ctx.profile.settings.clone();
@@ -245,6 +275,7 @@ async fn run(
                     Msg::Action(Action::Ctx(ActionCtx::UpdateSettings(settings))),
                     Some(reply),
                     addon_generation,
+                    catalog_generation,
                 )
             }
             Command::Addon(selected, reply) => {
@@ -265,6 +296,7 @@ async fn run(
                     Msg::Action(Action::Load(ActionLoad::AddonDetails(selected))),
                     Some(reply),
                     addon_generation,
+                    catalog_generation,
                 )
             }
             Command::Install(expected_revision, reply) => {
@@ -286,11 +318,36 @@ async fn run(
                     Msg::Action(Action::Ctx(ActionCtx::InstallAddon(descriptor))),
                     Some(reply),
                     addon_generation,
+                    catalog_generation,
                 )
             }
-            Command::Effect(message, generation) => {
+            Command::Catalog(index, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_catalog"));
+                    continue;
+                }
+                let Some(selected) = crate::catalog::selection(&ctx, index) else {
+                    let _ = reply.send(Err("invalid_catalog"));
+                    continue;
+                };
+                if catalog.selected.as_ref() != Some(&selected) {
+                    let Some(next) = catalog_generation.checked_add(1) else {
+                        env.fail();
+                        break;
+                    };
+                    catalog_generation = next;
+                }
+                error = None;
+                (
+                    Msg::Action(Action::Load(ActionLoad::CatalogWithFilters(Some(selected)))),
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                )
+            }
+            Command::Effect(message, generation, catalog_version) => {
                 pending = pending.saturating_sub(1);
-                (message, None, generation)
+                (message, None, generation, catalog_version)
             }
         };
         let mut messages = VecDeque::from([message]);
@@ -334,7 +391,21 @@ async fn run(
             } else {
                 <AddonDetails as UpdateWithCtx<NativeEnv>>::update(&mut addon, &message, &ctx)
             };
-            let effects = retry.join(context_effects).join(addon_effects);
+            let stale_resource = catalog_origin != catalog_generation
+                && matches!(&message, Msg::Internal(Internal::ResourceRequestResult(..)));
+            let catalog_effects = if stale_resource {
+                Effects::none().unchanged()
+            } else {
+                <crate::catalog::Catalog as UpdateWithCtx<NativeEnv>>::update(
+                    &mut catalog,
+                    &message,
+                    &ctx,
+                )
+            };
+            let effects = retry
+                .join(context_effects)
+                .join(addon_effects)
+                .join(catalog_effects);
             if effects.has_changed {
                 revision += 1;
             }
@@ -348,14 +419,22 @@ async fn run(
                             EffectFuture::Concurrent(future) => {
                                 NativeEnv::exec_concurrent(async move {
                                     let _ = sender
-                                        .send(Command::Effect(future.await, addon_generation))
+                                        .send(Command::Effect(
+                                            future.await,
+                                            addon_generation,
+                                            catalog_generation,
+                                        ))
                                         .await;
                                 })
                             }
                             EffectFuture::Sequential(future) => {
                                 NativeEnv::exec_sequential(async move {
                                     let _ = sender
-                                        .send(Command::Effect(future.await, addon_generation))
+                                        .send(Command::Effect(
+                                            future.await,
+                                            addon_generation,
+                                            catalog_generation,
+                                        ))
                                         .await;
                                 })
                             }
@@ -364,7 +443,9 @@ async fn run(
                 }
             }
         }
-        publish.send_replace(snapshot(&ctx, &addon, revision, pending, false, error));
+        publish.send_replace(snapshot(
+            &ctx, &addon, &catalog, revision, pending, false, error,
+        ));
         if let Some(reply) = reply {
             let _ = reply.send(if error.is_none() {
                 Ok(())
@@ -377,6 +458,7 @@ async fn run(
     publish.send_replace(snapshot(
         &ctx,
         &addon,
+        &catalog,
         revision,
         0,
         true,

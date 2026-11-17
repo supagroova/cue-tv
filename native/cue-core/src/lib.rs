@@ -6,3 +6,5 @@ pub mod session;
 pub mod ffi;
 
 pub mod persistence;
+
+pub mod catalog;

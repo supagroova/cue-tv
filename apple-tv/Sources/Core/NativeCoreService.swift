@@ -10,10 +10,16 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let id: String?
         let name: String?
     }
+    struct CatalogChoice: Decodable, Sendable { let index: Int; let name: String; let kind: String }
+    struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
+    struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
         let interfaceLanguage: String
+        let catalogs: [CatalogChoice]
+        let catalogTotal: Int
+        let catalog: Catalog?
         let addonCount: Int
         let addon: Addon?
         let pendingEffects: Int
@@ -32,6 +38,7 @@ nonisolated protocol CoreService: Sendable {
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
+    func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func stop() async throws
 }
 
@@ -67,7 +74,7 @@ actor NativeCoreService: CoreService {
 
     func snapshot() throws -> CoreSnapshot {
         guard let handle, retirement == nil else { throw Failure.stopped }
-        var bytes = [UInt8](repeating: 0, count: 16 * 1024)
+        var bytes = [UInt8](repeating: 0, count: 256 * 1024)
         let length = bytes.withUnsafeMutableBufferPointer { cue_core_snapshot(handle, $0.baseAddress, $0.count) }
         guard length > 0, length <= bytes.count else { throw Failure.malformedSnapshot }
         let decoder = JSONDecoder()
@@ -87,6 +94,11 @@ actor NativeCoreService: CoreService {
 
     func installAddon(expectedRevision: UInt64) throws {
         try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
+    }
+
+    func loadCatalog(index: Int, expectedRevision: UInt64) throws {
+        guard index >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "load_catalog", "index": index, "revision": expectedRevision])
     }
 
     private func dispatch(_ command: [String: Any]) throws {

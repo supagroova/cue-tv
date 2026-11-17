@@ -183,6 +183,7 @@ async fn own(
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
+                            Command::LoadCatalog { index, revision, .. } => session.load_catalog(index, revision).await,
                         }} => {
                             command_error = result.err();
                         }
@@ -218,14 +219,28 @@ async fn own(
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
-    SetLanguage { version: u32, language: String },
-    LoadAddon { version: u32, url: String },
-    InstallAddon { version: u32, revision: u64 },
+    SetLanguage {
+        version: u32,
+        language: String,
+    },
+    LoadAddon {
+        version: u32,
+        url: String,
+    },
+    InstallAddon {
+        version: u32,
+        revision: u64,
+    },
+    LoadCatalog {
+        version: u32,
+        index: usize,
+        revision: u64,
+    },
 }
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::InstallAddon { version, .. } => *version == 1,
+            Self::InstallAddon { version, .. } | Self::LoadCatalog { version, .. } => *version == 1,
             Self::SetLanguage { version, language } => {
                 *version == 1
                     && language.len() == 3

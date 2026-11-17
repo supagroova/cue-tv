@@ -148,16 +148,27 @@ async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        let mut request = [0; 4096];
-        let count = socket.read(&mut request).await.unwrap();
-        assert!(
-            std::str::from_utf8(&request[..count])
-                .unwrap()
-                .starts_with("GET /private-config/manifest.json")
-        );
-        let body = r#"{"id":"org.cue.fixture","version":"1.0.0","name":"Fixture Addon","description":"Owned test fixture","resources":["catalog"],"types":["movie"],"catalogs":[]}"#;
-        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        let responses = [
+            (
+                "GET /private-config/manifest.json",
+                r#"{"id":"org.cue.fixture","version":"1.0.0","name":"Fixture Addon","description":"Owned test fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"My catalogue"}]}"#,
+            ),
+            (
+                "GET /private-config/catalog/movie/fixture.json",
+                r#"{"metas":[{"id":"tt123","type":"movie","name":"Fixture film"}]}"#,
+            ),
+        ];
+        for (expected, body) in responses {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let count = socket.read(&mut request).await.unwrap();
+            assert!(
+                std::str::from_utf8(&request[..count])
+                    .unwrap()
+                    .starts_with(expected)
+            );
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        }
     });
     let directory = std::env::temp_dir().join(format!(
         "cue-core-install-{}-{}",
@@ -200,6 +211,24 @@ async fn addon_action_fetches_manifest_through_core_and_redacts_transport() {
     assert_eq!(installed.addon_count, state.addon_count + 1);
     assert!(installed.addon.unwrap().installed);
     assert!(installed.error.is_none());
+    let choice = installed
+        .catalogs
+        .iter()
+        .find(|c| c.name == "My catalogue")
+        .unwrap();
+    assert!(session.load_catalog(choice.index, 0).await.is_err());
+    session
+        .load_catalog(choice.index, installed.revision)
+        .await
+        .unwrap();
+    let loaded = tokio::time::timeout(Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    let catalog = loaded.catalog.unwrap();
+    assert_eq!(catalog.status, "ready");
+    assert_eq!(catalog.items[0].id, "tt123");
+    assert_eq!(catalog.items[0].name, "Fixture film");
     server.await.unwrap();
     session.stop().await;
     drop(session);
