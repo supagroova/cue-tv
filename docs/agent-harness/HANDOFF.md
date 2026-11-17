@@ -81,3 +81,9 @@ Native library browsing now has 24-item windows and revision-guarded selection;
 full Core suite passes (`4cb6534b19ef4ab19804f8db1ea7d69d`). Next: expose
 show_library/load_library_details through FFI and Swift, then My library UI with
 origin-aware Back focus and an owned add→browse→reopen→remove journey.
+
+My library now browses Core pages and reopens saved titles through metadata;
+remote add→browse→reopen→remove passes (`52507771e08e46248251a96b6ddf57a1`),
+60 Swift tests and device build pass. PR13's CI collision is fixed with an atomic
+temporary-directory suffix, preserving parallel execution. Next: watched controls
+and Core Player checkpoints, plus remaining UI failure/lifecycle coverage.

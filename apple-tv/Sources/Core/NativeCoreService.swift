@@ -12,6 +12,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     }
     struct CatalogChoice: Decodable, Sendable { let searchable: Bool; let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
+    struct Library: Decodable, Sendable { let items: [CatalogItem]; let offset: Int; let total: Int }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
     struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
@@ -32,6 +33,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let sources: Sources?
         let details: Details?
         let detailsInLibrary: Bool?
+        let library: Library?
         let catalog: Catalog?
         let addonCount: Int
         let addon: Addon?
@@ -122,6 +124,8 @@ nonisolated protocol CoreService: Sendable {
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
     func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws
+    func showLibrary(offset: Int, expectedRevision: UInt64) async throws
+    func loadLibraryDetails(index: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
@@ -299,6 +303,14 @@ actor NativeCoreService: CoreService {
         try dispatch(["version": 1, "action": "catalog_items", "offset": offset, "revision": expectedRevision])
     }
 
+    func showLibrary(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "library_window", "offset": offset, "revision": expectedRevision])
+    }
+    func loadLibraryDetails(index: Int, expectedRevision: UInt64) throws {
+        guard index >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "library_details", "index": index, "revision": expectedRevision])
+    }
     private struct LibraryReceipt: Decodable, Sendable { let member: Bool }
     func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws {
         try Task.checkCancellation()

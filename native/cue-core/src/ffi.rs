@@ -350,6 +350,8 @@ async fn own(
                             Command::DetailsSeason { season, revision, .. } => session.select_details_season(season, revision).await,
                             Command::LoadSources { index, revision, .. } => session.load_sources(index, revision).await,
                             Command::SourceWindow { offset, revision, .. } => session.show_sources(offset, revision).await,
+                            Command::LibraryWindow { offset, revision, .. } => session.show_library(offset, revision).await,
+                            Command::LibraryDetails { index, revision, .. } => session.load_library_details(index, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
                             Command::LoadCatalog { index, revision, query, .. } => match query { Some(query) => session.search_catalog(index, &query, revision).await, None => session.load_catalog(index, revision).await },
                             Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
@@ -458,6 +460,16 @@ enum Command {
         offset: usize,
         revision: u64,
     },
+    LibraryWindow {
+        version: u32,
+        offset: usize,
+        revision: u64,
+    },
+    LibraryDetails {
+        version: u32,
+        index: usize,
+        revision: u64,
+    },
     LoadDetails {
         version: u32,
         index: usize,
@@ -494,6 +506,8 @@ impl Command {
             | Self::DetailsVideos { version, .. }
             | Self::LoadSources { version, .. }
             | Self::SourceWindow { version, .. }
+            | Self::LibraryWindow { version, .. }
+            | Self::LibraryDetails { version, .. }
             | Self::LoadDetails { version, .. }
             | Self::LoadCatalog { version, .. }
             | Self::CatalogChoices { version, .. }

@@ -9,7 +9,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
     @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws { try movieJourney(library: false) }
     @MainActor func testMovieLibraryMembershipCanBeAddedAndRemoved() throws { try movieJourney(library: true) }
-    @MainActor private func movieJourney(library: Bool) throws {
+    @MainActor func testSavedFilmReopensFromLibraryAndRemovalUpdatesList() throws { try movieJourney(library: true, browseLibrary: true) }
+    @MainActor private func movieJourney(library: Bool, browseLibrary: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -29,12 +30,40 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             for _ in 0..<8 where !add.hasFocus { XCUIRemote.shared.press(.down) }
             XCTAssertTrue(add.hasFocus)
             XCUIRemote.shared.press(.select)
+            if browseLibrary {
+                XCTAssertTrue(app.buttons["Remove from library"].waitForExistence(timeout: 5))
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(title.waitForExistence(timeout: 5))
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+                XCTAssertTrue(catalog.hasFocus)
+                let myLibrary = app.buttons["My library"]
+                XCTAssertTrue(myLibrary.waitForExistence(timeout: 5))
+                for _ in 0..<20 where !myLibrary.hasFocus { XCUIRemote.shared.press(.up) }
+                XCTAssertTrue(myLibrary.hasFocus)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(title.waitForExistence(timeout: 5))
+                for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
+                XCTAssertTrue(title.hasFocus)
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(app.staticTexts["Owned film without episode metadata"].waitForExistence(timeout: 5))
+            }
             let remove = app.buttons["Remove from library"]
             XCTAssertTrue(remove.waitForExistence(timeout: 5))
             for _ in 0..<8 where !remove.hasFocus { XCUIRemote.shared.press(.down) }
             XCTAssertTrue(remove.hasFocus)
             XCUIRemote.shared.press(.select)
             XCTAssertTrue(add.waitForExistence(timeout: 5))
+            if browseLibrary {
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(app.staticTexts["Your library is empty. Add a title from its details."].waitForExistence(timeout: 5))
+                XCTAssertFalse(title.exists)
+                XCUIRemote.shared.press(.menu)
+                let myLibrary = app.buttons["My library"]
+                XCTAssertTrue(myLibrary.waitForExistence(timeout: 5))
+                XCTAssertTrue(myLibrary.hasFocus)
+                return
+            }
         }
         let choose = app.buttons["Choose source"]
         XCTAssertTrue(choose.waitForExistence(timeout: 5))

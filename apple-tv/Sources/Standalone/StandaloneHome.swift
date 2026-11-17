@@ -12,9 +12,10 @@ struct StandaloneHome: View {
     @State private var preparingAccount = false
     @State private var accountError: String?
     @State private var selectedSource: SelectedSource?
-    enum Screen: Hashable { case catalogs, titles, details, sources }
+    @State private var detailsOrigin = Screen.titles
+    enum Screen: Hashable { case catalogs, titles, library, details, sources }
     enum Row: Hashable {
-        case catalog(Int), title(String, String), video(String), movie(String), source(String, Int)
+        case libraryHome, catalog(Int), title(String, String), video(String), movie(String), source(String, Int)
     }
     @FocusState private var focusedRow: Row?
     @State private var rememberedRows: [Screen: Row] = [:]
@@ -22,8 +23,8 @@ struct StandaloneHome: View {
     private func goBack() {
         switch screen {
         case .sources: screen = .details
-        case .details: screen = .titles
-        case .titles: screen = .catalogs
+        case .details: screen = detailsOrigin
+        case .titles, .library: screen = .catalogs
         case .catalogs: break
         }
     }
@@ -74,6 +75,10 @@ struct StandaloneHome: View {
                     VStack(alignment: .leading, spacing: 18) {
                         switch screen {
                         case .catalogs:
+                            Button("My library") {
+                                rememberedRows[.catalogs] = .libraryHome
+                                Task { if await model.perform(expectedRevision: state.revision, { try await $0.showLibrary(offset: state.library?.offset ?? 0, expectedRevision: $1) }) { screen = .library } }
+                            }.focused($focusedRow, equals: .libraryHome)
                             TextField("Search titles in a catalog", text: $search).autocorrectionDisabled()
                             ForEach(state.catalogs, id: \.index) { catalog in
                                 Button("\(catalog.name) · \(catalog.kind)") {
@@ -100,7 +105,7 @@ struct StandaloneHome: View {
                         case .titles:
                             if let catalog = state.catalog {
                                 ForEach(Array(catalog.items.enumerated()), id: \.element.id) { index, title in
-                                    Button(title.name) { rememberedRows[.titles] = .title(title.kind, title.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadDetails(index: index, expectedRevision: $1) }) { screen = .details } } }
+                                    Button(title.name) { rememberedRows[.titles] = .title(title.kind, title.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadDetails(index: index, expectedRevision: $1) }) { detailsOrigin = .titles; screen = .details } } }
                                     .focused($focusedRow, equals: .title(title.kind, title.id))
                                 }
                                 if catalog.status == .loading { ProgressView() }
@@ -115,6 +120,23 @@ struct StandaloneHome: View {
                                 }
                                 if catalog.offset > 0 { Button("Previous titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: max(0, catalog.offset - 24), expectedRevision: $1) } } } }
                                 if catalog.hasMore { Button("More titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showCatalogItems(offset: catalog.offset + catalog.items.count, expectedRevision: $1) } } } }
+                            }
+                        case .library:
+                            Text("My library").font(.title)
+                            if let library = state.library {
+                                ForEach(Array(library.items.enumerated()), id: \.element.id) { index, title in
+                                    Button(title.name) {
+                                        rememberedRows[.library] = .title(title.kind, title.id)
+                                        Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadLibraryDetails(index: index, expectedRevision: $1) }) { detailsOrigin = .library; screen = .details } }
+                                    }.focused($focusedRow, equals: .title(title.kind, title.id))
+                                }
+                                if library.total == 0 { Text("Your library is empty. Add a title from its details.") }
+                                if library.offset > 0 {
+                                    Button("Previous saved titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showLibrary(offset: max(0, library.offset - 24), expectedRevision: $1) } } }
+                                }
+                                if library.offset + library.items.count < library.total {
+                                    Button("More saved titles") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showLibrary(offset: library.offset + library.items.count, expectedRevision: $1) } } }
+                                }
                             }
                         case .details:
                             if let details = state.details {

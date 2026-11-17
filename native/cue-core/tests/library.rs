@@ -40,8 +40,10 @@ async fn failed_library_write_remains_failed_until_retry_is_durable() {
 }
 
 async fn membership_roundtrip(remove: bool, fail_write: bool) {
+    static NEXT_DIRECTORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT_DIRECTORY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
-        "cue-library-{}-{}",
+        "cue-library-{}-{}-{sequence}",
         std::process::id(),
         chrono::Utc::now().timestamp_nanos_opt().unwrap()
     ));

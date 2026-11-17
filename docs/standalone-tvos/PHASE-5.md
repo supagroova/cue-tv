@@ -1,8 +1,9 @@
 # Phase 5 — resume, library and recovery
 
 Status: title-detail library membership works through Swift/FFI and Core, with
-encrypted-reopen and cancellation tests. Library browsing, watched controls,
-playback checkpoints, sync and broader lifecycle work remain incomplete.
+encrypted-reopen and cancellation tests. Paged library browsing is connected to
+the UI; watched controls, playback checkpoints, sync and broader lifecycle work
+remain incomplete.
 Earlier phases retain their outstanding gates.
 
 The contract and ordered implementation gates are in
@@ -142,3 +143,31 @@ changing production decoding. Full native suite passes:
 These browsing commands are not yet exposed through FFI/Swift or a library screen.
 The seeded session test proves selected identity without add-ons, not successful
 remote metadata retrieval; the next UI fixture must cover that complete route.
+
+## My library screen
+
+Library paging and title selection now cross the JSON command boundary into Swift.
+The catalog home offers My library, with previous/more controls, an empty state and
+stable title focus. Details remember their catalog/library origin so Back returns
+to the correct list; opening a saved title fetches metadata through the same Core
+path as catalog browsing.
+
+The owned UI journey adds a film, leaves details, opens it from My library, removes
+it and verifies the empty list plus home focus. Missing-screen red:
+`46974dd7d6b548469d19c06234db73e3`; an intermediate test allowed only ten upward
+moves despite the larger default catalog list (`3d1823d34d6849d48ca6e65a3ab81e10`).
+The corrected bound matches the existing twenty-move catalog traversal and adds
+a restored-catalog-focus assertion. Final journey passes:
+`52507771e08e46248251a96b6ddf57a1`. All five native bridge tests pass
+(`794548f246eb4d399ed5c4770d2554d2`) and all 60 Swift tests pass
+(`c252449f230449afa722a04889671df4`). Multi-page native identity coverage is
+recorded above; a multi-page remote UI fixture is not yet included.
+
+PR13 native job134355404969 exposed a separate fixture collision: parallel tests
+used the same process ID/timestamp directory. Names now include an atomic sequence;
+create_dir still rejects collisions rather than sharing state. All three library
+tests pass with eight test workers (`ff0e7109cec34c328324eac0e40fbb08`). No test
+was serialized or assertion weakened.
+
+Unsigned device build passes (`48202301d48a42afbd5a2aa89ab0d36e`); all 15
+portable checks pass.
