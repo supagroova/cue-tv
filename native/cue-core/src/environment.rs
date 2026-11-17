@@ -3,7 +3,7 @@ use futures::{Future, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
     time::Duration,
 };
 use stremio_core::{
@@ -22,6 +22,7 @@ tokio::task_local! { static CONTEXT: Arc<Environment>; }
 pub struct Environment {
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     canceled: CancellationToken,
+    failed: AtomicBool,
     tasks: tokio_util::task::TaskTracker,
     runtime: tokio::runtime::Handle,
     sequential: tokio::sync::mpsc::Sender<futures::future::BoxFuture<'static, ()>>,
@@ -42,6 +43,7 @@ impl Environment {
         let env = Arc::new(Self {
             storage: Mutex::new(BTreeMap::new()),
             canceled: CancellationToken::new(),
+            failed: AtomicBool::new(false),
             tasks: tokio_util::task::TaskTracker::new(),
             runtime: runtime.clone(),
             sequential,
@@ -65,7 +67,9 @@ impl Environment {
                 };
                 tokio::select! { biased;
                     _ = canceled.cancelled() => break,
-                    _ = env.scope(future) => {},
+                    result = std::panic::AssertUnwindSafe(env.scope(future)).catch_unwind() => {
+                        if result.is_err() { env.fail(); break; }
+                    },
                 }
             }
         }, &runtime);
@@ -79,6 +83,13 @@ impl Environment {
         let _guard = self.storage.lock().unwrap_or_else(|e| e.into_inner());
         self.canceled.cancel();
         self.tasks.close();
+    }
+    pub(crate) fn fail(&self) {
+        self.failed.store(true, Ordering::Release);
+        self.cancel();
+    }
+    pub(crate) fn failure(&self) -> Option<&'static str> {
+        self.failed.load(Ordering::Acquire).then_some("core_task_failed")
     }
     pub async fn cancelled(&self) {
         self.canceled.cancelled().await;
@@ -268,7 +279,12 @@ fn spawn(future: impl Future<Output = ()> + Send + 'static, sequential: bool) {
     } else {
         let scope = env.clone();
         env.tasks.spawn_on(async move {
-            tokio::select! { biased; _ = scope.canceled.cancelled() => {}, _ = scope.scope(future) => {} }
+            tokio::select! { biased;
+                _ = scope.canceled.cancelled() => {},
+                result = std::panic::AssertUnwindSafe(scope.scope(future)).catch_unwind() => {
+                    if result.is_err() { scope.fail(); }
+                }
+            }
         }, &env.runtime);
     }
 }

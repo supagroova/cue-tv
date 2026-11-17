@@ -112,3 +112,27 @@ async fn failed_model_start_closes_its_environment() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn failed_effect_stops_its_session_without_stranding_waiters() {
+    for sequential in [false, true] {
+        let env = Environment::new().unwrap();
+        let mut session = CoreSession::guest(env.clone()).await.unwrap();
+        env.scope(async {
+            let failure = async { panic!("controlled effect failure") };
+            if sequential {
+                NativeEnv::exec_sequential(failure);
+            } else {
+                NativeEnv::exec_concurrent(failure);
+            }
+        }).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !session.snapshot().stopped {
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("failed effect must stop its model owner");
+        assert_eq!(session.snapshot().error, Some("core_task_failed"));
+        assert!(session.set_interface_language("fra").await.is_err());
+        tokio::time::timeout(Duration::from_secs(1), session.stop()).await.unwrap();
+    }
+}

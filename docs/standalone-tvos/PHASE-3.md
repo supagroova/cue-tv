@@ -114,8 +114,14 @@ New actions now clear the prior error before processing; after freeing capacity,
 a subsequent real Core action successfully persists its profile. This is not yet
 a general automatic retry/sync policy (Phase 5).
 
-Current local evidence: 12 tests pass, including real model action → state → Core
+Current local evidence: 13 tests pass, including real model action → state → Core
 storage effect, model/storage isolation, post-stop rejection, failed startup,
 effect failure recovery and shutdown with blocked/queued work. Both tvOS target
-builds pass. Remaining bridge work includes failed-task/panic supervision, the C
-ABI/Swift boundary, action → HTTP → model state, durable storage and account flows.
+builds pass. A controlled panic regression first left the session running until
+its deadline. Concurrent and sequential effect panics now cancel the environment,
+and the model owner publishes a stopped snapshot with `core_task_failed`; owner
+unwinds are also contained. Shutdown still joins tracked effects. This does not
+catch process aborts or suppress Rust’s process-wide panic hook, so production
+diagnostic handling remains part of the ABI integration.
+
+Remaining bridge work includes the C ABI/Swift boundary, action → HTTP → model state, durable storage and account flows.

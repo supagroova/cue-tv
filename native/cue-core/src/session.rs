@@ -1,6 +1,7 @@
 //! Owns real Core models and effects; published snapshots contain no account secrets.
 use crate::environment::{Environment, NativeEnv};
 use serde::Serialize;
+use futures::FutureExt;
 use std::{collections::VecDeque, sync::Arc};
 use stremio_core::{
     constants::PROFILE_STORAGE_KEY,
@@ -68,8 +69,17 @@ impl CoreSession {
         let env = environment.clone();
         let outgoing = commands.clone();
         let owner = tokio::spawn(async move {
-            env.scope(run(ctx, inbox, outgoing, publish, env.clone()))
-                .await;
+            let result = std::panic::AssertUnwindSafe(
+                env.scope(run(ctx, inbox, outgoing, publish.clone(), env.clone()))
+            ).catch_unwind().await;
+            if result.is_err() {
+                env.fail();
+                let mut state = publish.borrow().clone();
+                state.stopped = true;
+                state.pending_effects = 0;
+                state.error = env.failure();
+                publish.send_replace(state);
+            }
         });
         Ok(Self {
             environment,
@@ -213,5 +223,5 @@ async fn run(
         }
     }
     inbox.close();
-    publish.send_replace(snapshot(&ctx, revision, 0, true, error));
+    publish.send_replace(snapshot(&ctx, revision, 0, true, env.failure().or(error)));
 }
