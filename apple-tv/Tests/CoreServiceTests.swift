@@ -362,11 +362,15 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     #expect(attributes[kSecAttrAccessible as String] as? String == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
     #expect(attributes[kSecAttrSynchronizable as String] as? Bool != true)
     #expect(try await CoreAccountSelection(keyAccount: label).load() == first)
+    await #expect(throws: CoreAccountSelection.Failure.alreadySelected) { try await store.selectNew(second) }
+    #expect(try await store.load() == first)
     try await store.save(second)
     #expect(try await store.clear(ifMatching: first.namespace) == false)
     #expect(try await store.load() == second)
     #expect(try await store.clear(ifMatching: second.namespace) == true)
     #expect(try await store.load() == nil)
+    try await store.selectNew(first)
+    #expect(try await store.clear(ifMatching: first.namespace) == true)
     await #expect(throws: CoreAccountSelection.Failure.invalidRecord) {
         try await store.save(.init(namespace: UUID(), userID: ""))
     }
@@ -402,4 +406,26 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     let guest = NativeCoreService(persistence: second)
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await guest.discardAccountStorage(secondStore) }
     #expect(FileManager.default.fileExists(atPath: second.directory.path))
+}
+
+@Test func failedLoginAttemptRemovesCandidateAndDoesNotSelectAccount() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let selectionLabel = "login-selection-" + UUID().uuidString
+    let selection = CoreAccountSelection(keyAccount: selectionLabel)
+    let attempt = CoreAccountLogin(root: root, selection: selection)
+    let namespace = attempt.namespace
+    defer {
+        for label in [selectionLabel, "account-v1:" + namespace.uuidString.lowercased()] {
+            SecItemDelete([kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:CoreStorage.keyService,
+                kSecAttrAccount as String:label] as CFDictionary)
+        }
+        try? FileManager.default.removeItem(at: root)
+    }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { _ = try await attempt.signIn(email: "", password: "synthetic-password") }
+    #expect(try await selection.load() == nil)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(namespace.uuidString.lowercased()).path))
+    let keyQuery: [String: Any] = [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:CoreStorage.keyService,
+        kSecAttrAccount as String:"account-v1:" + namespace.uuidString.lowercased()]
+    #expect(SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecItemNotFound)
+    try await attempt.cancel()
 }

@@ -38,6 +38,8 @@ actor CoreStorage {
     private init(accountDirectory: URL, keyAccount: String) {
         self.directory = accountDirectory; self.keyAccount = keyAccount; self.removableAccount = true
     }
+    /// Candidate login owner may call this only before creating any native owner.
+    func removeUnopenedAccount() throws { try removeAccount(expectedDirectory: directory) }
     /// Only the owning service calls this after native stop acknowledgement.
     func removeAccount(expectedDirectory: URL) throws {
         guard removableAccount, directory == expectedDirectory, directory.isFileURL else { throw Failure.unsafeDirectory }
