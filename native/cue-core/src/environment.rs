@@ -3,7 +3,10 @@ use futures::{Future, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use stremio_core::{
@@ -89,7 +92,9 @@ impl Environment {
         self.cancel();
     }
     pub(crate) fn failure(&self) -> Option<&'static str> {
-        self.failed.load(Ordering::Acquire).then_some("core_task_failed")
+        self.failed
+            .load(Ordering::Acquire)
+            .then_some("core_task_failed")
     }
     pub async fn cancelled(&self) {
         self.canceled.cancelled().await;
@@ -278,13 +283,16 @@ fn spawn(future: impl Future<Output = ()> + Send + 'static, sequential: bool) {
         }
     } else {
         let scope = env.clone();
-        env.tasks.spawn_on(async move {
-            tokio::select! { biased;
-                _ = scope.canceled.cancelled() => {},
-                result = std::panic::AssertUnwindSafe(scope.scope(future)).catch_unwind() => {
-                    if result.is_err() { scope.fail(); }
+        env.tasks.spawn_on(
+            async move {
+                tokio::select! { biased;
+                    _ = scope.canceled.cancelled() => {},
+                    result = std::panic::AssertUnwindSafe(scope.scope(future)).catch_unwind() => {
+                        if result.is_err() { scope.fail(); }
+                    }
                 }
-            }
-        }, &env.runtime);
+            },
+            &env.runtime,
+        );
     }
 }

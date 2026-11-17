@@ -125,3 +125,29 @@ catch process aborts or suppress Rust’s process-wide panic hook, so production
 diagnostic handling remains part of the ABI integration.
 
 Remaining bridge work includes the C ABI/Swift boundary, action → HTTP → model state, durable storage and account flows.
+
+## Versioned C boundary
+
+`native/cue-core/include/cue_core.h` defines ABI v1. Creation returns a monotonic
+session ID and starts the guest model asynchronously on a two-worker runtime.
+At most eight unreleased sessions exist. Commands are strict, size-limited JSON
+and enter a bounded 64-entry queue; acceptance is not completion. Snapshots carry
+ABI version and session identity and are copied into caller-owned buffers. A
+size query does not reserve a snapshot; callers retry if the returned size grows.
+Undersized buffers remain untouched. No Rust allocation crosses this boundary.
+
+Stop requests cancellation. Status becomes complete only after the model owner
+and its effects have joined; release refuses running sessions. The session stays
+outside the bridge's unwind boundary so a bridge failure can still join it.
+The native boundary test exercises a real settings action, invalid envelopes,
+unknown fields, null-input rejection, undersized buffers,
+post-stop calls, repeated stop, stale IDs and the eight-session capacity limit.
+As with any C API, non-null pointers must refer to valid memory of the stated
+length; this interface cannot validate arbitrary addresses.
+
+Swift integration, production diagnostics, durable storage, account operations
+and the network-driven model path remain outstanding. This C slice alone does
+not satisfy the Phase 3 exit gate.
+
+C-boundary verification: all 14 native tests pass; locked device and simulator
+static-library builds pass. Swift application linkage is not yet verified.

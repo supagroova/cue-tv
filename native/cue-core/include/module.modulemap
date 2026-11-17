@@ -1,0 +1,4 @@
+module CueCore {
+    header "cue_core.h"
+    export *
+}
