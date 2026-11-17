@@ -185,3 +185,22 @@ profile auth independently of addon transport. Do not enable them implicitly whe
 integrating progress. Playercollect_seek_logs defaultsfalse; current session drops
 Event messages except fixed error categories. Core Player integration remains next.
 PR13ab91481native/device passed4m7; simulator134375797739 still queued at21:24UTC.
+
+Prepared torrent/HTTPS receipts now include a nonzero playback_token. CoreSession
+retains one private selected stream at most, replaces it on a new valid prepare,
+and clears it on source/title reselection or logout. Tokens use a process-wide
+checked atomic sequence. claim_playback consumes only the matching source-generation
+selection once; invalid claims leave the current valid selection intact. This is
+native handoff ownership only: Swift currently ignores the additive receipt field,
+no C claim API exists, and Core Player/progress/checkpoints are still not connected.
+Next: consume the retained selection inside a Core Player owner, bridge the token
+into Swift callbacks, and separate local checkpoints from remote effects.
+
+Real HTTP catalog test proves replacement rejection, single-use claims, exact
+source/file identity and invalidation on title reselection. Missing API/field red:
+6672f205db784b05907c4d6ceb15dc41. Catalog green: 3f02c89987e64ba28c405c8927798629.
+Full native suite: e347418541074fc1b062c8cf419966e9. All 60 Swift tests:
+b039912e01c040d8bc879b502f5eedf0. Unsigned device build:
+a67bcc95982a4d7db8e3a66b144c5d7b. Fifteen harness tests pass.
+PR13 remote remains ab91481; simulator job134375797739 remains queued, native/device
+and Android passed. Recheck that live job before pushing the accumulated native work.

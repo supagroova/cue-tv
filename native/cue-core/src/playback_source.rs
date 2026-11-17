@@ -105,6 +105,7 @@ pub fn torrent(stream: &Stream) -> Result<TorrentRequest, &'static str> {
 /// Identity is captured by the Core owner alongside source validation.
 #[derive(serde::Serialize)]
 pub struct PreparedTorrent {
+    pub playback_token: u64,
     pub subtitles: Vec<crate::subtitles::Choice>,
     pub meta_id: String,
     pub video_id: String,
@@ -150,6 +151,7 @@ pub fn https(stream: &Stream) -> Result<HttpsRequest, &'static str> {
 
 #[derive(serde::Serialize)]
 pub struct PreparedHttps {
+    pub playback_token: u64,
     pub subtitles: Vec<crate::subtitles::Choice>,
     pub meta_id: String,
     pub video_id: String,

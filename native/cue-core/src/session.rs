@@ -68,6 +68,10 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    ClaimPlayback(
+        u64,
+        oneshot::Sender<Result<stremio_core::models::player::Selected, &'static str>>,
+    ),
     DetailsWatched(
         Option<String>,
         bool,
@@ -465,6 +469,18 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Consumes one prepared selection for the native Player owner. This does not
+    /// start transfer or acknowledge playback/checkpoint success.
+    pub async fn claim_playback(
+        &self,
+        token: u64,
+    ) -> Result<stremio_core::models::player::Selected, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::ClaimPlayback(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn prepare_https(
         &self,
         index: usize,
@@ -617,6 +633,31 @@ fn account_identity(ctx: &Ctx) -> Option<String> {
     Some(id.to_owned())
 }
 
+struct PendingPlayback {
+    token: u64,
+    source_generation: u64,
+    selection: stremio_core::models::player::Selected,
+}
+fn retain_playback(
+    pending: &mut Option<PendingPlayback>,
+    details: &MetaDetails,
+    index: usize,
+    source_generation: u64,
+) -> Result<u64, &'static str> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_PLAYBACK: AtomicU64 = AtomicU64::new(1);
+    let selection = crate::sources::player_selection(details, index)?;
+    let token = NEXT_PLAYBACK
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| "playback_limit")?;
+    *pending = Some(PendingPlayback {
+        token,
+        source_generation,
+        selection,
+    });
+    Ok(token)
+}
+
 async fn run(
     mut ctx: Ctx,
     mut inbox: mpsc::Receiver<Command>,
@@ -632,6 +673,7 @@ async fn run(
     let mut details = MetaDetails::default();
     let mut details_generation = 0u64;
     let mut source_generation = 0u64;
+    let mut pending_playback: Option<PendingPlayback> = None;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -784,6 +826,7 @@ async fn run(
                 catalog_generation += 1;
                 details_generation += 1;
                 source_generation += 1;
+                pending_playback = None;
                 addon = AddonDetails::default();
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
@@ -1044,6 +1087,7 @@ async fn run(
                     break;
                 };
                 source_generation = next;
+                pending_playback = None;
                 details.streams.clear();
                 details.meta_streams.clear();
                 source_offset = 0;
@@ -1081,6 +1125,20 @@ async fn run(
                 let _ = reply.send(result);
                 continue;
             }
+            Command::ClaimPlayback(token, reply) => {
+                let result = if pending_playback.as_ref().is_some_and(|pending| {
+                    pending.token == token && pending.source_generation == source_generation
+                }) {
+                    Ok(pending_playback
+                        .take()
+                        .expect("checked pending selection")
+                        .selection)
+                } else {
+                    Err("stale_playback")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
             Command::PrepareTorrent(index, expected, reply) => {
                 let result = if expected != revision {
                     Err("stale_sources")
@@ -1089,7 +1147,15 @@ async fn run(
                 {
                     Err("invalid_source")
                 } else {
-                    crate::sources::prepare(&details, index)
+                    crate::sources::prepare(&details, index).and_then(|mut request| {
+                        request.playback_token = retain_playback(
+                            &mut pending_playback,
+                            &details,
+                            index,
+                            source_generation,
+                        )?;
+                        Ok(request)
+                    })
                 };
                 let _ = reply.send(result);
                 continue;
@@ -1102,7 +1168,15 @@ async fn run(
                 {
                     Err("invalid_source")
                 } else {
-                    crate::sources::prepare_https(&details, index)
+                    crate::sources::prepare_https(&details, index).and_then(|mut request| {
+                        request.playback_token = retain_playback(
+                            &mut pending_playback,
+                            &details,
+                            index,
+                            source_generation,
+                        )?;
+                        Ok(request)
+                    })
                 };
                 let _ = reply.send(result);
                 continue;
@@ -1246,6 +1320,7 @@ async fn run(
                     break;
                 };
                 source_generation = next_source;
+                pending_playback = None;
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
                 video_offset = 0;

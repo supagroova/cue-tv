@@ -376,6 +376,30 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     );
     let revision = session.snapshot().revision;
     let playback = session.prepare_torrent(0, revision).await.unwrap();
+    assert_ne!(playback.playback_token, 0);
+    let replacement = session.prepare_torrent(0, revision).await.unwrap();
+    assert_ne!(playback.playback_token, replacement.playback_token);
+    assert_eq!(
+        session.claim_playback(playback.playback_token).await,
+        Err("stale_playback")
+    );
+    let chosen = session
+        .claim_playback(replacement.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(chosen.meta_request.unwrap().path.id, "film-0");
+    assert_eq!(chosen.stream_request.unwrap().path.id, "film-0");
+    assert_eq!(
+        cue_core::playback_source::torrent(&chosen.stream)
+            .unwrap()
+            .file_index,
+        Some(0)
+    );
+    assert_eq!(
+        session.claim_playback(replacement.playback_token).await,
+        Err("stale_playback")
+    );
+
     let cancellation = tokio_util::sync::CancellationToken::new();
     let subtitles = session
         .discover_subtitles("film-0", "film-0", "movie", cancellation.clone())
@@ -423,6 +447,22 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
             .prepare_torrent(0, session.snapshot().revision)
             .await
             .is_err()
+    );
+    session
+        .show_sources(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    let retiring = session
+        .prepare_torrent(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        session.claim_playback(retiring.playback_token).await,
+        Err("stale_playback")
     );
     server.await.unwrap();
     session.stop().await;
