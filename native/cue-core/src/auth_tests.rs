@@ -49,7 +49,17 @@ async fn rejected_login_keeps_guest_identity_and_redacts_server_errors() {
 async fn successful_login_persists_identity_and_rejects_account_replacement() {
     use crate::environment::NativeEnv;
     use stremio_core::{constants::PROFILE_STORAGE_KEY, runtime::Env, types::profile::Profile};
-    let env = Environment::new().unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "cue-login-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let key = [91; 32];
+    let env = Environment::persistent(&directory, &key).unwrap();
     *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, _| {
         let result = if parts.uri.path().ends_with("/login") {
             json!({"result":{"authKey":"synthetic-token", "user":{
@@ -108,4 +118,79 @@ async fn successful_login_persists_identity_and_rejects_account_replacement() {
         assert!(!published.contains(secret));
     }
     session.stop().await;
+    drop(session);
+    drop(env);
+    let ciphertext = std::fs::read(directory.join("state.bin")).unwrap();
+    for secret in [
+        "fixture-user",
+        "synthetic-token",
+        "fixture@example.test",
+        "synthetic-password",
+    ] {
+        assert!(
+            !ciphertext
+                .windows(secret.len())
+                .any(|bytes| bytes == secret.as_bytes())
+        );
+    }
+    let restored_env = Environment::persistent(&directory, &key).unwrap();
+    *restored_env.test_http.lock().unwrap() = Some(Arc::new(|_, _| {
+        Ok(br#"{"result":{"success":true}}"#.to_vec())
+    }));
+    let mut restored = CoreSession::restore_account(restored_env.clone(), "fixture-user")
+        .await
+        .unwrap();
+    assert!(restored.snapshot().authenticated);
+    restored.logout().await.unwrap();
+    for _ in 0..200 {
+        if !restored.snapshot().authenticated && restored.snapshot().pending_effects == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!restored.snapshot().authenticated);
+    let profile = restored_env
+        .scope(async { NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY).await })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(profile.auth.is_none());
+    restored_env
+        .scope(async {
+            for name in [
+                "library",
+                "library_recent",
+                "streams",
+                "streaming_server_urls",
+                "notifications",
+                "search_history",
+                "dismissed_events",
+            ] {
+                let value = NativeEnv::get_storage::<serde_json::Value>(name)
+                    .await
+                    .unwrap();
+                if let Some(value) = value {
+                    assert!(value["uid"].is_null(), "retained identity in {name}");
+                }
+            }
+        })
+        .await;
+    restored.stop().await;
+    drop(restored);
+    drop(restored_env);
+    assert!(
+        CoreSession::restore_account(
+            Environment::persistent(&directory, &key).unwrap(),
+            "fixture-user"
+        )
+        .await
+        .is_err()
+    );
+    let mut guest = CoreSession::guest(Environment::persistent(&directory, &key).unwrap())
+        .await
+        .unwrap();
+    assert!(!guest.snapshot().authenticated);
+    guest.stop().await;
+    drop(guest);
+    std::fs::remove_dir_all(directory).unwrap();
 }

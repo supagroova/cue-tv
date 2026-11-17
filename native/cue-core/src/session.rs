@@ -62,6 +62,7 @@ pub struct Snapshot {
     pub error: Option<&'static str>,
 }
 enum Command {
+    Logout(oneshot::Sender<Result<(), &'static str>>),
     Login(AuthRequest, oneshot::Sender<Result<(), &'static str>>),
     Language(String, oneshot::Sender<Result<(), &'static str>>),
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
@@ -185,6 +186,13 @@ impl CoreSession {
     }
     pub fn snapshot(&self) -> Snapshot {
         self.state.borrow().clone()
+    }
+    pub async fn logout(&self) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Logout(reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
     }
     /// Admit one login attempt. Callers must use a fresh account namespace, not guest storage.
     /// The reply acknowledges admission; authentication completes through snapshots.
@@ -453,6 +461,33 @@ async fn run(
         };
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
+            Command::Logout(reply) => {
+                if matches!(ctx.status, CtxStatus::Loading(_)) {
+                    let _ = reply.send(Err("account_busy"));
+                    continue;
+                }
+                error = None;
+                addon_generation += 1;
+                catalog_generation += 1;
+                details_generation += 1;
+                source_generation += 1;
+                addon = AddonDetails::default();
+                catalog = crate::catalog::Catalog::default();
+                details = MetaDetails::default();
+                catalog_choices_offset = 0;
+                catalog_item_offset = 0;
+                video_offset = 0;
+                source_offset = 0;
+                revision += 1;
+                (
+                    Msg::Action(Action::Ctx(ActionCtx::Logout)),
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
             Command::Login(request, reply) => {
                 if ctx.profile.auth.is_some() || matches!(ctx.status, CtxStatus::Loading(_)) {
                     let _ = reply.send(Err("account_busy"));
@@ -830,6 +865,13 @@ async fn run(
             } else {
                 Effects::none().unchanged()
             };
+            // Pinned Core does not reset its server URL bucket on logout. Preserve
+            // identity-scoped restore by resetting it and using Core's persistence effect.
+            if matches!(&message, Msg::Internal(Internal::Logout(_))) {
+                ctx.streaming_server_urls =
+                    stremio_core::types::server_urls::ServerUrlsBucket::new::<NativeEnv>(None);
+                messages.push_back(Msg::Internal(Internal::StreamingServerUrlsBucketChanged));
+            }
             let context_effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message);
             let stale_manifest = origin != addon_generation
                 && matches!(&message, Msg::Internal(Internal::ManifestRequestResult(..)));
