@@ -13,11 +13,9 @@ actor TorrentCacheStore {
 
     func acquire() throws -> URL {
         guard active == nil else { throw Failure.busy }
+        try validateRoot()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         if !prepared {
-            if (try? root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
-                throw Failure.unsafeRoot
-            }
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let entries = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             // Fail closed on unrecognized content; never delete arbitrary files.
             guard entries.allSatisfy({ UUID(uuidString: $0.lastPathComponent) != nil }) else {
@@ -35,9 +33,17 @@ actor TorrentCacheStore {
     /// Invoke only before native start or after its shutdown ticket confirms storage closure.
     func release(_ directory: URL) throws {
         guard active == directory else { throw Failure.invalidLease }
+        try validateRoot()
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
         }
         active = nil
+    }
+
+    private func validateRoot() throws {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: root.path)
+        if attributes?[.type] as? FileAttributeType == .typeSymbolicLink {
+            throw Failure.unsafeRoot
+        }
     }
 }

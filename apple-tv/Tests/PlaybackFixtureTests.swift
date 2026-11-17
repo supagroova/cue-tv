@@ -155,3 +155,57 @@ import Testing
     } catch {}
     #expect(try Data(contentsOf: file) == Data("preserve".utf8))
 }
+
+@Test func cacheCanReopenAfterOperatingSystemPurge() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = TorrentCacheStore(root: root)
+    let first = try await store.acquire()
+    try await store.release(first)
+    try FileManager.default.removeItem(at: root)
+    let second = try await store.acquire()
+    #expect(FileManager.default.fileExists(atPath: second.path))
+    try await store.release(second)
+}
+
+@Test func cacheRejectsRootReplacedBySymlinkBetweenSessions() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("cache")
+    let outside = base.appendingPathComponent("outside")
+    let store = TorrentCacheStore(root: root)
+    let first = try await store.acquire()
+    try await store.release(first)
+    try FileManager.default.removeItem(at: root)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: root, withDestinationURL: outside)
+    do {
+        _ = try await store.acquire()
+        Issue.record("a replaced cache root must not redirect writes")
+    } catch {}
+    #expect(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+}
+
+@Test func cacheReleaseDoesNotFollowReplacedRoot() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("cache")
+    let backup = base.appendingPathComponent("original")
+    let outside = base.appendingPathComponent("outside")
+    let store = TorrentCacheStore(root: root)
+    let lease = try await store.acquire()
+    try FileManager.default.moveItem(at: root, to: backup)
+    let foreign = outside.appendingPathComponent(lease.lastPathComponent)
+    try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+    let marker = foreign.appendingPathComponent("keep")
+    try Data("keep".utf8).write(to: marker)
+    try FileManager.default.createSymbolicLink(at: root, withDestinationURL: outside)
+    do {
+        try await store.release(lease)
+        Issue.record("cleanup must not follow a redirected root")
+    } catch {}
+    #expect(FileManager.default.fileExists(atPath: marker.path))
+    try FileManager.default.removeItem(at: root)
+    try FileManager.default.moveItem(at: backup, to: root)
+    try await store.release(lease)
+}
