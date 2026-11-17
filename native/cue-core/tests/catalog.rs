@@ -399,3 +399,83 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     server.await.unwrap();
     session.stop().await;
 }
+
+#[tokio::test]
+async fn search_uses_declared_catalog_extra_and_rejects_unbounded_queries() {
+    use cue_core::{
+        environment::{Environment, NativeEnv},
+        session::CoreSession,
+    };
+    use stremio_core::{
+        constants::{PROFILE_STORAGE_KEY, SCHEMA_VERSION, SCHEMA_VERSION_STORAGE_KEY},
+        runtime::Env,
+        types::profile::Profile,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buffer = vec![0; 8192];
+        let count = socket.read(&mut buffer).await.unwrap();
+        let request = String::from_utf8_lossy(&buffer[..count]);
+        assert!(request.contains("search=blue%20sky"), "{request}");
+        let body = r#"{"metas":[{"id":"search-result","type":"movie","name":"Blue sky"}]}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let env = Environment::new().unwrap();
+    let mut profile = Profile::default();
+    profile.addons = vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"search.fixture","name":"Search","version":"1.0.0","description":"Owned fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"search","type":"movie","extra":[{"name":"search","isRequired":true}]}]}})).unwrap()];
+    env.scope(async {
+        NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
+            .await
+            .unwrap();
+        NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+            .await
+            .unwrap();
+    })
+    .await;
+    let mut session = CoreSession::guest(env).await.unwrap();
+    assert!(
+        session
+            .load_catalog(0, session.snapshot().revision)
+            .await
+            .is_err()
+    );
+    assert!(
+        session
+            .search_catalog(0, &"x".repeat(257), session.snapshot().revision)
+            .await
+            .is_err()
+    );
+    session
+        .search_catalog(0, "blue sky", session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if session
+                .snapshot()
+                .catalog
+                .as_ref()
+                .is_some_and(|v| v.items.first().is_some_and(|i| i.id == "search-result"))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    server.await.unwrap();
+    session.stop().await;
+}

@@ -64,7 +64,12 @@ enum Command {
     Language(String, oneshot::Sender<Result<(), &'static str>>),
     Addon(AddonSelected, oneshot::Sender<Result<(), &'static str>>),
     Install(u64, oneshot::Sender<Result<(), &'static str>>),
-    Catalog(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Catalog(
+        usize,
+        Option<String>,
+        u64,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
@@ -197,7 +202,28 @@ impl CoreSession {
     ) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
-            .try_send(Command::Catalog(index, expected_revision, reply))
+            .try_send(Command::Catalog(index, None, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn search_catalog(
+        &self,
+        index: usize,
+        query: &str,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let query = query.trim();
+        if query.is_empty() || query.len() > 256 || query.chars().any(char::is_control) {
+            return Err("invalid_search");
+        }
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Catalog(
+                index,
+                Some(query.to_owned()),
+                expected_revision,
+                reply,
+            ))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -445,12 +471,14 @@ async fn run(
                     source_generation,
                 )
             }
-            Command::Catalog(index, expected, reply) => {
+            Command::Catalog(index, query, expected, reply) => {
                 if expected != revision {
                     let _ = reply.send(Err("stale_catalog"));
                     continue;
                 }
-                let Some(selected) = crate::catalog::selection(&ctx, index) else {
+                let Some(selected) =
+                    crate::catalog::selection_with_search(&ctx, index, query.as_deref())
+                else {
                     let _ = reply.send(Err("invalid_catalog"));
                     continue;
                 };

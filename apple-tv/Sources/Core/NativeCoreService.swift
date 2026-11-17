@@ -10,7 +10,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let id: String?
         let name: String?
     }
-    struct CatalogChoice: Decodable, Sendable { let index: Int; let name: String; let kind: String }
+    struct CatalogChoice: Decodable, Sendable { let searchable: Bool; let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
@@ -70,6 +70,7 @@ nonisolated protocol CoreService: Sendable {
     func showSources(offset: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
+    func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest
@@ -154,6 +155,12 @@ actor NativeCoreService: CoreService {
     func loadCatalog(index: Int, expectedRevision: UInt64) throws {
         guard index >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "load_catalog", "index": index, "revision": expectedRevision])
+    }
+
+    func searchCatalog(index: Int, query: String, expectedRevision: UInt64) throws {
+        guard index >= 0, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              query.utf8.count <= 256 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "load_catalog", "index": index, "query": query, "revision": expectedRevision])
     }
 
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) throws {

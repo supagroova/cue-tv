@@ -208,7 +208,7 @@ async fn own(
                             Command::LoadSources { index, revision, .. } => session.load_sources(index, revision).await,
                             Command::SourceWindow { offset, revision, .. } => session.show_sources(offset, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
-                            Command::LoadCatalog { index, revision, .. } => session.load_catalog(index, revision).await,
+                            Command::LoadCatalog { index, revision, query, .. } => match query { Some(query) => session.search_catalog(index, &query, revision).await, None => session.load_catalog(index, revision).await },
                             Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
                             Command::CatalogItems { offset, revision, .. } => session.show_catalog_items(offset, revision).await,
                         }} => {
@@ -288,6 +288,7 @@ enum Command {
         revision: u64,
     },
     LoadCatalog {
+        query: Option<String>,
         version: u32,
         index: usize,
         revision: u64,

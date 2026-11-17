@@ -545,3 +545,7 @@ The simulator integration test starts a local HTTP tracker returning only the co
 ### Shared VLC rendering component
 
 Extracted the existing VLC surface/snapshot into production `Playback/VLCPlaybackSurface.swift`; the debug lab uses the same implementation. Playback, track controls, polling and teardown logic are unchanged. All short Playback Lab UI tests pass (`1bc6965b16f94c308891ab21c0dd9dbe`). This makes the decoder component available to the source flow but does not yet constitute a rendered production source screen. Open PR review threads were checked on 2026-11-17 and none were unresolved; phase completeness remains separate from review-thread status.
+
+### Declared catalog search
+
+Catalog choices expose whether their manifest supports a search-only extra set. The native session accepts trimmed nonempty queries up to 256 UTF-8 bytes without control characters, builds real Core search resource paths, and reuses catalog-generation isolation. The existing C load_catalog command accepts an optional query; Swift exposes searchCatalog. Native HTTP fixture verifies encoded `blue sky`, required-search behavior and oversized rejection. Swift fixture verifies a distinct result produced by the actual query. Full locked Core suite passes (`08837b11ba8b4226aafa54e037fbadc3`); simulator tests including Swift search pass (`7459e2d4941443949bb3dc2f67fd1715`). Search spans one chosen catalog; multi-provider aggregation, retained-model memory limits and cancellation of individual obsolete HTTP effects remain outstanding.
