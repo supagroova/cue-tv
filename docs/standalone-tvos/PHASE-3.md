@@ -555,3 +555,15 @@ Catalog choices expose whether their manifest supports a search-only extra set. 
 Inspected pinned Core `AuthRequest` and Ctx authentication implementation: email/password Login and LoginWithToken are supported; no OAuth/device-code flow is invented. `CoreStorage.account` creates separate opaque UUID namespaces under accounts-v1, each with its own Keychain encryption key. Neither email, provider ID nor token appears in directory/Keychain labels. Guest storage is unchanged.
 
 Simulator test creates two namespaces, writes language state in one, verifies independent keys/default state in the other, and reopens the first with its original key/state. Red evidence `d0a9936f76554f74897caafe93d7ed30`; full simulator suite green `e7dfd1f43d4b4c23976f4d19ba7a545a`. This is storage isolation only. Core login dispatch, authenticated profile restore, active-account pointer, sign-out cancellation/key removal and UI are still absent; guest entry still rejects authenticated profiles.
+
+### Identity-checked native account restoration
+
+Added a native-only account restore entry that requires a nonempty bounded expected user ID, matching stored auth identity and a nonempty bounded token. Guest mode still rejects authenticated profiles. Snapshots expose only an authenticated boolean; a synthetic fixture verifies no token, email or provider user ID is serialized. Missing/mismatched account storage is rejected. Full locked Core suite passes (`4a400095d94545de8fcd4f76c0861fcd`).
+
+This does not authenticate against Stremio, validate token freshness, restore all account buckets, or enable C/Swift account startup. Login, protected active-account selection, sign-out and UI remain outstanding. The existing C guest startup remains unchanged.
+
+### Restore persisted Core buckets
+
+Startup now restores library/recent-library, streams, server URLs, notifications, search history and dismissed events into Ctx. Every bucket must match the profile UID, including guest `None`; absent buckets are initialized for that identity. Recent library data merges by Core modification-time semantics. Restore itself does not rewrite stored data.
+
+Tests verify newer recent progress wins, search history survives, original storage stays unchanged, and each of the seven bucket keys accepts matching identity but rejects a foreign one. Full native suite passes (`d350efe5a02945c79eb89a7c4e86c3aa`); expanded per-bucket matrix passes (`a208ea7c582549658a0ba51dad47ed8e`); Swift simulator suite passes (`9f23bb2e588c4d64a752b8026249826e`). Remote-config/analytics state and separate calendar models are not restored here. Account login/sign-out and library UI/sync remain unfinished.
