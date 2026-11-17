@@ -124,13 +124,15 @@ struct StandaloneHome: View {
                                         }.padding(.vertical, 12)
                                     }
                                 }
-                                ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                    Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { rememberedRows[.details] = .video(video.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
-                                    .focused($focusedRow, equals: .video(video.id))
-                                }
-                                if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { rememberedRows[.details] = .movie(details.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } }.focused($focusedRow, equals: .movie(details.id)) }
-                                if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
-                                if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
+                                VStack(alignment: .leading, spacing: 18) {
+                                    ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
+                                        Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { rememberedRows[.details] = .video(video.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                        .focused($focusedRow, equals: .video(video.id))
+                                    }
+                                    if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { rememberedRows[.details] = .movie(details.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } }.focused($focusedRow, equals: .movie(details.id)) }
+                                    if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
+                                    if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
+                                }.frame(maxWidth: .infinity, alignment: .leading).focusSection()
                             }
                         case .sources:
                             if let sources = state.sources {

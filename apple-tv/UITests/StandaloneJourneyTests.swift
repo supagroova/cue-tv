@@ -6,7 +6,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
-    @MainActor private func journey(play: Bool, captions: Bool = false) throws {
+    @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
+    @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -20,6 +21,21 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
         XCTAssertTrue(title.hasFocus)
         XCUIRemote.shared.press(.select)
+        if filterSeason {
+            let first = app.buttons["Season 1"]
+            let second = app.buttons["Season 2"]
+            XCTAssertTrue(second.waitForExistence(timeout: 5))
+            let firstEpisode = app.buttons["S1 · E1 · Episode 1"]
+            for _ in 0..<8 where !firstEpisode.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(firstEpisode.hasFocus)
+            XCUIRemote.shared.press(.up)
+            if first.hasFocus { XCUIRemote.shared.press(.right) }
+            XCTAssertTrue(second.hasFocus, "Season selection must be reachable with the remote")
+            XCUIRemote.shared.press(.select)
+            expectation(for: NSPredicate { _, _ in !app.buttons["S1 · E1 · Episode 1"].exists }, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(app.buttons["S2 · E1 · Episode 1"].exists)
+        }
         let episode = app.buttons["S2 · E2 · Episode 2"]
         XCTAssertTrue(episode.waitForExistence(timeout: 5))
         for _ in 0..<12 where !episode.hasFocus { XCUIRemote.shared.press(.down) }
@@ -92,6 +108,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(episode.waitForExistence(timeout: 5))
         XCTAssertTrue(episode.hasFocus, "Back must restore the selected stable episode identity")
+        if filterSeason { XCTAssertFalse(app.buttons["S1 · E1 · Episode 1"].exists, "Back preserves the season filter") }
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(title.hasFocus, "Back must restore the selected title")

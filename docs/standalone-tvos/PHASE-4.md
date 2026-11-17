@@ -288,3 +288,20 @@ journey (`fe57c676eb84498fa304b92d8c09b0c9`), together with episode pixels and
 focus restoration. Unsigned device build passes
 (`c3887e9394f4430d8fe3dad5803c61bb`). This is presentation of existing fields;
 no dependency, transfer or Core selection behavior changes.
+
+### Season filter remote navigation
+
+The owned journey now selects Season 2 with remote arrows, confirms Season 1
+episodes disappear, selects S2/E2 and verifies its exact source identity. Back
+restores episode focus and keeps the season filter, then restores title/catalog
+focus. The regression exposed a vertical focus gap between the right-hand
+season button and left-aligned episodes (`f0d552c1507d46e7bef01d85e8352c81`).
+Making the episode list a full-width focus section fixes remote navigation; the
+same test passes (`b69afbfe103c46db8e53c70a3fec47f4`, one test, zero failures).
+The earlier run `a2818d5360c7451999c294ba49a506a0` used an incorrect initial
+focus assumption and is not product-defect evidence. This manual fixture test
+adds no automatic CI duration and does not establish physical-device behavior.
+
+Unsigned device build passes (`e9026237d2df4d2f9b7952ac24a7932e`); all 15
+portable harness tests pass. Next: exercise film details and search through the
+remote UI, then continue the remaining Stage 4 and later-stage requirements.
