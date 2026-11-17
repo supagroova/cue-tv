@@ -63,9 +63,15 @@ struct SourcePlaybackView: View {
                     }
                 }
             } else { ProgressView("Preparing video…") }
-            Button("Close") { stopAndClose() }.focused($closeFocused)
+            HStack {
+                Spacer()
+                Button("Close") { stopAndClose() }.focused($closeFocused)
+                Spacer()
+            }.focusSection()
         }
         .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
         .task {
             model.stopDecoder = { [controller] in controller.stop() }
             closeFocused = true; await model.start(request)

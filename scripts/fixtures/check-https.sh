@@ -39,4 +39,4 @@ kill -0 "$tls_good_pid" "$tls_bad_pid"
 xcrun simctl keychain "$tls_device" add-root-cert "$tls_dir/ca.pem"
 curl --fail --silent --cacert "$tls_dir/ca.pem" --range 0-15 https://127.0.0.1:42425/episode01.mp4 --output "$tls_dir/range.bin"
 xcodegen generate --spec apple-tv/project.yml
-xcodebuild -project apple-tv/SittingRoomTV.xcodeproj -scheme SittingRoomTV -configuration Debug -derivedDataPath .agent-work/DerivedData CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= AppIdentifierPrefix=CueTVSimulator. -destination "platform=tvOS Simulator,id=$tls_device" -only-testing:SittingRoomTVUITests/HTTPSPlaybackTests test
+xcodebuild -project apple-tv/SittingRoomTV.xcodeproj -scheme SittingRoomTV -configuration Debug -derivedDataPath .agent-work/DerivedData CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= AppIdentifierPrefix=CueTVSimulator. -destination "platform=tvOS Simulator,id=$tls_device" "-only-testing:SittingRoomTVUITests/${1:-HTTPSPlaybackTests}" test
