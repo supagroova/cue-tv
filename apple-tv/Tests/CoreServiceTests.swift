@@ -108,6 +108,25 @@ import Security
     #expect(state.model?.details?.videoTotal == 30)
     #expect(state.model?.details?.videos.count == 24)
     #expect(state.model?.details?.seasons == [1, 2])
+    let beforeLibrary = try #require(state.model?.revision)
+    try await service.setDetailsLibrary(true, expectedRevision: beforeLibrary)
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.detailsInLibrary == true { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.detailsInLibrary == true)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_details")) {
+        try await service.setDetailsLibrary(false, expectedRevision: beforeLibrary)
+    }
+    try await service.setDetailsLibrary(false, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.detailsInLibrary == false { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.detailsInLibrary == false)
+
     try await service.selectDetailsSeason(2, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {
         state = try await service.snapshot()

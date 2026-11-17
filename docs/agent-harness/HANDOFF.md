@@ -54,3 +54,10 @@ Phase 5 C save receipt is implemented; five FFI tests pass in record
 `bcbf7ccfd4ee430589e43eec24336ead`. Next: Swift service and real HTTP fixture
 success/failure receipt tests before UI controls. Local compiler output exhausted
 disk space; Cargo clean -p cue-core freed 11.9 GiB, preserving test evidence.
+
+Swift membership receipts now pass the real HTTP fixture and all 60 Swift tests
+(`7819d142aaba44e48f7621119a44c4f7`); unsigned device build passes
+(`8ab87378acaf48be88a478f356765a00`, docs-only evidence edit during build).
+Next: guarded UI library controls and interrupted save coverage. Phase5 uses
+symlinks to the root native-target/DerivedData caches; never build concurrently
+in those worktrees. PR8 Android retry completed successfully.

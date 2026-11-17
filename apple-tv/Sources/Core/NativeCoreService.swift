@@ -31,6 +31,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let catalogTotal: Int
         let sources: Sources?
         let details: Details?
+        let detailsInLibrary: Bool?
         let catalog: Catalog?
         let addonCount: Int
         let addon: Addon?
@@ -120,6 +121,7 @@ nonisolated protocol CoreService: Sendable {
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
+    func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
@@ -297,6 +299,14 @@ actor NativeCoreService: CoreService {
         try dispatch(["version": 1, "action": "catalog_items", "offset": offset, "revision": expectedRevision])
     }
 
+    private struct LibraryReceipt: Decodable, Sendable { let member: Bool }
+    func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws {
+        try Task.checkCancellation()
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let ticket = cue_core_request_library(handle, member ? 1 : 0, expectedRevision)
+        let receipt: LibraryReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.member == member else { throw Failure.malformedSnapshot }
+    }
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest {
         try await prepareSource(index: index, expectedRevision: expectedRevision, https: false)
     }

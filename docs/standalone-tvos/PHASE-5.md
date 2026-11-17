@@ -69,3 +69,22 @@ generated Cue Core output before the successful rebuild. All 15 portable checks
 pass. Successful save receipts through Swift and interrupted saves remain to
 be exercised; the previous native persistence tests do not establish that bridge
 coverage. No Swift-facing API or UI is added in this slice.
+
+## Swift save receipts
+
+CoreService now exposes `setDetailsLibrary(_:expectedRevision:)`; NativeCoreService
+uses the bounded native ticket, checks cancellation/owner retirement, validates
+version/session/ticket through the existing reply decoder and verifies receipt
+membership matches the requested value. Snapshot decoding adds optional selected
+membership without requiring old fixtures to provide it.
+
+The real simulator HTTP fixture now adds the loaded title, observes membership,
+rejects removal with the old revision, then removes it with the current revision.
+Missing Swift API red: `cfae6f0fb7e6405fbccab89e26dac105`. All 60 Swift tests pass
+(`7819d142aaba44e48f7621119a44c4f7`), including successful receipts across the
+Swift/C/native boundary. All 15 portable checks pass. The native encrypted reopen
+and disk-failure tests remain separate evidence; this Swift fixture is in-memory.
+User-facing library controls and interrupted save coverage remain outstanding.
+
+Unsigned tvOS device build passes (`8ab87378acaf48be88a478f356765a00`); only
+this evidence document changed during that build, not source or tests.
