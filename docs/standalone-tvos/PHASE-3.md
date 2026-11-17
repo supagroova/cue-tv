@@ -549,3 +549,9 @@ Extracted the existing VLC surface/snapshot into production `Playback/VLCPlaybac
 ### Declared catalog search
 
 Catalog choices expose whether their manifest supports a search-only extra set. The native session accepts trimmed nonempty queries up to 256 UTF-8 bytes without control characters, builds real Core search resource paths, and reuses catalog-generation isolation. The existing C load_catalog command accepts an optional query; Swift exposes searchCatalog. Native HTTP fixture verifies encoded `blue sky`, required-search behavior and oversized rejection. Swift fixture verifies a distinct result produced by the actual query. Full locked Core suite passes (`08837b11ba8b4226aafa54e037fbadc3`); simulator tests including Swift search pass (`7459e2d4941443949bb3dc2f67fd1715`). Search spans one chosen catalog; multi-provider aggregation, retained-model memory limits and cancellation of individual obsolete HTTP effects remain outstanding.
+
+### Account storage namespaces (foundation only)
+
+Inspected pinned Core `AuthRequest` and Ctx authentication implementation: email/password Login and LoginWithToken are supported; no OAuth/device-code flow is invented. `CoreStorage.account` creates separate opaque UUID namespaces under accounts-v1, each with its own Keychain encryption key. Neither email, provider ID nor token appears in directory/Keychain labels. Guest storage is unchanged.
+
+Simulator test creates two namespaces, writes language state in one, verifies independent keys/default state in the other, and reopens the first with its original key/state. Red evidence `d0a9936f76554f74897caafe93d7ed30`; full simulator suite green `e7dfd1f43d4b4c23976f4d19ba7a545a`. This is storage isolation only. Core login dispatch, authenticated profile restore, active-account pointer, sign-out cancellation/key removal and UI are still absent; guest entry still rejects authenticated profiles.
