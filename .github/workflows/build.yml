@@ -34,6 +34,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Prepare Companion interoperability peer
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r bridge/requirements.txt
+
       - name: Bridge and tools compile
         run: python -m py_compile bridge/*.py scripts/*.py tv-home/tools/*.py sync/sync.py
 
@@ -57,6 +62,8 @@ jobs:
         run: sh scripts/build-apk.sh
 
       - name: On-TV app unit tests
+        env:
+          COUCHTV_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
         run: tv-home/android/gradlew -p on-tv/android --no-daemon --console=plain testDebugUnitTest
 
       - name: Upload On-TV test reports
