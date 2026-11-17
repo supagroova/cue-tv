@@ -73,3 +73,12 @@ Portable tests cover exact restoration, a cache miss, source invalidation and co
 [Run 44123474614](https://github.com/supagroova/cue-tv/actions/runs/44123474614), head `a3e22ae`, passed both attempts with 31 Swift unit tests, 10 short UI tests, native tests and the device build. Attempt 1 missed both dependency and artifact caches: simulator 14m03s, native/device 9m47s. Artifacts were saved only after successful simulator tests.
 
 Attempt 2 reused the exact artifacts: the 52.6 MB cache restored and verified in 3s, seeder compilation was skipped, and both native prebuild scripts logged verified reuse. Simulator time was **7m32s**, native/device **4m16s**, and queue-inclusive workflow time **7m47s**. Combined build/tests took 4m37s; simulator readiness waited 46s. The observed simulator reduction versus earlier warm-dependency runs (8m52s–9m12s) is 80–100 seconds, with runner variability. The larger cold-to-warm difference also includes dependency warming and cannot be attributed solely to this cache. Long playback remained manual-only.
+
+
+## Avoid unused Cargo setup on final-artifact hits
+
+The verified final-artifact warm run still restored a 1.43 GB combined dependency cache and spent 57s in setup. It did not invoke Cargo in the simulator lane. Setup now runs after exact-artifact lookup/verification, separates Swift package sources from Cargo build caches, and skips Cargo cache restoration, architecture pruning and Rust toolchain installation on verified hits. The native/device lane and simulator misses retain the complete pinned Rust build path. Swift packages and pinned XcodeGen setup remain required on every path.
+
+The native v2 cache has legacy restore prefixes for migration; the smaller Swift cache uses separate role keys so parallel jobs do not race to save a shared key. New keys have a one-time population cost. No test selectors or assertions change, and sustained playback remains manual-only. The artifact fingerprint remains deliberately conservative: narrowing workflow/project inputs without first moving all compiler-affecting configuration into a separately validated contract risks stale binaries.
+
+Local validation: all 15 portable tests pass, including existing artifact hit/miss/invalidation/corruption coverage; actionlint validates the workflow/composite. No local simulator was used. Remote miss and same-scope exact-hit verification remain necessary before claiming a measured speed gain for this routing change.
