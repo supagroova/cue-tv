@@ -202,3 +202,41 @@ async fn unselected_files_and_boundary_storage_count_toward_budget() {
     );
     assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
 }
+
+#[tokio::test]
+async fn existing_directory_allocation_counts_before_file_creation() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let disk = Arc::new(|_: &std::path::Path| {
+        Ok(DiskUsage {
+            available: 1_000_000,
+            allocated: 0,
+            metadata_allocated: 100_000,
+            block_size: 4096,
+        })
+    });
+    let result = PlaybackSession::start_budgeted(
+        TorrentSource::Bytes(torrent),
+        0,
+        output.path().to_owned(),
+        vec![],
+        Discovery::default(),
+        StorageBudget {
+            cap_bytes: 250_000,
+            reserve_bytes: 0,
+            metadata_bytes: 4096,
+            max_files: 8,
+        },
+        Some(disk),
+    )
+    .await;
+    if let Ok(session) = result {
+        session.stop().await;
+    }
+    assert_eq!(
+        std::fs::read_dir(output.path()).unwrap().count(),
+        0,
+        "over-budget directory metadata must reject admission before creating files"
+    );
+}

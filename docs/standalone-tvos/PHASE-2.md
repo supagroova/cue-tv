@@ -12,7 +12,7 @@ These are conservative session limits, not a measured final product policy or an
 
 ## Evidence
 
-Local Rust suite: 16 tests passed, including four storage tests covering oversized admission, reserve rejection, unselected-file accounting and a simulated disk-space drop during real peer transfer. The latter verifies that later blocks remain unwritten and the session reports failure without filling the host disk. The existing uncached-seek and blocked-response cancellation regression also passes.
+Local Rust suite: 16 tests passed, including four storage tests covering oversized admission, reserve rejection, unselected-file accounting and a simulated disk-space drop during real peer transfer. The latter verifies that later blocks remain unwritten and the session reports failure without filling the host disk. A subsequent admission regression demonstrated that existing directory allocation could create a file before rejection; admission now includes the larger of observed metadata allocation and its allowance. All five storage tests pass after that fix. The existing uncached-seek and blocked-response cancellation regression also passes.
 
 `make apple-build` passed for the unsigned arm64 Apple TV target with the storage wrapper linked. No physical device result is claimed. Sustained playback remains manual-only and is not part of routine push/PR CI.
 

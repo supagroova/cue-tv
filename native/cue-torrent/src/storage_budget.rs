@@ -176,13 +176,16 @@ impl TorrentStorage for BudgetStorage {
         }
         std::fs::create_dir_all(&self.policy.root)?;
         let usage = (self.policy.probe)(&self.policy.root)?;
-        let full =
-            self.lengths
-                .iter()
-                .try_fold(self.policy.budget.metadata_bytes, |sum, len| {
-                    sum.checked_add(rounded(*len, usage.block_size)?)
-                        .context("torrent size overflow")
-                })?;
+        let full = self.lengths.iter().try_fold(
+            self.policy
+                .budget
+                .metadata_bytes
+                .max(usage.metadata_allocated),
+            |sum, len| {
+                sum.checked_add(rounded(*len, usage.block_size)?)
+                    .context("torrent size overflow")
+            },
+        )?;
         if full
             .checked_add(usage.allocated)
             .context("budget overflow")?
