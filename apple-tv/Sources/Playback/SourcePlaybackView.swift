@@ -7,6 +7,7 @@ struct SourcePlaybackView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = SourcePlaybackModel()
     @State private var controller = VLCPlaybackController()
+    @State private var subtitles = PlaybackSubtitlesModel()
     @State private var paused = false
     @State private var audio = 0
     @State private var subtitle = -1
@@ -22,11 +23,12 @@ struct SourcePlaybackView: View {
         VStack(spacing: 24) {
             if case .failed(let failure) = model.coordinator.state {
                 Text(failure.message).accessibilityIdentifier("source-playback-error")
-                Button("Retry source") { reset(); Task { await model.start(request) } }
+                Button("Retry source") { reset(); Task { guard await subtitles.stop() else { return }; subtitles = PlaybackSubtitlesModel(); await model.start(request) } }
             } else if let url = model.playbackURL {
                 VLCPlaybackSurface(controller: controller, url: url, audioIndex: audio, subtitleIndex: subtitle,
-                    paused: paused, seekRequest: seekRequest, seekMilliseconds: seekTarget) { [token = model.generation] snapshot in
+                    paused: paused, seekRequest: seekRequest, seekMilliseconds: seekTarget, externalSubtitleURL: subtitles.url, externalSubtitleID: subtitles.selectionID) { [token = model.generation] snapshot in
                     guard let token, token == model.generation else { return }
+                    if let rejected = snapshot.failedSubtitleSelection { subtitles.decoderFailed(selectionID: rejected) }
                     milliseconds = snapshot.milliseconds
                     audioCount = snapshot.audioTracks; subtitleCount = snapshot.subtitleTracks
                     if snapshot.state == .error { controller.stop(); model.coordinator.receive(.failed(.decoder), generation: token) }
@@ -45,7 +47,7 @@ struct SourcePlaybackView: View {
                     Button("Back 10 seconds") { seek(to: max(0, milliseconds - 10000)) }
                     Button("Forward 10 seconds") { seek(to: min(Int(Int32.max), milliseconds + 10000)) }
                     if audioCount > 1 { Button("Next audio track") { audio = (audio + 1) % audioCount } }
-                    if subtitleCount > 0 { Button(subtitle == -1 ? "Enable subtitles" : "Next subtitle / Off") { subtitle = subtitle + 1 >= subtitleCount ? -1 : subtitle + 1 } }
+                    if subtitleCount > 0 { Button(subtitle == -1 && subtitles.url == nil ? "Enable subtitles" : "Next subtitle / Off") { subtitles.disable(); subtitle = subtitle + 1 >= subtitleCount ? -1 : subtitle + 1 } }
                 }
             } else if model.coordinator.state == .choosingFile, let files = model.files {
                 Text("Choose a video file").font(.title)
@@ -63,6 +65,18 @@ struct SourcePlaybackView: View {
                     }
                 }
             } else { ProgressView("Preparing video…") }
+            if !request.subtitles.isEmpty, model.playbackURL != nil {
+                ScrollView(.horizontal) {
+                    HStack {
+                        Button("Subtitles off") { subtitles.disable(); subtitle = -1 }
+                        ForEach(Array(request.subtitles.prefix(32).enumerated()), id: \.offset) { _, track in
+                            Button(track.label ?? track.language) { Task { await subtitles.choose(track) } }
+                        }
+                    }.padding(.vertical, 12)
+                }.frame(height: 90).focusSection()
+            }
+            if subtitles.loading { Text("Loading subtitles…") }
+            if let error = subtitles.error { Text(error).foregroundStyle(.orange) }
             HStack {
                 Spacer()
                 Button("Close") { stopAndClose() }.focused($closeFocused)
@@ -80,7 +94,7 @@ struct SourcePlaybackView: View {
             if case .failed = state { controller.stop() }
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { stopAndClose() } }
-        .onDisappear { controller.stop(); Task { await model.stop() } }
+        .onDisappear { controller.stop(); Task { await model.stop(); await subtitles.stop() } }
     }
     private func reset() {
         controller.stop(); paused = false; audio = 0; subtitle = -1
@@ -93,6 +107,6 @@ struct SourcePlaybackView: View {
     }
     private func stopAndClose() {
         controller.stop()
-        Task { await model.stop(); dismiss() }
+        Task { await model.stop(); if await subtitles.stop() { dismiss() } }
     }
 }

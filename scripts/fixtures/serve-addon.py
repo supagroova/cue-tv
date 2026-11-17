@@ -15,6 +15,14 @@ MANIFEST = {
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = unquote(urlsplit(self.path).path)
+        if path == "/captions.vtt":
+            payload = b"WEBVTT\n\n00:00:00.000 --> 00:00:12.000\nOWNED CAPTION\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/vtt")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == "/announce":
             # Compact peer list points only at our owned local seeder. No HTTP media.
             payload = b"d8:intervali30e5:peers6:" + bytes([127, 0, 0, 1]) + (42428).to_bytes(2, "big") + b"e"
@@ -35,6 +43,7 @@ class Handler(BaseHTTPRequestHandler):
                      "released": "2024-01-01T00:00:00.000Z"} for season in (1, 2) for episode in (1, 2)]}}
         elif path.startswith("/stream/series/cue-owned-") and path.endswith(".json"):
             body = {"streams": [{"name": "Owned peer fixture " + path.rsplit("/", 1)[1][:-5], "infoHash": "66848a1f4b3f287a33b10509f20da4a086a7910d",
+                                  "subtitles": [{"id": "owned", "lang": "eng", "label": "Owned English", "url": "http://127.0.0.1:42427/captions.vtt"}],
                                   "fileIdx": 1 if path.endswith(":2.json") else 0, "sources": ["tracker:http://127.0.0.1:42427/announce"]}]}
         else:
             self.send_error(404)

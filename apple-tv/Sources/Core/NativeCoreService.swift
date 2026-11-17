@@ -43,7 +43,15 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     let error: String?
 }
 
+nonisolated struct CoreSubtitle: Decodable, Sendable {
+    let id: String
+    let language: String
+    let label: String?
+    let url: String
+}
+
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
     let kind: String
@@ -53,10 +61,36 @@ nonisolated struct CoreTorrentRequest: Decodable, Sendable {
 }
 
 nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
+    var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
     let kind: String
     let url: String
+}
+
+extension CoreTorrentRequest {
+    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
+    nonisolated init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
+        metaId = try values.decode(String.self, forKey: .metaId)
+        videoId = try values.decode(String.self, forKey: .videoId)
+        kind = try values.decode(String.self, forKey: .kind)
+        magnet = try values.decode(String.self, forKey: .magnet)
+        fileIndex = try values.decodeIfPresent(UInt16.self, forKey: .fileIndex)
+        fileMustInclude = try values.decode([String].self, forKey: .fileMustInclude)
+    }
+}
+extension CoreHTTPSRequest {
+    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, url }
+    nonisolated init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
+        metaId = try values.decode(String.self, forKey: .metaId)
+        videoId = try values.decode(String.self, forKey: .videoId)
+        kind = try values.decode(String.self, forKey: .kind)
+        url = try values.decode(String.self, forKey: .url)
+    }
 }
 
 nonisolated private struct CoreSourceReply<Request: Decodable & Sendable>: Decodable, Sendable {

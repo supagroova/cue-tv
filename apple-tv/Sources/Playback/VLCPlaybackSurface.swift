@@ -8,6 +8,7 @@ struct VLCPlaybackSnapshot {
     let selectedAudio: Int
     let selectedSubtitle: Int
     let state: VLCMediaPlayerState
+    var failedSubtitleSelection: UUID? = nil
 }
 
 @MainActor final class VLCPlaybackController {
@@ -23,11 +24,16 @@ struct VLCPlaybackSurface: UIViewRepresentable {
     let paused: Bool
     let seekRequest: UUID?
     let seekMilliseconds: Int
+    var externalSubtitleURL: URL? = nil
+    var externalSubtitleID: UUID? = nil
     var progress: @MainActor (VLCPlaybackSnapshot) -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .black
+        view.accessibilityIdentifier = "vlc-video-surface"
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = "Video"
         controller?.coordinator = context.coordinator
         context.coordinator.player.drawable = view
         do {
@@ -45,7 +51,7 @@ struct VLCPlaybackSurface: UIViewRepresentable {
                            audioTracks: audio.count, subtitleTracks: subtitles.count,
                            selectedAudio: (audio.firstIndex(where: { $0.isSelected }) ?? -1) + 1,
                            selectedSubtitle: (subtitles.firstIndex(where: { $0.isSelected }) ?? -1) + 1,
-                           state: coordinator.player.state))
+                           state: coordinator.player.state, failedSubtitleSelection: coordinator.subtitleLoadFailed ? coordinator.appliedSubtitleID : nil))
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }
@@ -53,6 +59,8 @@ struct VLCPlaybackSurface: UIViewRepresentable {
         return view
     }
     func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.externalSubtitleURL = externalSubtitleURL
+        context.coordinator.externalSubtitleID = externalSubtitleID
         context.coordinator.audioIndex = audioIndex
         context.coordinator.subtitleIndex = subtitleIndex
         context.coordinator.paused = paused
@@ -87,6 +95,14 @@ struct VLCPlaybackSurface: UIViewRepresentable {
                 appliedSeek = seekRequest
             }
         }
+        var externalSubtitleURL: URL?
+        var externalSubtitleID: UUID?
+        fileprivate var appliedSubtitleID: UUID?
+        fileprivate var appliedExternalSubtitleURL: URL?
+        private var loadedSubtitles: [URL: String] = [:]
+        private var attemptedSubtitles: Set<URL> = []
+        private var pendingSubtitle: (url: URL, selectionID: UUID, previous: Set<String>, deadline: ContinuousClock.Instant)?
+        var subtitleLoadFailed = false
         private var appliedAudio: Int?
         private var appliedSubtitle: Int?
         func applyTracks() {
@@ -95,6 +111,40 @@ struct VLCPlaybackSurface: UIViewRepresentable {
             if appliedAudio != audioIndex, audio.indices.contains(audioIndex) {
                 audio[audioIndex].isSelectedExclusively = true
                 appliedAudio = audioIndex
+            }
+            if let pending = pendingSubtitle {
+                if let track = subtitles.first(where: { !pending.previous.contains($0.trackId) && $0.isSelected }) {
+                    loadedSubtitles[pending.url] = track.trackId
+                    pendingSubtitle = nil; appliedSubtitle = nil
+                } else if ContinuousClock.now >= pending.deadline {
+                    pendingSubtitle = nil; subtitleLoadFailed = true
+                    appliedExternalSubtitleURL = pending.url; appliedSubtitleID = pending.selectionID
+                } else { return }
+            }
+            if let url = externalSubtitleURL, let selectionID = externalSubtitleID {
+                if appliedExternalSubtitleURL != url || appliedSubtitleID != selectionID {
+                    guard player.state == .playing || player.state == .paused else { return }
+                    if let id = loadedSubtitles[url], let track = subtitles.first(where: { $0.trackId == id }) {
+                        let needsRefresh = !track.isSelected
+                        let position = player.time.intValue
+                        player.selectTextTracks([track])
+                        // VLC has already demuxed a long cue when a loaded track is toggled off.
+                        // Refresh that cue at the current position without adding another slave.
+                        if needsRefresh, player.isSeekable { player.time = VLCTime(int: position) }
+                        appliedExternalSubtitleURL = url; appliedSubtitleID = selectionID
+                        subtitleLoadFailed = false
+                    } else if attemptedSubtitles.insert(url).inserted {
+                        let previous = Set(subtitles.map(\.trackId))
+                        subtitleLoadFailed = player.addPlaybackSlave(url, type: .subtitle, enforce: true) != 0
+                        if subtitleLoadFailed { appliedExternalSubtitleURL = url; appliedSubtitleID = selectionID }
+                        else { pendingSubtitle = (url, selectionID, previous, .now.advanced(by: .seconds(5))) }
+                    } else { subtitleLoadFailed = true; appliedExternalSubtitleURL = url; appliedSubtitleID = selectionID }
+                }
+                return
+            } else if appliedExternalSubtitleURL != nil {
+                appliedExternalSubtitleURL = nil; appliedSubtitleID = nil
+                subtitleLoadFailed = false
+                appliedSubtitle = nil
             }
             if appliedSubtitle != subtitleIndex {
                 if subtitleIndex == -1 {
