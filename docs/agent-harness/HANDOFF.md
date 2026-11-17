@@ -429,6 +429,6 @@ single-use. The close-during-start test intentionally now expects retire rather
 than save. Red: 1ae779f808c3476abbc2293f8a587856 (three expectations expose unwanted
 save). Green: 82760ca47fb24a3eb96d660f8062fc46, all four accounting owner tests,
 including the existing seek/pause/periodic-save/durable-close ordering test.
-Fifteen portable harness tests pass. Full simulator suite and device build have not
-been rerun for this isolated Swift change. Parent retention and resume choice still
+Fifteen portable harness tests pass. Full simulator suite now passes all 68 tests (30bcc6708e4b4850917ae1ad3b7ff703);
+unsigned tvOS device build passes (35750d6679c04c75a4e3d898276fafb4). Parent retention and resume choice still
 required as described above.
