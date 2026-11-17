@@ -151,6 +151,14 @@ struct StandaloneHome: View {
                                     }.id(details.kind + "\n" + details.id)
                                 }
 
+                                if details.status == .ready, let watched = details.watched {
+                                    WatchedStateControl(watched: watched) { desired in
+                                        await model.perform(expectedRevision: state.revision) { service, revision in
+                                            try await service.setDetailsWatched(desired, videoID: nil, expectedRevision: revision)
+                                        }
+                                    }.id("watched\n" + details.kind + "\n" + details.id)
+                                }
+
                                 if !details.seasons.isEmpty {
                                     ScrollView(.horizontal) {
                                         HStack {
@@ -165,13 +173,27 @@ struct StandaloneHome: View {
                                 }
                                 VStack(alignment: .leading, spacing: 18) {
                                     ForEach(Array(details.videos.enumerated()), id: \.element.id) { index, video in
-                                        Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { rememberedRows[.details] = .video(video.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
-                                        .focused($focusedRow, equals: .video(video.id))
+                                        HStack(spacing: 24) {
+                                            Button(video.season.flatMap { season in video.episode.map { "S\(season) · E\($0) · \(video.title)" } } ?? video.title) { rememberedRows[.details] = .video(video.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: index, expectedRevision: $1) }) { screen = .sources } } }
+                                            .focused($focusedRow, equals: .video(video.id))
+                                            if details.kind == "series", let watched = video.watched {
+                                                WatchedStateControl(watched: watched, subject: video.season.flatMap { season in video.episode.map { "S\(season) E\($0)" } } ?? video.title) { desired in
+                                                    await model.perform(expectedRevision: state.revision) { service, revision in
+                                                        try await service.setDetailsWatched(desired, videoID: video.id, expectedRevision: revision)
+                                                    }
+                                                }.id(details.kind + "\n" + details.id + "\n" + video.id)
+                                            }
+                                        }
                                     }
                                     if details.kind == "movie", details.status == .ready, details.videoTotal == 0 { Button("Choose source") { rememberedRows[.details] = .movie(details.id); Task { if await model.perform(expectedRevision: state.revision, { try await $0.loadSources(videoIndex: nil, expectedRevision: $1) }) { screen = .sources } } }.focused($focusedRow, equals: .movie(details.id)) }
                                     if details.videoOffset > 0 { Button("Previous episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: max(0, details.videoOffset - 24), expectedRevision: $1) } } } }
                                     if details.videoOffset + details.videos.count < details.videoTotal { Button("More episodes") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showDetailsVideos(offset: details.videoOffset + details.videos.count, expectedRevision: $1) } } } }
                                 }.frame(maxWidth: .infinity, alignment: .leading).focusSection()
+                                .onChange(of: details.selectedSeason) { _, _ in
+                                    // The selected season button becomes disabled. Keep the next
+                                    // remote movement in the episode column, not the watched controls.
+                                    if let first = details.videos.first { focusedRow = .video(first.id) }
+                                }
                             }
                         case .sources:
                             if let sources = state.sources {

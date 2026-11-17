@@ -128,3 +128,21 @@ Next: watched controls and remote UI journeys, including episode receipts and
 failed-save/disappearance coverage. Manual-override/automatic playback precedence
 and checkpoints remain pending. PR13 native/device CI passed; simulator still running
 at last poll. Preserve root worktree's unrelated dirty CI docs.
+
+Film/episode watched controls now pass remote journeys; season-navigation regression
+was caught and fixed without weakening assertions. Evidence and remaining gates are
+in PHASE-5.md. Unsigned device build and15portable checks pass. Next: Core Player
+checkpoints/manual override plus outstanding UI failure/disappearance coverage.
+
+Existing library journey also passes with watched controls
+(7b3a5299aca74692a61c3b807d3da1e7). PR13 previous simulator run44174360266 is
+still live; do not push over it without rechecking, to avoid wasting the run.
+CI helper apple_ci_speed inspected read-only: seederbuild4m23, boot5s, combined
+step started21:06UTC; live logs unavailable. No proven hang or failure.
+
+Final title/video-scoped control identity passes the episode journey again
+(d496899a1b444a12a7cc32e3f215c8b2) and unsigned device build
+(90de6b049eee476e8759e106e92f622d). A rewritten PR13 body is prepared in
+.agent-work/phase5-pr-update.json; apply it after the next authorized branch push.
+Next playback sources are apple-tv/Sources/Playback/SourcePlaybackModel.swift
+and SourcePlaybackView.swift; Core Player still throttles storage to180seconds.

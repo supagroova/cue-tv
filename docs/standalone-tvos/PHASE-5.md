@@ -2,8 +2,8 @@
 
 Status: title-detail library membership works through Swift/FFI and Core, with
 encrypted-reopen and cancellation tests. Paged library browsing is connected to
-the UI; watched controls, playback checkpoints, sync and broader lifecycle work
-remain incomplete.
+the UI; film and episode watched controls now use acknowledged Core saves.
+Playback checkpoints, sync and broader lifecycle work remain incomplete.
 Earlier phases retain their outstanding gates.
 
 The contract and ordered implementation gates are in
@@ -12,8 +12,8 @@ The contract and ordered implementation gates are in
 relying on those unchanged would leave resume and conflict requirements unproven.
 
 Branch: `codex/tvos-phase-5`, stacked on `codex/tvos-phase-4` at `0bbecfa`.
-Next: implement Core-backed library actions with revision guards and persistence
-reopen tests, then integrate Core Player and acknowledged checkpoints. Device
+Next: integrate Core Player and acknowledged checkpoints, and cover UI failed-save
+retry/disappearance and multi-page library navigation. Device
 qualification is deferred until the Apple TV is available; simulator work continues.
 
 ## Native membership slice
@@ -171,3 +171,39 @@ was serialized or assertion weakened.
 
 Unsigned device build passes (`48202301d48a42afbd5a2aa89ab0d36e`); all 15
 portable checks pass.
+
+## Watched state and controls
+
+Film completion and episode bitfields are exposed only for matching selected
+metadata. Core actions own watched mutations; same-state retries explicitly flush
+storage without incrementing a film's completed-viewing count. Tests inject two
+failed writes, verify recovery and unchanged membership, inspect disk before any
+subsequent membership write, and reopen encrypted storage. Disabling idempotence
+produces count4 instead of1 (`06778f90da2b44b5898af63bbb078ba3`); restored native
+suite passes (`5fdcd20735474fb8b989e4f8a0a266c1`), with later disk assertions passing
+in `a6583a2088f34191a59a5a0e31f7430a`.
+
+The bounded C/Swift ticket carries watched/video identity, awaits settled effects,
+and supports cancellation without claiming rollback. All60 Swift tests pass with
+real HTTP watched/unwatched/stale requests and held-effect cancellation
+(`0e2c7a4106f6443e86b6a31cc9bbe5b4`); full native suite passes
+(`72a81dd0ccee4d96965b76175f357f78`).
+
+Film and per-episode controls retain failed intent for retry and cancel observation
+on disappearance. Remote film mark→return→unmark→source/Back passes
+(`354830196b0d44a6a62d13f350a9cb0e`; missing-control red
+`9b6e0219cecd4d7d98e856ba137756f4`). Episode mark/unmark leaves the neighboring
+episode untouched and preserves Back focus (`e504b9ef1c61444b8b9b840baa040dca`).
+The new column initially broke season navigation (`68e781ea964240f8a51e6c6d6cb65bc3`);
+explicit first-episode focus on season changes fixes the unchanged test
+(`62d962ace60a44ddb7401af43b86aa8a`). Unsigned device build passes
+(`957d96d4b98c422fa0355881f9e78c02`), as do15 portable checks.
+
+These checks do not establish UI failure/disappearance recovery, playback manual
+override precedence, resume checkpoints, offline reconciliation or physical-device
+behavior. The longer remote journeys remain opt-in rather than routine CI.
+
+The existing add→library→reopen→remove remote journey still passes with the new
+watched controls (`7b3a5299aca74692a61c3b807d3da1e7`). Episode control identity
+includes type/title/video so a reused video ID cannot retain another title's save
+intent. Dedicated failed-save/disappearance UI coverage remains outstanding.

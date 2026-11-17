@@ -10,7 +10,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws { try movieJourney(library: false) }
     @MainActor func testMovieLibraryMembershipCanBeAddedAndRemoved() throws { try movieJourney(library: true) }
     @MainActor func testSavedFilmReopensFromLibraryAndRemovalUpdatesList() throws { try movieJourney(library: true, browseLibrary: true) }
-    @MainActor private func movieJourney(library: Bool, browseLibrary: Bool = false) throws {
+    @MainActor func testFilmWatchedStateCanBeChangedAndSurvivesReturningToDetails() throws { try movieJourney(library: false, watched: true) }
+    @MainActor private func movieJourney(library: Bool, browseLibrary: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -64,6 +65,25 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
                 XCTAssertTrue(myLibrary.hasFocus)
                 return
             }
+        }
+        if watched {
+            let mark = app.buttons["Mark as watched"]
+            XCTAssertTrue(mark.waitForExistence(timeout: 5))
+            for _ in 0..<8 where !mark.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(mark.hasFocus)
+            XCUIRemote.shared.press(.select)
+            let unmark = app.buttons["Mark as unwatched"]
+            XCTAssertTrue(unmark.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Add to library"].exists)
+            XCUIRemote.shared.press(.menu)
+            XCTAssertTrue(title.waitForExistence(timeout: 5))
+            XCTAssertTrue(title.hasFocus)
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(unmark.waitForExistence(timeout: 5))
+            for _ in 0..<8 where !unmark.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(unmark.hasFocus)
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(mark.waitForExistence(timeout: 5))
         }
         let choose = app.buttons["Choose source"]
         XCTAssertTrue(choose.waitForExistence(timeout: 5))
@@ -137,7 +157,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertTrue(catalog.hasFocus)
         XCTAssertEqual(search.value as? String, query)
     }
-    @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false) throws {
+    @MainActor func testEpisodeWatchedControlChangesOnlySelectedEpisodeAndPreservesBackFocus() throws { try journey(play: false, watched: true) }
+    @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         app.launch()
@@ -170,6 +191,17 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertTrue(episode.waitForExistence(timeout: 5))
         for _ in 0..<12 where !episode.hasFocus { XCUIRemote.shared.press(.down) }
         XCTAssertTrue(episode.hasFocus)
+        if watched {
+            XCUIRemote.shared.press(.right)
+            let mark = app.buttons["Mark as watched: S2 E2"]
+            XCTAssertTrue(mark.hasFocus)
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(app.buttons["Mark as unwatched: S2 E2"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Mark as watched: S2 E1"].exists)
+            XCTAssertTrue(app.buttons["Add to library"].exists)
+            XCUIRemote.shared.press(.left)
+            XCTAssertTrue(episode.hasFocus)
+        }
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.buttons["Owned peer fixture cue-owned-2:2:2"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Cue journey fixture"].exists, "Sources identify their supplying add-on")
@@ -238,6 +270,17 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(episode.waitForExistence(timeout: 5))
         XCTAssertTrue(episode.hasFocus, "Back must restore the selected stable episode identity")
+        if watched {
+            let unmark = app.buttons["Mark as unwatched: S2 E2"]
+            XCTAssertTrue(unmark.waitForExistence(timeout: 5))
+            XCUIRemote.shared.press(.right)
+            XCTAssertTrue(unmark.hasFocus)
+            XCUIRemote.shared.press(.select)
+            XCTAssertTrue(app.buttons["Mark as watched: S2 E2"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["Mark as watched: S2 E1"].exists)
+            XCUIRemote.shared.press(.left)
+            XCTAssertTrue(episode.hasFocus)
+        }
         if filterSeason { XCTAssertFalse(app.buttons["S1 · E1 · Episode 1"].exists, "Back preserves the season filter") }
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(title.waitForExistence(timeout: 5))
