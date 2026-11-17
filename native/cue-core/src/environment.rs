@@ -147,6 +147,7 @@ impl Env for NativeEnv {
             if !matches!(parts.uri.scheme_str(), Some("http" | "https")) {
                 return Err(EnvError::Fetch("Unsupported URL scheme".into()));
             }
+            let needs_json_type = !parts.headers.contains_key(http::header::CONTENT_TYPE);
             let mut request = env
                 .client
                 .request(parts.method.clone(), uri)
@@ -156,6 +157,9 @@ impl Env for NativeEnv {
                     .map_err(|_| EnvError::Serde("Invalid request".into()))?;
                 if body.len() > RESPONSE_LIMIT {
                     return Err(EnvError::Fetch("Request too large".into()));
+                }
+                if needs_json_type {
+                    request = request.header(http::header::CONTENT_TYPE, "application/json");
                 }
                 request = request.body(body);
             }

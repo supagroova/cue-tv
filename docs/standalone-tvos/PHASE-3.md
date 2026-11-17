@@ -579,3 +579,7 @@ Unsigned Apple TV device build also passes for the C account-restoration bridge 
 ### Swift account restoration admission
 
 `NativeCoreService` accepts a protected expected identity only with persistent storage, validates the identity before C admission, and calls the account-specific restoration API. Swift decodes the nonsecret authenticated flag. The real simulator bridge test verifies empty account storage fails without guest fallback, releases its lock on stop, and can then be explicitly reopened as guest; an account without storage is rejected. All 32 Swift tests pass (`998c8821933f4876be300cf0bb88ad9f`). The initial missing-API compile failure is retained (`ddd5afed627e43d0b3dff8197be4025d`); the fixture was subsequently corrected to create the directory required by the storage contract. Protected active-account selection, successful Swift login/relaunch, sign-out and account UI remain outstanding.
+
+### API JSON request transport
+
+Pinned Core constructs authentication POST requests with a serializable body and no Content-Type header. The native adapter now supplies application/json for serialized request bodies when the caller has not supplied a type; GET/HEAD behavior is unchanged. A real loopback HTTP test verifies the wire header and exact synthetic credentials in the JSON body, absent from headers/request target. It reproduces the missing header (`76a2ab5e26cc4d0197f813a59b8188e3`); the full native suite passes after the fix (`57de8be70512445e8692bb7c101f6229`). This is transport evidence, not successful Stremio authentication.
