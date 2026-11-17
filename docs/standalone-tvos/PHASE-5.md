@@ -207,3 +207,15 @@ The existing add→library→reopen→remove remote journey still passes with th
 watched controls (`7b3a5299aca74692a61c3b807d3da1e7`). Episode control identity
 includes type/title/video so a reused video ID cannot retain another title's save
 intent. Dedicated failed-save/disappearance UI coverage remains outstanding.
+
+## Add-on activity reporting
+
+The no-telemetry audit found Core can send library/watched and player activity to
+add-ons advertising those resources. NativeEnv now rejects those activity resources
+locally, without forwarding viewing identifiers. A real HTTP test reproduces the
+previous request and verifies that only manifest/catalog content requests reach
+the server after the fix. Library mutation tests advertise both event resources
+and still pass, including encrypted persistence and retry. Full native tests,
+60 Swift tests, unsigned tvOS build and15 harness tests pass; records are in HANDOFF.
+This is scoped to add-on activity reporting. Direct authenticated Player rating and
+premium intro/outro effects remain under review before Player progress is enabled.

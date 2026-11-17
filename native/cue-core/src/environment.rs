@@ -146,6 +146,12 @@ fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, EnvError> {
 
 pub struct NativeEnv;
 impl Env for NativeEnv {
+    fn addon_transport(
+        url: &reqwest::Url,
+    ) -> Box<dyn stremio_core::addon_transport::AddonTransport> {
+        crate::addon_transport::transport(url)
+    }
+
     fn fetch<
         IN: Serialize + ConditionalSend + 'static,
         OUT: for<'de> Deserialize<'de> + ConditionalSend + 'static,

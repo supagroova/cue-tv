@@ -351,3 +351,71 @@ async fn api_post_declares_json_and_preserves_credentials_in_body_only() {
     );
     env.shutdown().await;
 }
+
+#[tokio::test]
+async fn addon_activity_reporting_never_reaches_http_but_content_requests_do() {
+    use stremio_core::types::addon::ResourcePath;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = reqwest::Url::parse(&format!(
+        "http://{}/manifest.json",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = paths.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            let count = socket.read(&mut bytes).await.unwrap();
+            let request = std::str::from_utf8(&bytes[..count]).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_owned();
+            observed.lock().unwrap().push(path.clone());
+            let body = if path == "/manifest.json" {
+                r#"{"id":"owned","name":"Owned","version":"1.0.0","description":"Owned","resources":["catalog"],"types":["movie"],"catalogs":[]}"#
+            } else {
+                r#"{"metas":[]}"#
+            };
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        }
+    });
+    let env = Environment::new().unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        env.scope(async {
+            for resource in ["player", "library"] {
+                let result = NativeEnv::addon_transport(&url)
+                    .resource(&ResourcePath::without_extra(
+                        resource,
+                        "movie",
+                        "private-title",
+                    ))
+                    .await;
+                assert!(
+                    result.is_err(),
+                    "Activity reporting must be disabled locally"
+                );
+            }
+            assert_eq!(
+                NativeEnv::addon_transport(&url)
+                    .manifest()
+                    .await
+                    .unwrap()
+                    .id,
+                "owned"
+            );
+            NativeEnv::addon_transport(&url)
+                .resource(&ResourcePath::without_extra("catalog", "movie", "owned"))
+                .await
+                .unwrap();
+        }),
+    )
+    .await;
+    server.abort();
+    env.cancel();
+    outcome.unwrap();
+    assert_eq!(
+        *paths.lock().unwrap(),
+        ["/manifest.json", "/catalog/movie/owned.json"]
+    );
+}

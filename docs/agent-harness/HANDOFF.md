@@ -168,3 +168,20 @@ Seek/TimeChanged/pause/end with acknowledged local checkpoints. Review automatic
 addon event/intro-outro network behavior before enabling Player; Event messages are
 currently dropped by session except fixed error categories, collect_seek_logs defaults
 false. Do not mistake that for a complete no-telemetry audit of Player futures.
+
+Player-effects audit found existing MetaDetails watched actions can dispatch
+add-on library events; Player adds player events. NativeEnv now wraps add-on
+transport and rejects library/player resource requests locally with a fixed policy
+error. Content/manifest requests still use the upstream transport; no source URL
+or viewing identity is logged. This does not block authenticated library sync.
+Real HTTP regression red e306eec8d53a4caca744e55a21482773 proved an event was sent;
+green b863325bb98244ac984f530a3007b81e confirms only manifest/catalog reach server.
+Library fixture now advertises library/player: all mutation/persistence tests still
+pass, proving policy errors do not turn accepted library saves into failures.
+Fullnative5293b09412c64a9380c78a9af15f8306;60Swiftcfa4803098414699a0eb54a06978f28b;
+unsignedbuilda1bd2b8f8e4d4172b17d2480a9f39cfb;15harnesschecks pass.
+Remaining Player audit: direct rating WatchedSend and premium skip-gap futures use
+profile auth independently of addon transport. Do not enable them implicitly when
+integrating progress. Playercollect_seek_logs defaultsfalse; current session drops
+Event messages except fixed error categories. Core Player integration remains next.
+PR13ab91481native/device passed4m7; simulator134375797739 still queued at21:24UTC.

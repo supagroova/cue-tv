@@ -108,7 +108,7 @@ async fn membership_roundtrip(remove: bool, fail_write: bool, watched: Option<bo
     });
     let env = Environment::persistent(&directory, &[9; 32]).unwrap();
     let mut profile = Profile::default();
-    profile.addons = vec![serde_json::from_value(serde_json::json!({"transportUrl":base,"manifest":{"id":"org.cue.library","version":"1.0.0","name":"Owned fixture","description":"Owned fixture","types":[kind],"resources":["catalog","meta"],"catalogs":[{"id":"owned","type":kind,"name":"Owned"}]}})).unwrap()];
+    profile.addons = vec![serde_json::from_value(serde_json::json!({"transportUrl":base,"manifest":{"id":"org.cue.library","version":"1.0.0","name":"Owned fixture","description":"Owned fixture","types":[kind],"resources":["catalog","meta","library","player"],"catalogs":[{"id":"owned","type":kind,"name":"Owned"}]}})).unwrap()];
     env.scope(async {
         NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
             .await
