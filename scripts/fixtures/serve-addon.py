@@ -10,11 +10,12 @@ INFO_HASH = "66848a1f4b3f287a33b10509f20da4a086a7910d"
 
 MANIFEST = {
     "id": "org.cue.journey", "version": "1.0.0", "name": "Cue journey fixture",
-    "description": "Owned simulator navigation fixture", "types": ["series"],
-    "resources": ["catalog", {"name": "meta", "types": ["series"], "idPrefixes": ["cue-owned-"]},
-                  {"name": "stream", "types": ["series"], "idPrefixes": ["cue-owned-"]},
+    "description": "Owned simulator navigation fixture", "types": ["series", "movie"],
+    "resources": ["catalog", {"name": "meta", "types": ["series", "movie"], "idPrefixes": ["cue-owned-"]},
+                  {"name": "stream", "types": ["series", "movie"], "idPrefixes": ["cue-owned-"]},
                   {"name": "subtitles", "types": ["series"], "idPrefixes": ["cue-owned-"]}],
-    "catalogs": [{"id": "owned", "type": "series", "name": "Owned series", "extra": [{"name": "search"}]}],
+    "catalogs": [{"id": "owned", "type": "series", "name": "Owned series", "extra": [{"name": "search"}]},
+                 {"id": "films", "type": "movie", "name": "Owned films"}],
 }
 
 class Handler(BaseHTTPRequestHandler):
@@ -40,6 +41,14 @@ class Handler(BaseHTTPRequestHandler):
             body = MANIFEST
         elif path.startswith("/catalog/series/owned") and path.endswith(".json"):
             body = {"metas": [{"id": f"cue-owned-{n}", "name": f"Owned series {n}", "type": "series"} for n in (1, 2, 3)]}
+        elif path == "/catalog/movie/films.json":
+            body = {"metas": [{"id": "cue-owned-film", "name": "Owned film", "type": "movie"}]}
+        elif path == "/meta/movie/cue-owned-film.json":
+            body = {"meta": {"id": "cue-owned-film", "type": "movie", "name": "Owned film",
+                             "description": "Owned film without episode metadata"}}
+        elif path == "/stream/movie/cue-owned-film.json":
+            body = {"streams": [{"name": "Owned film peer fixture", "infoHash": INFO_HASH,
+                                 "fileIdx": 0, "sources": ["tracker:http://127.0.0.1:42427/announce"]}]}
         elif path.startswith("/meta/series/cue-owned-") and path.endswith(".json"):
             identity = path.rsplit("/", 1)[1][:-5]
             body = {"meta": {"id": identity, "type": "series", "name": f"Owned series {identity[-1]}",

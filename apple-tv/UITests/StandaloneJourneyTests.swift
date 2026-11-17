@@ -7,6 +7,38 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
+    @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        app.launch()
+        let catalog = app.buttons["Owned films · movie"]
+        XCTAssertTrue(catalog.waitForExistence(timeout: 20))
+        for _ in 0..<20 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(catalog.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let title = app.buttons["Owned film"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(title.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let choose = app.buttons["Choose source"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Owned film without episode metadata"].exists)
+        XCTAssertFalse(app.buttons["Season 1"].exists)
+        for _ in 0..<8 where !choose.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(choose.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["Owned film peer fixture"].waitForExistence(timeout: 5))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(choose.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(title.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+        XCTAssertTrue(catalog.hasFocus)
+    }
     @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"

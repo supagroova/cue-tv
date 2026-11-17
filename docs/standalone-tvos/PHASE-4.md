@@ -305,3 +305,16 @@ adds no automatic CI duration and does not establish physical-device behavior.
 Unsigned device build passes (`e9026237d2df4d2f9b7952ac24a7932e`); all 15
 portable harness tests pass. Next: exercise film details and search through the
 remote UI, then continue the remaining Stage 4 and later-stage requirements.
+
+### Film selection without episode metadata
+
+The owned add-on now supplies a separate movie catalog, metadata without a videos
+array, and a movie stream endpoint. The opt-in remote journey opens the film,
+checks its description and absence of season controls, chooses its exact source,
+and verifies Back restores movie, title and catalog focus. Initial pass:
+`efa25466b1db4a4ca8fb20386cc1aab5`. Temporarily disabling the production movie
+source button makes the test fail for the absent Choose source control
+(`3910a3d80a6e4267b1a96395315b8710`). Production code was restored byte-for-byte;
+the final fixture/test pass is `9ed8166c51874a47bc6bb06172144b54` (one executed
+test, zero failures). All 15 portable tests pass. This adds navigation coverage,
+not a new playback claim; the test remains opt-in. Next is remote search coverage.
