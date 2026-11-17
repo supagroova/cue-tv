@@ -87,3 +87,14 @@ remote add→browse→reopen→remove passes (`52507771e08e46248251a96b6ddf57a1`
 60 Swift tests and device build pass. PR13's CI collision is fixed with an atomic
 temporary-directory suffix, preserving parallel execution. Next: watched controls
 and Core Player checkpoints, plus remaining UI failure/lifecycle coverage.
+
+Watched-state detail projection now reads Core film completion and per-video
+bitfields, with matching title/type guards. Episode 30 retains its watched state
+across paging; a film resume position alone does not imply completion. Missing
+fields reproduced red (`204e1f28ca9e44d695eadc5d10c6d570`), detail tests pass
+(`d5af79fea77f445cb5850bb18b1aa16a`) and full native suite passes
+(`16b3fc21d5ba411fb100490d23bf74ef`). No watched mutation/UI/checkpoint claim yet.
+Next: revision-guarded Core watched actions, durable receipts and reopen tests,
+then Swift controls and manual-override integration with Core Player.
+PR13 Apple run44174360266 jobs134361659661/134361661187 were queued with no
+runner at 21:00 UTC; Android and portable checks passed. PR7 remains fully green.
