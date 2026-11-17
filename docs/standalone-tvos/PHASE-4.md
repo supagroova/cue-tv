@@ -101,3 +101,17 @@ Pinned native source-validation tests pass (`5cd156ffbc154a9796050bdc8ae6b1a1`),
 Core now prepares HTTPS source data with title/video identity under the same visible-source-window and revision checks as torrents. `cue_core_request_https` shares the existing one-ticket slot and take/discard operations: torrent/HTTPS requests cannot overwrite each other, and stop invalidates the request. Swift decodes a typed HTTPS payload through the shared bounded, timed handoff reader. The signed URL is returned only to the requesting caller, not added to snapshots.
 
 The full pinned native suite passes (`031d1d023c6a41108b2320906c6dfc76`), including mutual exclusion, unavailable-source errors, consumption and stop rejection. Missing-C-entry reproduction: `a0f1d3544b3f453695162b72c616d49b`. The full Swift suite passes (`fdf8a44f87f4419385bd24215e6403bb`); its HTTP add-on fixture supplies a synthetic HTTPS source whose signed URL and exact title/video identity are asserted, plus stale-revision and wrong-source-kind rejection. No external media request occurs in this fixture. Decoder ownership, HTTPS transport fixtures and UI activation remain pending.
+
+### Shared torrent/HTTPS playback lifecycle and TLS proof
+
+The production source view/model now accept typed torrent or HTTPS requests. Direct HTTPS uses the same VLC surface, coordinator deadlines, pause/seek/track controls, generation checks and decoder retirement; it allocates no torrent cache. Source buttons dispatch the matching private Core handoff only on selection. URLs requiring proxy headers and incompatible URL schemes remain unsupported. Lifecycle tests verify decoder stop on replacement/exit, stale callback rejection, no torrent cache, and rejection of unsafe URLs before decoder admission. The full Swift suite passes (`19fd77633af44d778d3fc592dd3546c3`); pinned native Core suite passes (`3939be5556c649ad8bd646447d33f086`); unsigned device build passes (`ec579a9457bd40a2b91c5bbc1a2fe924`).
+
+Run the separate opt-in TLS check with the configured pinned toolchain on PATH:
+
+```sh
+python3 scripts/agent/task.py verify phase-4-ui bash scripts/fixtures/check-https.sh
+```
+
+It generates short-lived test certificates, serves only the generated episode fixture on loopback ports 42425/42426 with byte ranges, creates a disposable tvOS 26.5 simulator, trusts the test root only there, and runs `HTTPSPlaybackTests`. The trusted endpoint must advance video and close back to Home. The untrusted endpoint must report failure without any observed playback advancement. A DEBUG-only fixed-loopback fixture entry uses the production SourcePlaybackView; release builds exclude that entry. No TLS verification bypass is installed in the player. The script always removes its simulator/certificates and stops its servers on exit.
+
+Initial TLS pair passes (`4959761fca104b2bae1aa3e04af17b8d`); the strengthened no-advancement rejection test passes (`eaa520c74f9e4b2c81be16247f60f8ed`). The full repeatable script passes (`cd66b71b8c0a4ba7949dba324cbae313`), and cleanup was independently checked. This opt-in proof is not added to automatic short CI. It proves local trusted/untrusted TLS behavior and initial playback, not arbitrary redirects, HTTPS seeking under interruption, a live add-on journey or physical-device playback.

@@ -2,6 +2,7 @@ import SwiftUI
 
 @main struct SittingRoomApp: App {
     #if DEBUG
+    @State private var showingHTTPSFixture = ProcessInfo.processInfo.environment["CUE_HTTPS_TEST_FIXTURE"] == "1"
     @State private var showingPlaybackLab = ProcessInfo.processInfo.environment["CUE_PLAYBACK_LAB"] == "1"
     #endif
     @Environment(\.scenePhase) private var scenePhase
@@ -15,6 +16,10 @@ import SwiftUI
                     .accessibilityIdentifier("playback-lab-open")
             }
             .fullScreenCover(isPresented: $showingPlaybackLab) { PlaybackLabView() }
+            .fullScreenCover(isPresented: $showingHTTPSFixture) {
+                let port = ProcessInfo.processInfo.environment["CUE_HTTPS_TEST_UNTRUSTED"] == "1" ? 42426 : 42425
+                SourcePlaybackView(request: .https(CoreHTTPSRequest(metaId: "owned-fixture", videoId: "owned-fixture", kind: "movie", url: "https://127.0.0.1:\(port)/episode01.mp4")))
+            }
             #endif
             .preferredColorScheme(.dark)
 

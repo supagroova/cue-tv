@@ -141,9 +141,9 @@ import CryptoKit
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let cache = TorrentCacheStore(root: root)
-    let model = TorrentPlaybackModel(cache: cache)
+    let model = SourcePlaybackModel(cache: cache)
     let request = CoreTorrentRequest(metaId: "title", videoId: "title:1:2", kind: "series", magnet: "invalid", fileIndex: nil, fileMustInclude: [])
-    await model.start(request)
+    await model.start(.torrent(request))
     #expect(model.coordinator.state == .failed(.invalidMetadata))
     #expect(model.playbackURL == nil)
     await model.stop()
@@ -151,4 +151,42 @@ import CryptoKit
     #expect(!model.cleanupFailed)
     let next = try await cache.acquire()
     try await cache.release(next)
+}
+
+@Test @MainActor func directHTTPSUsesDecoderLifecycleWithoutTorrentCacheAndRejectsLateCallbacks() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = SourcePlaybackModel(cache: TorrentCacheStore(root: root))
+    var decoderStops = 0
+    model.stopDecoder = { decoderStops += 1 }
+    let first = CoreHTTPSRequest(metaId: "title", videoId: "episode-1", kind: "series", url: "https://example.test/one.mp4?signature=synthetic")
+    await model.start(.https(first))
+    let old = try #require(model.generation)
+    #expect(model.playbackURL?.absoluteString == first.url)
+    #expect(model.coordinator.state == .buffering)
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+    let second = CoreHTTPSRequest(metaId: "title", videoId: "episode-2", kind: "series", url: "https://example.test/two.mkv")
+    await model.start(.https(second))
+    #expect(decoderStops == 1)
+    #expect(model.generation != old)
+    model.coordinator.receive(.playing, generation: old)
+    #expect(model.coordinator.state == .buffering)
+    await model.select(fileIndex: 0)
+    await model.showFiles(offset: 0)
+    #expect(model.playbackURL?.absoluteString == second.url)
+    await model.stop()
+    #expect(decoderStops == 2)
+    #expect(model.playbackURL == nil)
+    #expect(model.coordinator.state == .idle)
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+}
+
+@Test @MainActor func directHTTPSRejectsUnsafeURLBeforeDecoderAdmission() async throws {
+    for url in ["http://example.test/video", "file:///tmp/video", "https://user:secret@example.test/video", "https://example.test/video#fragment"] {
+        let model = SourcePlaybackModel()
+        await model.start(.https(CoreHTTPSRequest(metaId: "title", videoId: "video", kind: "movie", url: url)))
+        #expect(model.playbackURL == nil)
+        #expect(model.coordinator.state == .failed(.unsupportedFormat))
+        await model.stop()
+    }
 }

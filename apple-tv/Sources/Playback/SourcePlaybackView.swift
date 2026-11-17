@@ -1,11 +1,11 @@
 import SwiftUI
 import VLCKit
 
-struct TorrentPlaybackView: View {
-    let request: CoreTorrentRequest
+struct SourcePlaybackView: View {
+    let request: CorePlaybackRequest
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @State private var model = TorrentPlaybackModel()
+    @State private var model = SourcePlaybackModel()
     @State private var controller = VLCPlaybackController()
     @State private var paused = false
     @State private var audio = 0
@@ -39,6 +39,7 @@ struct TorrentPlaybackView: View {
                         model.coordinator.reportProgress(milliseconds: snapshot.milliseconds, generation: token)
                     }
                 }.id(url).frame(maxHeight: .infinity)
+                Text("\(milliseconds / 1000)s").monospacedDigit().accessibilityIdentifier("source-playback-time")
                 HStack {
                     Button(paused ? "Resume" : "Pause") { paused.toggle() }
                     Button("Back 10 seconds") { seek(to: max(0, milliseconds - 10000)) }

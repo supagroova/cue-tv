@@ -12,7 +12,7 @@ struct StandaloneHome: View {
     @State private var accountError: String?
     @State private var selectedSource: SelectedSource?
     enum Screen { case catalogs, titles, details, sources }
-    struct SelectedSource: Identifiable { let id = UUID(); let request: CoreTorrentRequest }
+    struct SelectedSource: Identifiable { let id = UUID(); let request: CorePlaybackRequest }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
@@ -118,9 +118,17 @@ struct StandaloneHome: View {
                                 if sources.loading { ProgressView("Finding sources…") }
                                 ForEach(sources.items, id: \.index) { source in
                                     Button(source.name ?? "Source \(source.index + 1)") {
-                                        Task { if let request = await model.prepare(index: source.index, expectedRevision: state.revision) { selectedSource = SelectedSource(request: request) } }
-                                    }.disabled(source.kind != .torrent)
-                                    if source.kind != .torrent { Text("This source format is not supported yet.").font(.caption) }
+                                        Task {
+                                            switch source.kind {
+                                            case .torrent:
+                                                if let request = await model.prepare(index: source.index, expectedRevision: state.revision) { selectedSource = SelectedSource(request: .torrent(request)) }
+                                            case .http:
+                                                if let request = await model.prepareHTTPS(index: source.index, expectedRevision: state.revision) { selectedSource = SelectedSource(request: .https(request)) }
+                                            case .unsupported: break
+                                            }
+                                        }
+                                    }.disabled(source.kind == .unsupported)
+                                    if source.kind == .unsupported { Text("This source format is not supported yet.").font(.caption) }
                                 }
                                 if sources.status == .ready, sources.items.isEmpty { Text("No sources found. Install a compatible Stremio add-on.") }
                                 if sources.offset > 0 { Button("Previous sources") { Task { await model.perform(expectedRevision: state.revision) { try await $0.showSources(offset: max(0, sources.offset - 24), expectedRevision: $1) } } } }
@@ -140,6 +148,6 @@ struct StandaloneHome: View {
                 onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },
                 onSuccess: { showSignIn = false; screen = .catalogs; restart = UUID() })
         }
-        .fullScreenCover(item: $selectedSource) { TorrentPlaybackView(request: $0.request) }
+        .fullScreenCover(item: $selectedSource) { SourcePlaybackView(request: $0.request) }
     }
 }

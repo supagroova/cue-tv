@@ -156,6 +156,12 @@ final class StandaloneModel {
     }
 
     func prepare(index: Int, expectedRevision: UInt64? = nil) async -> CoreTorrentRequest? {
+        await prepareSource(index: index, expectedRevision: expectedRevision) { try await $0.prepareTorrent(index: index, expectedRevision: $1) }
+    }
+    func prepareHTTPS(index: Int, expectedRevision: UInt64? = nil) async -> CoreHTTPSRequest? {
+        await prepareSource(index: index, expectedRevision: expectedRevision) { try await $0.prepareHTTPS(index: index, expectedRevision: $1) }
+    }
+    private func prepareSource<Request: Sendable>(index: Int, expectedRevision: UInt64?, action: @Sendable (any CoreService, UInt64) async throws -> Request) async -> Request? {
         guard let service, let revision = snapshot?.model?.revision else { return nil }
         guard expectedRevision == nil || expectedRevision == revision else {
             error = "That source has changed. Please select it again."
@@ -163,7 +169,7 @@ final class StandaloneModel {
         }
         let token = generation
         do {
-            let request = try await service.prepareTorrent(index: index, expectedRevision: revision)
+            let request = try await action(service, revision)
             guard generation == token, !Task.isCancelled else { return nil }
             return request
         } catch {

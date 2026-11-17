@@ -91,7 +91,9 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
                 kind: match &stream.source {
                     StreamSource::Torrent { .. } => "torrent",
                     StreamSource::Url { url } if url.scheme() == "magnet" => "torrent",
-                    StreamSource::Url { url } if matches!(url.scheme(), "https" | "http") => "http",
+                    StreamSource::Url { .. } if crate::playback_source::https(stream).is_ok() => {
+                        "http"
+                    }
                     _ => "unsupported",
                 },
                 name: stream
