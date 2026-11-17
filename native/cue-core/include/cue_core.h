@@ -12,6 +12,11 @@ uint64_t cue_core_create(void);
 // supplies a credential-store key. Startup/lock errors appear in the snapshot.
 // Stop acknowledgement includes storage-lock release.
 uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length);
+// Restore an existing account from the same encrypted directory/key contract.
+// Expected user ID is copied UTF-8, 1..512 bytes, no control characters.
+// It must come from protected app identity storage, not an arbitrary source URL.
+// Identity mismatch appears as core_start_failed; this does not validate token freshness.
+uint64_t cue_core_restore_account(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length, const uint8_t *user, size_t user_length);
 // Copies input before return. JSON v1: {"version":1,"action":"set_language","language":"fra"}.
 // Or {"version":1,"action":"load_addon","url":"https://host/manifest.json"}.
 // Install only the displayed ready preview: {"version":1,"action":"install_addon","revision":N}.
