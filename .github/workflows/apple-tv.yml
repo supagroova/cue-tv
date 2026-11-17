@@ -42,6 +42,7 @@ jobs:
           key: apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-${{ github.sha }}
           restore-keys: |
             apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-
+            apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
       - name: Install project generator and report toolchain
         run: |
           brew install xcodegen

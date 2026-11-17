@@ -259,3 +259,8 @@ tvOS library targets compile. Remaining integration: platform Keychain keys,
 exclusive storage ownership, C/Swift configuration, app relaunch/recovery tests,
 identity scoping and account lifecycle. Large-state write latency and shutdown
 responsiveness also need measurement before enabling this backend in the app.
+
+CI cache restoration now falls back to the same architecture/Rust/Xcode cache
+when lockfiles or the project change. Cargo/SwiftPM still resolve pinned inputs
+and rebuild invalidated artifacts; this avoids discarding all downloaded sources
+and unchanged compiled dependencies for a small manifest edit.
