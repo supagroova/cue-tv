@@ -175,7 +175,10 @@ private actor ActionGate {
     let service = NativeCoreService(persistence: configuration, startup: .newAccount)
     let model = StandaloneModel(service: service)
     let run = Task { await model.run() }
-    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let startupDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while model.snapshot?.status != .ready, ContinuousClock.now < startupDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
     #expect(model.snapshot?.status == .ready)
     try await model.signOut(selection: selection, root: root)
     await run.value

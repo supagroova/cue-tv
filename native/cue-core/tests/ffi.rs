@@ -25,6 +25,25 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     until(|| state(handle)["status"] == "ready");
     let revision = state(handle)["model"]["revision"].as_u64().unwrap();
     assert_eq!(cue_core_request_library(handle, 2, revision), 0);
+    assert_eq!(cue_core_request_playback(handle, 0, 0, 0, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 8, 0, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 0, 1, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 1, u64::MAX, 1000), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 2, 0, u64::MAX), 0);
+    for action in 0..8 {
+        let ticket = cue_core_request_playback(handle, u64::MAX, action, 0, 0);
+        assert_ne!(ticket, 0);
+        assert_eq!(cue_core_request_playback(handle, 1, 0, 0, 0), 0);
+        until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
+        let mut bytes = vec![0; 4096];
+        let len = unsafe { cue_core_take_torrent(handle, ticket, bytes.as_mut_ptr(), bytes.len()) };
+        let receipt: serde_json::Value = serde_json::from_slice(&bytes[..len as usize]).unwrap();
+        assert_eq!(receipt["session"], handle);
+        assert_eq!(receipt["ticket"], ticket);
+        assert_eq!(receipt["error"], "stale_playback");
+        assert!(receipt["request"].is_null());
+    }
+
     unsafe {
         assert_eq!(
             cue_core_request_watched(handle, std::ptr::null(), 1, 1, revision),

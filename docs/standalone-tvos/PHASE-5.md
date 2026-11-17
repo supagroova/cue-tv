@@ -300,3 +300,20 @@ to prove no early close acknowledgement and reject late progress before releasin
 the write. Disk-failure recovery and encrypted reopen remain covered. The full
 native suite, unsigned device build and 15 harness tests pass. Swift Close/Home
 controls and periodic/lifecycle scheduling still need this native integration.
+
+## Playback receipt bridge
+
+The C ABI and NativeCoreService now expose bounded Start, Seek, played progress,
+Pause/Unpause, Checkpoint, durable Close and accounting-only abort requests. They
+share the existing exclusive ticketed handoff slot. Receipts validate session,
+ticket, playback token, action and expected progress shape; input times are unsigned
+milliseconds bounded by INT64_MAX. Cancellation/timeout stops observation and does
+not roll back an already admitted operation. Swift decodes prepared playback tokens
+for both torrent and HTTPS sources.
+
+The real Swift/native HTTP fixture starts a selected source, seeks without viewing
+credit, reports played time, checkpoints, closes and rejects stale callbacks. All 60
+Swift tests, full native tests and the unsigned tvOS build pass. An existing sign-out test's initial account
+startup exceeded its one-second wait; it now waits until ready with a three-second
+deadline and retains the same readiness assertion. Decoder callbacks, lifecycle
+controls, periodic coalescing and resume UI remain unconnected.

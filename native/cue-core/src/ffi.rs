@@ -319,6 +319,36 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::PlaybackControl { ticket, token, action, time, duration, cancellation } => {
+                                let operation = async {
+                                    use crate::player::PlaybackEvent;
+                                    match action {
+                                        0 => session.start_playback(token).await.map(|_| None),
+                                        1 => session.playback_event(token, PlaybackEvent::Seek { time, duration }).await.map(Some),
+                                        2 => session.playback_event(token, PlaybackEvent::TimeChanged { time, duration }).await.map(Some),
+                                        3 | 4 => session.playback_event(token, PlaybackEvent::Paused(action == 3)).await.map(Some),
+                                        5 => session.checkpoint_playback(token).await.map(|_| None),
+                                        6 => session.close_playback(token).await.map(|_| None),
+                                        7 => session.retire_playback(token).await.map(|_| None),
+                                        _ => Err("invalid_playback_action"),
+                                    }
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("playback_operation_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), operation) => result.unwrap_or(Err("playback_operation_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(progress) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"token":token,"action":action,"progress":progress},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SaveWatched { ticket, video_id, watched, revision, cancellation } => {
                                 let save = async {
                                     let identity = session.snapshot().details.map(|details| (details.kind, details.id));
@@ -422,6 +452,15 @@ async fn own(
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    #[serde(skip)]
+    PlaybackControl {
+        ticket: u64,
+        token: u64,
+        action: u8,
+        time: u64,
+        duration: u64,
+        cancellation: CancellationToken,
+    },
     #[serde(skip)]
     SaveWatched {
         ticket: u64,
@@ -530,7 +569,8 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::SaveWatched { .. }
+            Self::PlaybackControl { .. }
+            | Self::SaveWatched { .. }
             | Self::SaveLibrary { .. }
             | Self::DiscoverSubtitles { .. }
             | Self::PrepareTorrent { .. }
@@ -901,6 +941,62 @@ pub unsafe extern "C" fn cue_core_request_subtitles(
             .try_send(Command::DiscoverSubtitles {
                 ticket,
                 identity,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Playback actions share the private receipt slot; admission is not completion.
+/// Cancel/timeout discards observation, not an operation already admitted by Core.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_playback(
+    handle: u64,
+    token: u64,
+    action: u8,
+    time: u64,
+    duration: u64,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if token == 0
+            || action > 7
+            || time > i64::MAX as u64
+            || duration > i64::MAX as u64
+            || (!matches!(action, 1 | 2) && (time != 0 || duration != 0))
+        {
+            return 0;
+        }
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::PlaybackControl {
+                ticket,
+                token,
+                action,
+                time,
+                duration,
                 cancellation,
             })
             .is_err()

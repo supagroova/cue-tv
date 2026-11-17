@@ -198,6 +198,21 @@ import Security
     #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
+    #expect(handoff.playbackToken > 0)
+    try await service.startPlayback(token: handoff.playbackToken)
+    let seek = try await service.playback(token: handoff.playbackToken, action: .seek, time: 800, duration: 1000)
+    #expect(seek?.timeWatched == 0)
+    let played = try await service.playback(token: handoff.playbackToken, action: .played, time: 900, duration: 1000)
+    #expect(played?.timeWatched == 100)
+    #expect(played?.watched == false)
+    try await service.checkpointPlayback(token: handoff.playbackToken)
+    try await service.closePlayback(token: handoff.playbackToken)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_playback")) {
+        try await service.playback(token: handoff.playbackToken, action: .played, time: 950, duration: 1000)
+    }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) {
+        try await service.playback(token: handoff.playbackToken, action: .seek, time: .max, duration: 1000)
+    }
     let discovered = try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind)
     #expect(discovered.tracks.map(\.id) == ["owned-resource"])
     #expect(discovered.failedProviders == 0)

@@ -67,6 +67,17 @@ uint64_t cue_core_request_library(uint64_t handle, uint8_t member, uint64_t revi
  * Zero means invalid/busy/unavailable. */
 uint64_t cue_core_request_watched(uint64_t handle, const uint8_t *video, size_t length,
                                   uint8_t watched, uint64_t revision);
+/* Playback receipt: action 0=start,1=seek,2=played progress,3=pause,4=unpause,
+ * 5=checkpoint,6=durable close,7=retire without saving (abort only).
+ * token is the nonzero playback_token from a prepared source in this session.
+ * time/duration are milliseconds <= INT64_MAX, zero unless action is 1 or 2.
+ * Same exclusive take/discard slot. Success request is {token,action,progress};
+ * progress is {time,duration,time_watched,watched} for actions 1..4, else null.
+ * Checkpoint/close success follows durable local storage. Cancel/timeout does not
+ * roll back an admitted action. Close freezes progress and retires only on success.
+ * Zero means invalid/busy/unavailable. */
+uint64_t cue_core_request_playback(uint64_t handle, uint64_t token, uint8_t action,
+                                 uint64_t time, uint64_t duration);
 // JSON v1 reply includes session, ticket, request or fixed error; at most 256 KiB.
 // Returns 0 pending, -1 invalid, or byte count. Only a full non-null copy consumes it.
 // NULL/0 queries length. Undersized buffers stay untouched. Stop discards the reply.

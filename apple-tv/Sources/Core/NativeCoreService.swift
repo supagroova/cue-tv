@@ -60,6 +60,7 @@ nonisolated struct CoreSubtitleDiscovery: Decodable, Sendable {
 }
 
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    var playbackToken: UInt64 = 0
     var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
@@ -70,6 +71,7 @@ nonisolated struct CoreTorrentRequest: Decodable, Sendable {
 }
 
 nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
+    var playbackToken: UInt64 = 0
     var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
@@ -78,9 +80,10 @@ nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
 }
 
 extension CoreTorrentRequest {
-    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
+    nonisolated enum CodingKeys: String, CodingKey { case playbackToken, subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
     nonisolated init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        playbackToken = try values.decode(UInt64.self, forKey: .playbackToken)
         subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
         metaId = try values.decode(String.self, forKey: .metaId)
         videoId = try values.decode(String.self, forKey: .videoId)
@@ -91,9 +94,10 @@ extension CoreTorrentRequest {
     }
 }
 extension CoreHTTPSRequest {
-    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, url }
+    nonisolated enum CodingKeys: String, CodingKey { case playbackToken, subtitles, metaId, videoId, kind, url }
     nonisolated init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        playbackToken = try values.decode(UInt64.self, forKey: .playbackToken)
         subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
         metaId = try values.decode(String.self, forKey: .metaId)
         videoId = try values.decode(String.self, forKey: .videoId)
@@ -110,7 +114,22 @@ nonisolated private struct CoreSourceReply<Request: Decodable & Sendable>: Decod
     let error: String?
 }
 
+nonisolated enum CorePlaybackAction: UInt8, Sendable {
+    case start = 0, seek, played, pause, unpause, checkpoint, close, retire
+    var returnsProgress: Bool { [.seek, .played, .pause, .unpause].contains(self) }
+}
+nonisolated struct CorePlaybackProgress: Decodable, Sendable {
+    let time: UInt64
+    let duration: UInt64
+    let timeWatched: UInt64
+    let watched: Bool
+}
+
 nonisolated protocol CoreService: Sendable {
+    func playback(token: UInt64, action: CorePlaybackAction, time: UInt64, duration: UInt64) async throws -> CorePlaybackProgress?
+    func startPlayback(token: UInt64) async throws
+    func checkpointPlayback(token: UInt64) async throws
+    func closePlayback(token: UInt64) async throws
     func start() async throws
     func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
@@ -312,6 +331,26 @@ actor NativeCoreService: CoreService {
         guard index >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "library_details", "index": index, "revision": expectedRevision])
     }
+    private struct PlaybackReceipt: Decodable, Sendable {
+        let token: UInt64
+        let action: UInt8
+        let progress: CorePlaybackProgress?
+    }
+    func playback(token: UInt64, action: CorePlaybackAction, time: UInt64 = 0, duration: UInt64 = 0) async throws -> CorePlaybackProgress? {
+        try Task.checkCancellation()
+        guard token > 0, time <= UInt64(Int64.max), duration <= UInt64(Int64.max),
+              action == .seek || action == .played || (time == 0 && duration == 0) else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        let receipt: PlaybackReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.token == token, receipt.action == action.rawValue,
+              (receipt.progress != nil) == action.returnsProgress else { throw Failure.malformedSnapshot }
+        return receipt.progress
+    }
+    func startPlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .start) }
+    func checkpointPlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .checkpoint) }
+    func closePlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .close) }
+
     private struct WatchedReceipt: Decodable, Sendable { let watched: Bool; let videoId: String? }
     func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws {
         try Task.checkCancellation()

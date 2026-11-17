@@ -308,3 +308,24 @@ Next: bridge native start/progress/checkpoint/close receipts and playback token 
 Swift, then wire decoder callbacks with explicit seek classification and a bounded
 periodic coalescer retaining lifecycle barriers. Resume and account journal remain
 required. PR13 at18ca94a CI was still running at last observation.
+
+### Phase 5 C/Swift playback receipts
+
+C `cue_core_request_playback` uses existing take/discard ticket ownership and a
+four-second native operation timeout. Swift validates action/token/progress shape
+via the existing five-second reader. No new dependency. Integer ms input bounded
+by INT64_MAX; unused time parameters must be zero. NativeCoreService exposes typed
+actions and start/checkpoint/close wrappers; prepared source token is decoded.
+Abort-only retirement deliberately makes no persistence claim. Cancellation may
+leave an admitted owner/action in progress: the future UI owner must reconcile it.
+
+FFI missing API red db2246eb083a4f85a92a2314bf90848c; green
+4254cc12bc284c55970c7433d43b887a. Swift missing API red
+071ff6a8cdb84bf6b83e789ece0db2b2. First complete Swift run passed the new bridge
+test but existing initial account startup missed its1s polling budget
+(fe43dc73498f4839acb4d445e98e53b5). Changed only that test's wait to an early-exit
+3s deadline; all60 pass5989a7cbba86432f8ed739aedd6e2570. Full native suite
+083ab8c7933d48fc9cbece1a512a3a13 passes (before that Swift-only test wait change).
+Unsigned device build passes354f38d2acd84f92934f6dc884f8c6fb;15 harness tests pass.
+Next: connect a single Swift playback accounting owner to decoder callbacks and
+queued lifecycle barriers; keep seek/reposition separate from played progress.

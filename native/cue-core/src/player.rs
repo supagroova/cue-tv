@@ -20,7 +20,7 @@ pub enum PlaybackEvent {
     TimeChanged { time: u64, duration: u64 },
     Paused(bool),
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Progress {
     pub time: u64,
     pub duration: u64,
