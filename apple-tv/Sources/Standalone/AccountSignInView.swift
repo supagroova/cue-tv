@@ -25,6 +25,8 @@ struct AccountSignInView: View {
             Button("Cancel") { close() }
         }
         .frame(maxWidth: 1000).padding(60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
         .onExitCommand { close() }
         .onDisappear { password = ""; Task { await model.cancel() } }
     }
