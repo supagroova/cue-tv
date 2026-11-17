@@ -32,11 +32,11 @@ fn encrypted_store_roundtrip_randomizes_ciphertext_and_detects_tampering() {
     store.save(&values).unwrap();
     let first = std::fs::read(directory.0.join("state.bin")).unwrap();
     assert!(!String::from_utf8_lossy(&first).contains("private-token"));
-    assert_eq!(
-        EncryptedStore::open(&directory.0, &[7; 32]).unwrap().1,
-        values
-    );
+    drop(store);
+    let (store, restored) = EncryptedStore::open(&directory.0, &[7; 32]).unwrap();
+    assert_eq!(restored, values);
     store.save(&values).unwrap();
+    drop(store);
     let mut second = std::fs::read(directory.0.join("state.bin")).unwrap();
     assert_ne!(first, second);
     assert!(matches!(
@@ -66,6 +66,7 @@ fn failed_write_preserves_the_previous_encrypted_value() {
         serde_json::to_vec(&"x".repeat(17 * 1024 * 1024)).unwrap(),
     )]);
     assert!(matches!(store.save(&oversized), Err(StoreError::TooLarge)));
+    drop(store);
     assert_eq!(
         EncryptedStore::open(&directory.0, &[9; 32]).unwrap().1,
         original
@@ -112,8 +113,21 @@ async fn unavailable_directory_does_not_commit_in_memory() {
     assert!(write.is_err());
     assert_eq!(value.unwrap(), Some(1));
     env.shutdown().await;
+    drop(env);
     assert_eq!(
         EncryptedStore::open(&directory.0, &[4; 32]).unwrap().1["value"],
         b"1"
     );
+}
+
+#[test]
+fn a_storage_directory_has_only_one_live_owner() {
+    let directory = Directory::new();
+    let (first, _) = EncryptedStore::open(&directory.0, &[1; 32]).unwrap();
+    assert!(matches!(
+        EncryptedStore::open(&directory.0.join("."), &[1; 32]),
+        Err(StoreError::Unavailable)
+    ));
+    drop(first);
+    assert!(EncryptedStore::open(&directory.0, &[1; 32]).is_ok());
 }

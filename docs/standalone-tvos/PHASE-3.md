@@ -264,3 +264,24 @@ CI cache restoration now falls back to the same architecture/Rust/Xcode cache
 when lockfiles or the project change. Cargo/SwiftPM still resolve pinned inputs
 and rebuild invalidated artifacts; this avoids discarding all downloaded sources
 and unchanged compiled dependencies for a small manifest edit.
+
+## Persistent-session ownership and C creation
+
+The encrypted store now holds an OS file lock for its lifetime. A second open,
+including an aliased path to the same directory, fails without overwriting state;
+the lock is released when the store is dropped. The lock file remains in place so
+future owners synchronize on the same inode. The app-owned directory must not be
+renamed, replaced or modified by another component while in use.
+
+`cue_core_create_persistent` accepts a copied absolute UTF-8 directory path and
+exactly 32 key bytes. It rejects null/invalid-length inputs, parent traversal and
+embedded NULs. Configuration is internal application input, not an add-on action.
+The directory must already exist. Startup errors are fixed, redacted snapshot
+codes. The owner explicitly drops its Core session and environment before
+publishing completed shutdown, ensuring the file lock is released before a new
+owner can reopen it. The C regression writes a Core setting, rejects a competing
+owner, stops/releases and immediately restores the setting in a new session.
+
+All 23 native tests pass and both tvOS library targets compile. The Swift app still
+uses memory-only creation; Keychain provisioning, app-owned directory setup,
+relaunch/recovery and account identity wiring remain required.

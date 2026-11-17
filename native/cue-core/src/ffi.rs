@@ -58,6 +58,53 @@ pub extern "C" fn cue_core_abi_version() -> u32 {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn cue_core_create() -> u64 {
+    create(None)
+}
+struct Persistence {
+    directory: std::path::PathBuf,
+    key: [u8; 32],
+}
+/// # Safety
+/// Both non-null inputs must be readable for the supplied lengths. Inputs are copied.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_create_persistent(
+    path: *const u8,
+    path_length: usize,
+    key: *const u8,
+    key_length: usize,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if path.is_null()
+            || key.is_null()
+            || path_length == 0
+            || path_length > 4096
+            || key_length != 32
+        {
+            return 0;
+        }
+        let Ok(path) =
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(path, path_length) })
+        else {
+            return 0;
+        };
+        let directory = std::path::PathBuf::from(path);
+        if path.contains('\0')
+            || !directory.is_absolute()
+            || directory
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            return 0;
+        }
+        let Ok(key) = <[u8; 32]>::try_from(unsafe { std::slice::from_raw_parts(key, key_length) })
+        else {
+            return 0;
+        };
+        create(Some(Persistence { directory, key }))
+    }))
+    .unwrap_or(0)
+}
+fn create(persistence: Option<Persistence>) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         let Some(runtime) = runtime() else {
             return 0;
@@ -83,14 +130,23 @@ pub extern "C" fn cue_core_create() -> u64 {
         publish(&entry, handle, "starting", None, None);
         all.insert(handle, entry.clone());
         runtime.spawn(async move {
-            own(handle, entry, inbox).await;
+            own(handle, entry, inbox, persistence).await;
         });
         handle
     }))
     .unwrap_or(0)
 }
-async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<Command>) {
-    let env = match Environment::new() {
+async fn own(
+    handle: u64,
+    entry: Arc<Entry>,
+    mut inbox: mpsc::Receiver<Command>,
+    persistence: Option<Persistence>,
+) {
+    let environment = match persistence {
+        Some(config) => Environment::persistent(&config.directory, &config.key),
+        None => Environment::new(),
+    };
+    let env = match environment {
         Ok(env) => env,
         Err(_) => {
             publish(&entry, handle, "stopped", None, Some("core_start_failed"));
@@ -105,6 +161,7 @@ async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<Command>)
         Ok(Ok(session)) => session,
         _ => {
             env.shutdown().await;
+            drop(env);
             publish(&entry, handle, "stopped", None, Some("core_start_failed"));
             entry.stop.cancel();
             entry.stopped.store(true, Ordering::Release);
@@ -151,6 +208,8 @@ async fn own(handle: u64, entry: Arc<Entry>, mut inbox: mpsc::Receiver<Command>)
         Some(session.snapshot()),
         env.failure(),
     );
+    drop(session);
+    drop(env);
     entry.stop.cancel();
     entry.stopped.store(true, Ordering::Release);
 }

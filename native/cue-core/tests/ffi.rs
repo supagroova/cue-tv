@@ -70,4 +70,45 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
         until(|| cue_core_stop_status(handle) == 1);
         assert_eq!(cue_core_release(handle), 1);
     }
+    let directory = std::env::temp_dir().join(format!(
+        "cue-core-ffi-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.to_str().unwrap().as_bytes();
+    let key = [19u8; 32];
+    let create = || unsafe {
+        cue_core_create_persistent(path.as_ptr(), path.len(), key.as_ptr(), key.len())
+    };
+    assert_eq!(unsafe { cue_core_create_persistent(std::ptr::null(), 0, key.as_ptr(), 32) }, 0);
+    assert_eq!(unsafe { cue_core_create_persistent(path.as_ptr(), path.len(), key.as_ptr(), 31) }, 0);
+    let persisted = create();
+    assert_ne!(persisted, 0);
+    until(|| state(persisted)["status"] == "ready");
+    let duplicate = create();
+    until(|| cue_core_stop_status(duplicate) == 1);
+    assert_eq!(state(duplicate)["error"], "core_start_failed");
+    assert_eq!(cue_core_release(duplicate), 1);
+    assert_eq!(
+        unsafe { cue_core_dispatch(persisted, command.as_ptr(), command.len()) },
+        0
+    );
+    until(|| {
+        state(persisted)["model"]["interface_language"] == "fra"
+            && state(persisted)["model"]["pending_effects"] == 0
+    });
+    cue_core_stop(persisted);
+    until(|| cue_core_stop_status(persisted) == 1);
+    assert_eq!(cue_core_release(persisted), 1);
+    let restored = create();
+    until(|| state(restored)["status"] == "ready");
+    assert_eq!(state(restored)["model"]["interface_language"], "fra");
+    cue_core_stop(restored);
+    until(|| cue_core_stop_status(restored) == 1);
+    assert_eq!(cue_core_release(restored), 1);
+    std::fs::remove_dir_all(directory).unwrap();
 }

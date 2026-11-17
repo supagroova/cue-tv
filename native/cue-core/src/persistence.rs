@@ -25,6 +25,7 @@ pub enum StoreError {
 pub struct EncryptedStore {
     directory: PathBuf,
     key: aead::LessSafeKey,
+    _lease: File,
 }
 impl EncryptedStore {
     /// Blocking: call off the UI actor. Directory must already exist and be owned
@@ -34,11 +35,31 @@ impl EncryptedStore {
         if !metadata.file_type().is_dir() {
             return Err(StoreError::Unavailable);
         }
+        let lock_path = directory.join("store.lock");
+        match fs::symlink_metadata(&lock_path) {
+            Ok(metadata) if !metadata.file_type().is_file() => return Err(StoreError::Unavailable),
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Unavailable);
+            }
+            _ => {}
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lease = options
+            .open(lock_path)
+            .map_err(|_| StoreError::Unavailable)?;
+        lease.try_lock().map_err(|_| StoreError::Unavailable)?;
         let key =
             aead::UnboundKey::new(&aead::AES_256_GCM, key).map_err(|_| StoreError::Unavailable)?;
         let store = Self {
             directory: directory.to_owned(),
             key: aead::LessSafeKey::new(key),
+            _lease: lease,
         };
         let path = directory.join("state.bin");
         let metadata = match fs::symlink_metadata(&path) {

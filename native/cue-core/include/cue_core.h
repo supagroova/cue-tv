@@ -7,6 +7,11 @@
 uint32_t cue_core_abi_version(void);
 // Starts an isolated guest session asynchronously; 0 means unavailable/capacity.
 uint64_t cue_core_create(void);
+// Existing app-owned absolute directory (UTF-8, no NUL), and exactly 32 key bytes.
+// Inputs are copied; do not persist the key beside the ciphertext. The platform
+// supplies a credential-store key. Startup/lock errors appear in the snapshot.
+// Stop acknowledgement includes storage-lock release.
+uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length);
 // Copies input before return. JSON v1: {"version":1,"action":"set_language","language":"fra"}.
 // Or {"version":1,"action":"load_addon","url":"https://host/manifest.json"}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
