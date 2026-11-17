@@ -15,6 +15,11 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
     struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int }
+    struct Source: Decodable, Sendable {
+        enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
+        let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
+    }
+    struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
@@ -22,6 +27,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let catalogs: [CatalogChoice]
         let catalogChoicesOffset: Int
         let catalogTotal: Int
+        let sources: Sources?
         let details: Details?
         let catalog: Catalog?
         let addonCount: Int
@@ -43,6 +49,8 @@ nonisolated protocol CoreService: Sendable {
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
+    func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
+    func showSources(offset: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
@@ -107,6 +115,16 @@ actor NativeCoreService: CoreService {
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) throws {
         guard offset >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "details_videos", "offset": offset, "revision": expectedRevision])
+    }
+
+    func loadSources(videoIndex: Int?, expectedRevision: UInt64) throws {
+        if let videoIndex, !(0..<24).contains(videoIndex) { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "load_sources", "index": videoIndex.map { $0 as Any } ?? NSNull(), "revision": expectedRevision])
+    }
+
+    func showSources(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "source_window", "offset": offset, "revision": expectedRevision])
     }
 
     func loadDetails(index: Int, expectedRevision: UInt64) throws {

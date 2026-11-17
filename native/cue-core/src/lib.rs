@@ -10,3 +10,5 @@ pub mod persistence;
 pub mod catalog;
 
 pub mod details;
+
+pub mod sources;

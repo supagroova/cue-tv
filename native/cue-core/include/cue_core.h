@@ -20,6 +20,8 @@ uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, con
 // Content window, fetching the next Core page when needed: {"version":1,"action":"catalog_items","offset":N,"revision":N}.
 // Title details from an index in the displayed content window: {"version":1,"action":"load_details","index":N,"revision":N}.
 // Episode/video window: {"version":1,"action":"details_videos","offset":N,"revision":N}.
+// Load sources for a displayed video index (null for a movie without videos): {"version":1,"action":"load_sources","index":N,"revision":N}.
+// Source window: {"version":1,"action":"source_window","offset":N,"revision":N}.
 // 0 accepted (not completed), -1 unavailable, -2 malformed, -3 queue full.
 int32_t cue_core_dispatch(uint64_t handle, const uint8_t *bytes, size_t length);
 // Returns required byte count, or -1 for an invalid handle. No NUL terminator.

@@ -42,3 +42,12 @@ fn mismatched_metadata_never_supplies_episode_choices() {
     assert_eq!(state.video_total, 0);
     assert!(state.videos.is_empty());
 }
+
+#[test]
+fn selecting_an_episode_uses_the_full_video_id_from_the_current_window() {
+    let model = series();
+    let selected = cue_core::sources::selection(&model, 24, Some(5)).unwrap();
+    assert_eq!(selected.stream_path.unwrap().id, "owned-series:1:30");
+    assert!(cue_core::sources::selection(&model, 24, Some(6)).is_none());
+    assert!(cue_core::sources::selection(&model, 0, None).is_none());
+}

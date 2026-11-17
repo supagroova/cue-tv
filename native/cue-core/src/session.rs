@@ -56,6 +56,7 @@ pub struct Snapshot {
     pub catalog: Option<crate::catalog::View>,
     pub addon: Option<AddonSnapshot>,
     pub details: Option<crate::details::View>,
+    pub sources: Option<crate::sources::View>,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
@@ -68,7 +69,13 @@ enum Command {
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
-    Effect(Msg, u64, u64, u64),
+    Sources(
+        Option<usize>,
+        u64,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
+    SourceWindow(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Effect(Msg, u64, u64, u64, u64),
 }
 pub struct CoreSession {
     environment: Arc<Environment>,
@@ -112,6 +119,7 @@ impl CoreSession {
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
             &MetaDetails::default(),
+            0,
             0,
             0,
             0,
@@ -232,6 +240,28 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn load_sources(
+        &self,
+        index: Option<usize>,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Sources(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn show_sources(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::SourceWindow(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -263,6 +293,7 @@ fn snapshot(
     catalog: &crate::catalog::Catalog,
     details: &MetaDetails,
     video_offset: usize,
+    source_offset: usize,
     catalog_choices_offset: usize,
     catalog_item_offset: usize,
     revision: u64,
@@ -277,6 +308,7 @@ fn snapshot(
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
         details: crate::details::view(details, video_offset),
+        sources: crate::sources::view(details, source_offset),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -320,7 +352,9 @@ async fn run(
     let mut catalog_generation = 0u64;
     let mut details = MetaDetails::default();
     let mut details_generation = 0u64;
+    let mut source_generation = 0u64;
     let mut video_offset = 0usize;
+    let mut source_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
     let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
@@ -332,7 +366,8 @@ async fn run(
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
         };
-        let (message, reply, origin, catalog_origin, details_origin) = match command {
+        let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
+        {
             Command::Language(language, reply) => {
                 error = None;
                 let mut settings = ctx.profile.settings.clone();
@@ -343,6 +378,7 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                     details_generation,
+                    source_generation,
                 )
             }
             Command::Addon(selected, reply) => {
@@ -365,6 +401,7 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                     details_generation,
+                    source_generation,
                 )
             }
             Command::Install(expected_revision, reply) => {
@@ -388,6 +425,7 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                     details_generation,
+                    source_generation,
                 )
             }
             Command::Catalog(index, expected, reply) => {
@@ -412,6 +450,7 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                     details_generation,
+                    source_generation,
                 )
             }
             Command::CatalogItems(offset, expected, reply) => {
@@ -438,6 +477,7 @@ async fn run(
                         addon_generation,
                         catalog_generation,
                         details_generation,
+                        source_generation,
                     )
                 } else {
                     revision += 1;
@@ -447,6 +487,7 @@ async fn run(
                         &catalog,
                         &details,
                         video_offset,
+                        source_offset,
                         catalog_choices_offset,
                         catalog_item_offset,
                         revision,
@@ -481,6 +522,65 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    source_offset,
+                    catalog_choices_offset,
+                    catalog_item_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::Sources(index, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let Some(selected) = crate::sources::selection(&details, video_offset, index)
+                else {
+                    let _ = reply.send(Err("invalid_video"));
+                    continue;
+                };
+                let Some(next) = source_generation.checked_add(1) else {
+                    env.fail();
+                    break;
+                };
+                source_generation = next;
+                details.streams.clear();
+                details.meta_streams.clear();
+                source_offset = 0;
+                error = None;
+                (
+                    Msg::Action(Action::Load(ActionLoad::MetaDetails(selected))),
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::SourceWindow(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_sources"));
+                    continue;
+                }
+                if !crate::sources::view(&details, 0)
+                    .is_some_and(|view| offset == 0 || offset < view.total)
+                {
+                    let _ = reply.send(Err("invalid_source_offset"));
+                    continue;
+                }
+                source_offset = offset;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    &details,
+                    video_offset,
+                    source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
                     revision,
@@ -511,6 +611,7 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
                     revision,
@@ -537,9 +638,15 @@ async fn run(
                     break;
                 };
                 details_generation = next;
+                let Some(next_source) = source_generation.checked_add(1) else {
+                    env.fail();
+                    break;
+                };
+                source_generation = next_source;
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
                 video_offset = 0;
+                source_offset = 0;
                 error = None;
                 let selected = DetailsSelected {
                     meta_path: stremio_core::types::addon::ResourcePath::without_extra(
@@ -554,11 +661,25 @@ async fn run(
                     addon_generation,
                     catalog_generation,
                     details_generation,
+                    source_generation,
                 )
             }
-            Command::Effect(message, generation, catalog_version, details_version) => {
+            Command::Effect(
+                message,
+                generation,
+                catalog_version,
+                details_version,
+                source_version,
+            ) => {
                 pending = pending.saturating_sub(1);
-                (message, None, generation, catalog_version, details_version)
+                (
+                    message,
+                    None,
+                    generation,
+                    catalog_version,
+                    details_version,
+                    source_version,
+                )
             }
         };
         let mut messages = VecDeque::from([message]);
@@ -613,8 +734,10 @@ async fn run(
                     &ctx,
                 )
             };
-            let stale_details = details_origin != details_generation
-                && matches!(&message, Msg::Internal(Internal::ResourceRequestResult(..)));
+            let stale_details = matches!(&message,
+                Msg::Internal(Internal::ResourceRequestResult(request, _))
+                    if (request.path.resource == "meta" && details_origin != details_generation)
+                        || (request.path.resource == "stream" && source_origin != source_generation));
             let details_effects = if stale_details {
                 Effects::none().unchanged()
             } else {
@@ -643,6 +766,7 @@ async fn run(
                                             addon_generation,
                                             catalog_generation,
                                             details_generation,
+                                            source_generation,
                                         ))
                                         .await;
                                 })
@@ -655,6 +779,7 @@ async fn run(
                                             addon_generation,
                                             catalog_generation,
                                             details_generation,
+                                            source_generation,
                                         ))
                                         .await;
                                 })
@@ -670,6 +795,7 @@ async fn run(
             &catalog,
             &details,
             video_offset,
+            source_offset,
             catalog_choices_offset,
             catalog_item_offset,
             revision,
@@ -692,6 +818,7 @@ async fn run(
         &catalog,
         &details,
         video_offset,
+        source_offset,
         catalog_choices_offset,
         catalog_item_offset,
         revision,

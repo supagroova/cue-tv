@@ -106,6 +106,8 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     let address = listener.local_addr().unwrap();
     let (first_received, first_wait) = tokio::sync::oneshot::channel();
     let (release_fresh, fresh_wait) = tokio::sync::oneshot::channel();
+    let (source_received, source_wait) = tokio::sync::oneshot::channel();
+    let (release_source, source_release) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         for (request_path, range) in [
             ("/catalog/movie/fixture.json", 0..27),
@@ -183,10 +185,51 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
             )
             .await
             .unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET /stream/movie/film-0.json ")
+        );
+        source_received.send(()).unwrap();
+        let mut old_source = socket;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET /stream/movie/film-0.json ")
+        );
+        let old_body = r#"{"streams":[{"externalUrl":"https://example.test/obsolete","name":"Obsolete source"}]}"#;
+        old_source
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    old_body.len(),
+                    old_body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        source_release.await.unwrap();
+        let body = r#"{"streams":[{"infoHash":"0123456789abcdef0123456789abcdef01234567","name":"Owned torrent","fileIdx":0},{"externalUrl":"https://example.test/private-token","name":"External player"}]}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
     });
     let env = Environment::new().unwrap();
     let mut profile = Profile::default();
-    profile.addons=vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"fixture","name":"Fixture","version":"1.0.0","description":"Fixture","resources":["catalog","meta"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","extra":[{"name":"skip"}]}]}})).unwrap()];
+    profile.addons=vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"fixture","name":"Fixture","version":"1.0.0","description":"Fixture","resources":["catalog","meta","stream"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","extra":[{"name":"skip"}]}]}})).unwrap()];
     env.scope(async {
         NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
             .await
@@ -289,6 +332,47 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     assert_eq!(
         details.description.as_deref(),
         Some("Owned metadata fixture")
+    );
+    session
+        .load_sources(None, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), source_wait)
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .load_sources(None, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if session.snapshot().pending_effects == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(session.snapshot().sources.unwrap().status, "loading");
+    release_source.send(()).unwrap();
+    let state = tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    let sources = state.sources.unwrap();
+    assert_eq!(sources.status, "ready");
+    assert_eq!(sources.video_id, "film-0");
+    assert_eq!(sources.total, 2);
+    assert_eq!(sources.items[0].kind, "torrent");
+    assert_eq!(sources.items[0].name.as_deref(), Some("Owned torrent"));
+    assert_eq!(sources.items[0].size_bytes, None);
+    assert_eq!(sources.items[1].kind, "unsupported");
+    assert!(
+        !serde_json::to_string(&sources)
+            .unwrap()
+            .contains("private-token")
     );
     server.await.unwrap();
     session.stop().await;

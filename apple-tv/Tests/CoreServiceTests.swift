@@ -96,6 +96,25 @@ import Security
     }
     #expect(state.model?.details?.videos.count == 6)
     #expect(state.model?.details?.videos.last?.id == "cue-fixture:30")
+    try await service.loadSources(videoIndex: 5, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.sources?.status == .ready { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.sources?.videoId == "cue-fixture:30")
+    #expect(state.model?.sources?.total == 30)
+    #expect(state.model?.sources?.items.count == 24)
+    #expect(state.model?.sources?.items.first?.kind == .torrent)
+    #expect(state.model?.sources?.items.first?.sizeBytes == nil)
+    try await service.showSources(offset: 24, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.sources?.offset == 24 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.sources?.items.count == 6)
+    #expect(state.model?.sources?.items.last?.name == "Source 29")
     for offset in [24, 27, 30] {
         try await service.showCatalogItems(offset: offset, expectedRevision: try #require(state.model?.revision))
         for _ in 0..<200 {
@@ -163,10 +182,12 @@ nonisolated private final class CoreHTTPFixture: Sendable {
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
                 let videos = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)"] }
                 let metadataBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["meta": ["id": "cue-fixture", "type": "movie", "name": "Detailed simulator film", "description": "Owned title details", "videos": videos]]), as: UTF8.self)
-                let body = isCatalog
+                let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] }
+                let sourceBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["streams": streams]), as: UTF8.self)
+                let body = requestText.contains("/stream/movie/") ? sourceBody : isCatalog
                     ? catalogBody
                     : isMetadata ? metadataBody
-                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"}]}]}"#
+                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"stream","types":["movie"],"idPrefixes":["cue-"]},{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"}]}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
             }

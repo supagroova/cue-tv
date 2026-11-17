@@ -184,6 +184,8 @@ async fn own(
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
                             Command::DetailsVideos { offset, revision, .. } => session.show_details_videos(offset, revision).await,
+                            Command::LoadSources { index, revision, .. } => session.load_sources(index, revision).await,
+                            Command::SourceWindow { offset, revision, .. } => session.show_sources(offset, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
                             Command::LoadCatalog { index, revision, .. } => session.load_catalog(index, revision).await,
                             Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
@@ -240,6 +242,16 @@ enum Command {
         offset: usize,
         revision: u64,
     },
+    LoadSources {
+        version: u32,
+        index: Option<usize>,
+        revision: u64,
+    },
+    SourceWindow {
+        version: u32,
+        offset: usize,
+        revision: u64,
+    },
     LoadDetails {
         version: u32,
         index: usize,
@@ -266,6 +278,8 @@ impl Command {
         match self {
             Self::InstallAddon { version, .. }
             | Self::DetailsVideos { version, .. }
+            | Self::LoadSources { version, .. }
+            | Self::SourceWindow { version, .. }
             | Self::LoadDetails { version, .. }
             | Self::LoadCatalog { version, .. }
             | Self::CatalogChoices { version, .. }
