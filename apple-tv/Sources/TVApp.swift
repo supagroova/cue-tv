@@ -1,17 +1,13 @@
 import SwiftUI
 
 @main struct SittingRoomApp: App {
-    @State private var model = WatchModel()
     #if DEBUG
     @State private var showingPlaybackLab = ProcessInfo.processInfo.environment["CUE_PLAYBACK_LAB"] == "1"
     #endif
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            Group {
-                if model.connected { WatchHome(model: model) }
-                else { ConnectView(model: model) }
-            }
+            StandaloneHome()
             #if DEBUG
             .overlay(alignment: .topTrailing) {
                 Button("Playback Lab") { showingPlaybackLab = true }
@@ -21,15 +17,7 @@ import SwiftUI
             .fullScreenCover(isPresented: $showingPlaybackLab) { PlaybackLabView() }
             #endif
             .preferredColorScheme(.dark)
-            .tint(.white)
-            .task { await model.refresh() }
-            .task(id: scenePhase == .active && model.connected) {
-                if scenePhase == .active && model.connected { await model.observeRemote() }
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await model.refresh() } }
-            }
-            .onOpenURL { url in Task { await model.accept(url) } }
+
         }
     }
 }

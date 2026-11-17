@@ -1,0 +1,41 @@
+import Foundation
+import Observation
+
+@MainActor @Observable
+final class StandaloneModel {
+    private(set) var snapshot: CoreSnapshot?
+    private(set) var error: String?
+    private var service: (any CoreService)?
+    private var running = false
+    init(service: (any CoreService)? = nil) { self.service = service }
+
+    func run() async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            if service == nil { service = try await NativeCoreService.guest() }
+            guard let service else { return }
+            try await service.start()
+            while !Task.isCancelled {
+                snapshot = try await service.snapshot()
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        } catch is CancellationError { }
+        catch { self.error = "The Stremio session could not start. Please reopen the app." }
+        if let service { try? await service.stop() }
+    }
+
+    func perform(_ action: @Sendable (any CoreService, UInt64) async throws -> Void) async {
+        guard let service, let revision = snapshot?.model?.revision else { return }
+        error = nil
+        do { try await action(service, revision) }
+        catch { self.error = "That selection is no longer available. Please try again." }
+    }
+
+    func prepare(index: Int) async -> CoreTorrentRequest? {
+        guard let service, let revision = snapshot?.model?.revision else { return nil }
+        do { return try await service.prepareTorrent(index: index, expectedRevision: revision) }
+        catch { self.error = "This source could not be prepared. Select it again or choose another source."; return nil }
+    }
+}
