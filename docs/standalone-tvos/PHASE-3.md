@@ -527,3 +527,9 @@ Added length-delimited metadata-start input (24 KiB maximum), eight-handle admis
 ### Swift playback ownership transfer
 
 Metadata selection now returns a `NativePlaybackService` actor while synchronously clearing the metadata owner's consumed handle. The playback actor validates snapshot identity, shares concurrent stop work, retains shutdown tickets for retry after timeout, and allows cache deletion only after successful stop. Its native-handle adoption test covers readiness, concurrent/repeated stop and post-stop rejection. Simulator tests pass (`ef8676331b4344b992a81ad6f4886e00`). The metadata selection method compiles against the real new C export, but a successful complete Swift metadata-discovery-to-playback test and production coordinator integration are still required.
+
+### Source-scoped native resources
+
+`TorrentPlaybackSession` owns Core video identity, metadata discovery, selected native playback and a single cache lease. Stop waits for an in-flight selection, joins native shutdown, then releases the cache; failed shutdown retains the lease for retry. Concurrent stop and invalid-selection/cache-reuse tests pass in simulator (`3fb2e9a8b5a543899792686e8b2bd01d`); unsigned device build passes (`f7d87ca2ce40445a8b1db5efa3b43aa4`); all 12 harness checks pass. Production player/coordinator UI integration and successful full Swift discovery-selection-byte playback remain unfinished.
+
+CI benchmark 44109834691 finished green on head9e686a5: native/device 4m43s, simulator 11m57s, queue-inclusive completion 17m43s. The projected 6–7 minute execution target was not achieved; the parallel CI investigation continues. This benchmark predates the metadata lifecycle commits above.

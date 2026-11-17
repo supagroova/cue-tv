@@ -56,3 +56,22 @@ import CueTorrent
     await #expect(throws: NativePlaybackService.Failure.self) { try await service.snapshot() }
     #expect(cue_torrent_stop_ticket(handle) == 0)
 }
+
+@Test func sourceSessionOwnsIdentityAndReleasesCacheAfterConcurrentStop() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = TorrentCacheStore(root: root)
+    let request = CoreTorrentRequest(metaId: "title", videoId: "title:1:2", kind: "series", magnet: "invalid", fileIndex: nil, fileMustInclude: [])
+    let session = try await TorrentPlaybackSession.create(request: request, cache: cache)
+    #expect(session.identity.videoId == "title:1:2")
+    await #expect(throws: TorrentCacheStore.Failure.self) { try await cache.acquire() }
+    await #expect(throws: (any Error).self) { try await session.select(fileIndex: 99) }
+    async let first: Void = session.stop()
+    async let second: Void = session.stop()
+    try await first
+    try await second
+    await #expect(throws: TorrentPlaybackSession.Failure.self) { try await session.files() }
+    let next = try await cache.acquire()
+    #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).count == 1)
+    try await cache.release(next)
+}
