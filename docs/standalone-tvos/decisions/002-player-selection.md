@@ -12,8 +12,9 @@ Both were exercised on the tvOS 26.5 simulator using the same project-owned medi
 | Fixture/behavior | VLCKit | MPVKit |
 | --- | --- | --- |
 | H.264 High/AAC LC MP4 | Torrent adapter playback clock advances | Local clock advances; video screenshot inspected |
-| H.264 High/AAC LC MKV | Local clock advances; video screenshot inspected | Same |
-| HEVC Main 8-bit/AAC LC MKV | Local clock advances; video screenshot inspected | Same |
+| H.264 High/AAC LC MKV | Local clock advances; video screenshot inspected; native torrent range bytes verified | Local clock advances; video screenshot inspected |
+| HEVC Main 8-bit/AAC LC MKV | Local and torrent clocks advance; local video screenshot inspected | Local clock advances; video screenshot inspected |
+| HEVC Main 8-bit/AAC LC MP4 | Torrent clock advances and two audio tracks reported | Not run |
 | Two AAC tracks | Remote selection of track 2 confirmed by player API | Track 2 requested at start and confirmed by player API |
 | Embedded SRT | Rendered text visually confirmed | Rendered text visually confirmed |
 | Embedded WebVTT | Track switch followed by new cue; rendered text confirmed | Track 2 selected at start; rendered text confirmed |
@@ -28,4 +29,4 @@ VLCKit already connects to the embedded engine through the loopback adapter and 
 
 No speed, energy or picture-quality advantage is claimed. Keep the MPV probe as a fallback reference. Revisit the selection if VLCKit fails required physical-device decoding, resource limits, uncached network seeks or complete dependency/license review. Do not drop MKV or subtitle requirements to preserve this decision.
 
-Remaining acceptance includes HEVC MP4 coverage, live alternate-audio verification, decode-mode measurement, sustained resource measurements, app-wide cache limits, streaming MKV/repeated uncached VLC seeks, remaining failure paths and physical qualification.
+Remaining acceptance includes audible alternate-audio verification, decode-mode measurement, realistic sustained resource budgets, repeated uncached VLC seeks, remaining failure paths and physical qualification.

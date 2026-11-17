@@ -28,7 +28,7 @@ targets:
       - Sources
       - path: Resources/PlaybackLab
         buildPhase: resources
-      - path: ../fixtures/torrents/single.torrent
+      - path: ../fixtures/torrents
         buildPhase: resources
       - path: TVConfig.plist
         buildPhase: resources

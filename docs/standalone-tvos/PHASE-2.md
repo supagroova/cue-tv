@@ -118,3 +118,30 @@ session immediately; the same test passes without waiting for the stall deadline
 Verification for this change: 21 unit tests, the six existing short UI tests,
 the new natural-end UI regression, and the separate manual minute-and-seek run
 passed. The latter remains excluded from automatic CI.
+
+### Torrent-backed container matrix and subtitle Off
+
+The controlled fixture seeder now serves the owned H.264 MKV, HEVC Main/AAC MKV
+and remuxed HEVC Main/AAC MP4. `generate-streaming-matrix.py` records file hashes,
+info hashes and stream profiles in `streaming-matrix-manifest.json`. No external
+media or torrent service is involved. The lab accepts only named bundled fixtures
+and displays the selected filename from native metadata, so a test cannot silently
+exercise the default MP4 instead of its requested source.
+
+The native MKV regression initially failed because the range adapter labelled all
+responses `video/mp4`. MIME type and the local stream extension now follow the
+selected metadata filename: MP4/M4V, MKV, or an octet-stream fallback. The MKV test
+checks real-peer bytes, suffix ranges, HEAD content type/length and shutdown.
+
+The new HEVC MKV and MP4 simulator tests exercise the embedded torrent path and
+assert the actual selected file, decoder clock advancement and track counts.
+Subtitle cycling now includes Off, confirmed by VLC reporting zero selected text
+tracks. The fixtures remain deliberately small; start-before-completion and
+uncached-seek evidence comes from the separate manual long fixture.
+
+Validation: 24 native tests, 21 simulator unit tests and all nine short player UI
+tests passed. The subtitle-Off screenshot was inspected after another 1.2 seconds
+of playback: the blue video frame remained visible with no subtitle text and VLC
+reported selected subtitle 0. Automatic CI uses the short fixtures; the long
+playback/seek qualifications remain opt-in only. Physical decoding and audible
+track verification are still not established.

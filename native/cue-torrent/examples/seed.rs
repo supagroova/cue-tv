@@ -40,6 +40,21 @@ async fn main() -> anyhow::Result<()> {
         .into_handle()
         .unwrap();
     handle.wait_until_completed().await?;
+    for name in ["mkv", "hevc-mkv", "hevc-mp4"] {
+        let torrent = std::fs::read(root.join(format!("fixtures/torrents/{name}.torrent")))?;
+        let handle = session
+            .add_torrent(
+                AddTorrent::from_bytes(torrent),
+                Some(AddTorrentOptions {
+                    overwrite: true,
+                    ..Default::default()
+                }),
+            )
+            .await?
+            .into_handle()
+            .unwrap();
+        handle.wait_until_completed().await?;
+    }
     if long {
         let directory = root.join(".agent-work/long-playback");
         let torrent = std::fs::read(directory.join("long.torrent"))?;

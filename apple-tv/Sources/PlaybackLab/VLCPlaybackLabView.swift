@@ -49,6 +49,7 @@ struct VLCPlaybackLabView: View {
                     }
                 }
                     .id(url).frame(height: 360)
+                if let file = torrent.selectedFile { Text("Selected media file: \(file)") }
                 Text(paused ? "VLC paused" : "VLC active")
                 Text(milliseconds > 500 ? "VLC playback advanced" : "Waiting for VLC").accessibilityIdentifier("vlc-progress")
                 if let firstProgress { Text(firstProgress).accessibilityIdentifier("vlc-first-progress") }
@@ -62,7 +63,7 @@ struct VLCPlaybackLabView: View {
                     Button("Next audio track") { requestedAudio = (requestedAudio + 1) % audioTracks }
                 }
                 if subtitleTracks > 0 {
-                    Button("Next subtitle track") { requestedSubtitle = (requestedSubtitle + 1) % subtitleTracks }
+                    Button("Next subtitle track") { requestedSubtitle = requestedSubtitle + 1 >= subtitleTracks ? -1 : requestedSubtitle + 1 }
                 }
                 Button(requestedPause ? "Resume" : "Pause") { requestedPause.toggle() }
                 Button("Seek to \(seekMilliseconds / 1000) seconds") {
@@ -210,9 +211,14 @@ private struct VLCFixtureSurface: UIViewRepresentable {
                 audio[audioIndex].isSelectedExclusively = true
                 appliedAudio = audioIndex
             }
-            if appliedSubtitle != subtitleIndex, subtitles.indices.contains(subtitleIndex) {
-                player.selectTextTracks([subtitles[subtitleIndex]])
-                appliedSubtitle = subtitleIndex
+            if appliedSubtitle != subtitleIndex {
+                if subtitleIndex == -1 {
+                    player.selectTextTracks([])
+                    appliedSubtitle = subtitleIndex
+                } else if subtitles.indices.contains(subtitleIndex) {
+                    player.selectTextTracks([subtitles[subtitleIndex]])
+                    appliedSubtitle = subtitleIndex
+                }
             }
         }
     }

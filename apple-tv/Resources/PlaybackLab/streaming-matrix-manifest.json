@@ -1,0 +1,104 @@
+{
+  "permission": "Project-owned synthetic colors, tones and subtitle text.",
+  "generator": "scripts/fixtures/generate-streaming-matrix.py",
+  "fixtures": [
+    {
+      "filename": "episode01.mkv",
+      "bytes": 172792,
+      "sha256": "2b51b5a5b371bca85cf03afdd20d80f0089771d190a64a2d9cb29276a4a44ec0",
+      "torrent": "mkv.torrent",
+      "info_hash": "f6299de8710923ca7643de0fbb4209f561db62bb",
+      "duration_seconds": 12.021,
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 1
+        }
+      ]
+    },
+    {
+      "filename": "hevc-tracks.mkv",
+      "bytes": 294322,
+      "sha256": "c0abcae027bf945a4948f019a34bf9fcf486f5ea39c916e3a34ce20a98b3cba5",
+      "torrent": "hevc-mkv.torrent",
+      "info_hash": "8a2378f87c5920a0d25010ace166b0fa035acf97",
+      "duration_seconds": 12.021,
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "hevc",
+          "profile": "Main",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 1
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 1
+        },
+        {
+          "codec_type": "subtitle",
+          "codec_name": "subrip"
+        },
+        {
+          "codec_type": "subtitle",
+          "codec_name": "webvtt"
+        }
+      ]
+    },
+    {
+      "filename": "hevc-tracks.mp4",
+      "bytes": 295954,
+      "sha256": "053895f5101598b291b4eab01cc631904a2a55c458cf677c00d509512f689254",
+      "torrent": "hevc-mp4.torrent",
+      "info_hash": "b0e64d439e903b28c0a6ef062d3673a8e5ea7c2e",
+      "duration_seconds": 12.0315,
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "hevc",
+          "profile": "Main",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 1
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "profile": "LC",
+          "sample_rate": "48000",
+          "channels": 1
+        }
+      ]
+    }
+  ],
+  "ffmpeg": "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers"
+}

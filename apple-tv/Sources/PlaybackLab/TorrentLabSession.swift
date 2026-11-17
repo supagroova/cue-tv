@@ -9,6 +9,7 @@ final class TorrentLabSession {
     private(set) var url: URL?
     private(set) var verifiedBytes: UInt64 = 0
     private(set) var totalBytes: UInt64 = 0
+    private(set) var selectedFile: String?
     private(set) var cacheDirectory: URL?
     private(set) var pendingCleanups = 0
     private(set) var cleanupFailures = 0
@@ -21,7 +22,11 @@ final class TorrentLabSession {
         let requestedGeneration = generation
         while pendingCleanups > 0 { try? await Task.sleep(for: .milliseconds(50)) }
         guard generation == requestedGeneration else { return }
-        let fixture = ProcessInfo.processInfo.environment["CUE_LONG_TORRENT"] == "1" ? "long" : "single"
+        let requestedFixture = ProcessInfo.processInfo.environment["CUE_TORRENT_FIXTURE"] ?? "single"
+        let fixture = ProcessInfo.processInfo.environment["CUE_LONG_TORRENT"] == "1" ? "long" : requestedFixture
+        guard ["single", "long", "mkv", "hevc-mkv", "hevc-mp4"].contains(fixture) else {
+            status = "Unknown torrent fixture"; return
+        }
         guard let torrent = Bundle.main.url(forResource: fixture, withExtension: "torrent") else {
             status = "Missing torrent fixture"; return
         }
@@ -61,6 +66,7 @@ final class TorrentLabSession {
                         }
                         self.verifiedBytes = snapshot.verified_bytes ?? 0
                         self.totalBytes = snapshot.total_bytes ?? 0
+                        self.selectedFile = snapshot.files?.first(where: { $0.index == 0 })?.path
                         self.status = snapshot.state
                         if snapshot.state == "ready", let value = snapshot.url {
                             if self.url == nil { self.url = URL(string: value) }
@@ -106,7 +112,7 @@ final class TorrentLabSession {
             }
         }
         url = nil; status = "Idle"
-        verifiedBytes = 0; totalBytes = 0
+        verifiedBytes = 0; totalBytes = 0; selectedFile = nil
     }
     private struct Snapshot: Decodable {
         let api_version: UInt32
@@ -115,6 +121,8 @@ final class TorrentLabSession {
         let url: String?
         let verified_bytes: UInt64?
         let total_bytes: UInt64?
+        let files: [File]?
+        struct File: Decodable { let index: Int; let path: String }
     }
 }
 #endif

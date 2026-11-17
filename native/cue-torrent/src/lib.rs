@@ -52,6 +52,7 @@ struct StreamState {
     torrent: Arc<librqbit::ManagedTorrent>,
     index: usize,
     len: u64,
+    content_type: &'static str,
     cancel: CancellationToken,
 }
 
@@ -82,7 +83,7 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
         })
         .header("accept-ranges", "bytes")
         .header("content-length", count)
-        .header("content-type", "video/mp4")
+        .header("content-type", state.content_type)
         .header("cache-control", "no-store");
     if partial {
         response = response.header(
@@ -286,18 +287,36 @@ impl PlaybackSession {
             if storage_lease.0.has_failed() {
                 bail!("storage policy failed during initialization");
             }
-            let len = handle
-                .with_metadata(|m| m.file_infos.get(index).map(|f| f.len))?
+            let (len, content_type, extension) = handle
+                .with_metadata(|m| {
+                    m.file_infos.get(index).map(|f| {
+                        let (mime, ext) =
+                            match f.relative_filename.extension().and_then(|s| s.to_str()) {
+                                Some(ext) if ext.eq_ignore_ascii_case("mkv") => {
+                                    ("video/x-matroska", "mkv")
+                                }
+                                Some(ext)
+                                    if ext.eq_ignore_ascii_case("mp4")
+                                        || ext.eq_ignore_ascii_case("m4v") =>
+                                {
+                                    ("video/mp4", "mp4")
+                                }
+                                _ => ("application/octet-stream", "bin"),
+                            };
+                        (f.len, mime, ext)
+                    })
+                })?
                 .context("file index")?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let address = listener.local_addr()?;
-            let path = format!("/{}/stream.mp4", uuid::Uuid::new_v4());
+            let path = format!("/{}/stream.{extension}", uuid::Uuid::new_v4());
             let router = Router::new()
                 .route(&path, get(serve))
                 .with_state(StreamState {
                     torrent: handle.clone(),
                     index,
                     len,
+                    content_type,
                     cancel: cancel.clone(),
                 });
             let stopped = cancel.clone();

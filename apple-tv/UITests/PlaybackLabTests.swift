@@ -2,6 +2,47 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testHEVCMKVTorrentTracksAndSubtitleOff() throws {
+        try streamMatrixFixture("hevc-mkv", filename: "hevc-tracks.mkv", subtitles: 2)
+        XCUIRemote.shared.press(.down)
+        XCUIRemote.shared.press(.down)
+        let app = XCUIApplication()
+        XCTAssertTrue(app.buttons["Next subtitle track"].hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Selected audio: 1; subtitle: 2"].waitForExistence(timeout: 3))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Selected audio: 1; subtitle: 0"].waitForExistence(timeout: 3))
+        let clock = app.staticTexts["vlc-time"]
+        let disabledAt = try XCTUnwrap(Int(clock.label))
+        expectation(for: NSPredicate { _, _ in (Int(clock.label) ?? 0) >= disabledAt + 1200 }, evaluatedWith: clock)
+        waitForExpectations(timeout: 4)
+        let frame = XCTAttachment(screenshot: app.screenshot())
+        frame.name = "Torrent HEVC MKV with subtitles off"
+        frame.lifetime = .keepAlways
+        add(frame)
+    }
+
+    @MainActor
+    func testHEVCMP4TorrentPlayback() throws {
+        try streamMatrixFixture("hevc-mp4", filename: "hevc-tracks.mp4", subtitles: 0)
+    }
+
+    @MainActor
+    private func streamMatrixFixture(_ fixture: String, filename: String, subtitles: Int) throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
+        app.launchEnvironment["CUE_VLC_LAB"] = "1"
+        app.launchEnvironment["CUE_TORRENT_FIXTURE"] = fixture
+        app.launch()
+        XCTAssertTrue(app.buttons["Stream torrent with VLC"].waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.down)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Selected media file: " + filename].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["VLC playback advanced"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["Audio tracks: 2; subtitle tracks: \(subtitles)"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testVLCNaturalEndReleasesPlayback() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"
