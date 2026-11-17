@@ -110,3 +110,29 @@ private actor ActionGate {
     retry.cancel()
     await retry.value
 }
+
+@Test @MainActor func replacingCoreJoinsOldOwnerAndRejectsItsLateAction() async throws {
+    let old = NativeCoreService()
+    let model = StandaloneModel(service: old)
+    let first = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let oldSession = try #require(model.snapshot?.session)
+    let gate = ActionGate()
+    let oldAction = Task { await model.perform { _, _ in await gate.wait(); throw NativeCoreService.Failure.stopped } }
+    for _ in 0..<100 where !(await gate.waiting) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await gate.waiting)
+    let replacement = NativeCoreService()
+    try await model.replace(with: replacement)
+    await first.value
+    await #expect(throws: NativeCoreService.Failure.stopped) { _ = try await old.snapshot() }
+    #expect(model.snapshot == nil)
+    let second = Task { await model.run() }
+    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.snapshot?.session != oldSession)
+    #expect(model.snapshot?.status == .ready)
+    await gate.open()
+    #expect(await oldAction.value == false)
+    #expect(model.error == nil)
+    second.cancel()
+    await second.value
+}

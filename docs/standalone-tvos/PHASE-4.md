@@ -41,3 +41,9 @@ A native session that reported `stopped` previously remained in the home screen'
 ### Restore protected account selection at home startup
 
 The default home model now uses the selected-account service factory, choosing guest only when no protected selection exists. Its label reflects authenticated state. Missing account storage reports startup failure rather than falling back to guest. Unsigned Apple TV build passes (`6a37cd4764ff4090be8d7af2f0eb7a6a`); the factory and cancellation regressions pass in the phase-3 Swift suite. Successful account UI restoration and user-facing login/sign-out remain to be exercised and completed.
+
+### Session replacement for account transitions
+
+StandaloneModel can retire its current service and adopt another only after acknowledged shutdown. A retirement task prevents overlapping run calls from starting while that transition is pending. Generation checks prevent old snapshots/actions from being published after replacement. The caller retains responsibility for an incoming service until adoption succeeds, including cancellation or retirement failure.
+
+The real native-service test verifies old-owner shutdown, cleared old snapshot, a distinct replacement session, and rejection of a delayed old action's error. Full Swift suite passes (`ada90cb3971f468b8285ec733e2bc700`); missing-method reproduction retained (`2b75967136804f1dbacc722676dd2333`). This prepares the ownership transition; the sign-in form and success/cancellation account UI flows remain unfinished.
