@@ -420,3 +420,14 @@ extension CoreSnapshot.Sources {
         return groups
     }
 }
+
+
+extension CoreSnapshot.Source {
+    nonisolated var transportName: String {
+        switch kind { case .torrent: "Torrent"; case .http: "HTTPS"; case .unsupported: "Unsupported" }
+    }
+    nonisolated var sizeLabel: String {
+        guard let sizeBytes, let bytes = Int64(exactly: sizeBytes) else { return "Size unknown" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}

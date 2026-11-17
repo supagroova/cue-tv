@@ -279,3 +279,12 @@ asserts the add-on heading, correct green episode, Close and focus restoration
 `2c4ca89d4efa4706be08d839aa6c1a73`.
 Unsigned device build `08d8250e1ee44e83a7a7f5dd9d251548` passes (only this
 evidence document changed during the run); all 15 portable tests pass.
+
+Source rows now also render the admitted transport, bounded supplied description,
+and formatted size. Missing/unrepresentable sizes display `Size unknown` rather
+than zero; no quality/language/seed values are inferred. The owned fixture's
+H.264/AAC description and unknown-size label are asserted in the real peer
+journey (`fe57c676eb84498fa304b92d8c09b0c9`), together with episode pixels and
+focus restoration. Unsigned device build passes
+(`c3887e9394f4430d8fe3dad5803c61bb`). This is presentation of existing fields;
+no dependency, transfer or Core selection behavior changes.

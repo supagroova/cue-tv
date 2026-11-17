@@ -47,7 +47,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"id": f"{identity}:{season}:{episode}", "title": f"Episode {episode}", "season": season, "episode": episode,
                      "released": "2024-01-01T00:00:00.000Z"} for season in (1, 2) for episode in (1, 2)]}}
         elif path.startswith("/stream/series/cue-owned-") and path.endswith(".json"):
-            body = {"streams": [{"name": "Owned peer fixture " + path.rsplit("/", 1)[1][:-5], "infoHash": INFO_HASH,
+            body = {"streams": [{"name": "Owned peer fixture " + path.rsplit("/", 1)[1][:-5], "infoHash": INFO_HASH, "description": "Owned synthetic H.264/AAC",
                                   "fileIdx": 1 if path.endswith(":2.json") else 0, "sources": ["tracker:http://127.0.0.1:42427/announce"]}]}
         elif path == "/subtitles/series/cue-owned-2:2:2.json":
             body = {"subtitles": [{"id": "owned", "lang": "eng", "label": "Owned English", "url": "http://127.0.0.1:42427/captions.vtt"}]}

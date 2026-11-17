@@ -27,6 +27,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(app.buttons["Owned peer fixture cue-owned-2:2:2"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Cue journey fixture"].exists, "Sources identify their supplying add-on")
+        XCTAssertTrue(app.staticTexts["Torrent · Size unknown"].exists)
+        XCTAssertTrue(app.staticTexts["Owned synthetic H.264/AAC"].exists)
         if play {
             let source = app.buttons["Owned peer fixture cue-owned-2:2:2"]
             for _ in 0..<8 where !source.hasFocus { XCUIRemote.shared.press(.down) }
