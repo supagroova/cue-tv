@@ -24,6 +24,9 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_INCREMENTAL: 0
       CARGO_TARGET_DIR: ${{ github.workspace }}/.agent-work/native-target
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
@@ -39,10 +42,10 @@ jobs:
             ~/.cargo/git
             .agent-work/native-target
             .agent-work/DerivedData/SourcePackages
-          key: apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-${{ github.sha }}
+          key: apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}
           restore-keys: |
-            apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-
-            apple-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
+            apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-
+            apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
       - name: Install project generator and report toolchain
         run: |
           brew install xcodegen

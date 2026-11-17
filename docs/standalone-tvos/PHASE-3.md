@@ -376,3 +376,18 @@ than a transport failure. Its regression first reproduced the incorrect failed
 state. All 25 native tests, 25 simulator unit tests (3.483 seconds), and the device
 app build pass. This completes choice-list enumeration; catalogue **item** windows,
 remote page fetching, search/filter extras and retry UI remain required.
+
+## CI build-size follow-up
+
+The cached Apple run for `947ae98` passed but still took about 13½ minutes. Cache
+restore consumed 66 seconds and cache save 106 seconds for a roughly 2.7 GiB
+archive; this is not a proven sub-ten-minute pipeline.
+
+CI now disables Rust debug information and incremental compilation for its native
+builds only. Debug assertions and test behavior are retained, and local development
+settings are unchanged. The new cache generation is keyed by toolchain/dependencies,
+not every source commit, so an exact hit avoids another archive upload. Cargo still
+checks source fingerprints and uses locked dependencies. The first new-generation
+run is cold. Lean-profile native tests and simulator compilation pass locally;
+the current Core simulator archive measures about 105 MiB versus 269 MiB with the
+normal debug settings. End-to-end CI timing remains to be measured.
