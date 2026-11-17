@@ -104,6 +104,8 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let (first_received, first_wait) = tokio::sync::oneshot::channel();
+    let (release_fresh, fresh_wait) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         for (request_path, range) in [
             ("/catalog/movie/fixture.json", 0..27),
@@ -139,10 +141,52 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
                 .await
                 .unwrap();
         }
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET /meta/movie/film-0.json ")
+        );
+        first_received.send(()).unwrap();
+        let mut old_socket = socket;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let count = socket.read(&mut request).await.unwrap();
+        assert!(
+            std::str::from_utf8(&request[..count])
+                .unwrap()
+                .starts_with("GET /meta/movie/film-0.json ")
+        );
+        let body = r#"{"meta":{"id":"film-0","type":"movie","name":"Obsolete film"}}"#;
+        old_socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        fresh_wait.await.unwrap();
+        let body = r#"{"meta":{"id":"film-0","type":"movie","name":"Detailed film","description":"Owned metadata fixture"}}"#;
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
     });
     let env = Environment::new().unwrap();
     let mut profile = Profile::default();
-    profile.addons=vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"fixture","name":"Fixture","version":"1.0.0","description":"Fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","extra":[{"name":"skip"}]}]}})).unwrap()];
+    profile.addons=vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"fixture","name":"Fixture","version":"1.0.0","description":"Fixture","resources":["catalog","meta"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","extra":[{"name":"skip"}]}]}})).unwrap()];
     env.scope(async {
         NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
             .await
@@ -209,6 +253,42 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
             .show_catalog_items(31, session.snapshot().revision)
             .await
             .is_err()
+    );
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), first_wait)
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if session.snapshot().pending_effects == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(session.snapshot().details.unwrap().status, "loading");
+    release_fresh.send(()).unwrap();
+    let state = tokio::time::timeout(std::time::Duration::from_secs(2), session.settled())
+        .await
+        .unwrap()
+        .unwrap();
+    let details = state.details.unwrap();
+    assert_eq!(details.status, "ready");
+    assert_eq!(details.id, "film-0");
+    assert_eq!(details.name.as_deref(), Some("Detailed film"));
+    assert_eq!(
+        details.description.as_deref(),
+        Some("Owned metadata fixture")
     );
     server.await.unwrap();
     session.stop().await;

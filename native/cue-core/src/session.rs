@@ -9,6 +9,7 @@ use stremio_core::{
         addon_details::{AddonDetails, Selected as AddonSelected},
         common::Loadable,
         ctx::Ctx,
+        meta_details::{MetaDetails, Selected as DetailsSelected},
     },
     runtime::{
         Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
@@ -54,6 +55,7 @@ pub struct Snapshot {
     pub catalog_choices_offset: usize,
     pub catalog: Option<crate::catalog::View>,
     pub addon: Option<AddonSnapshot>,
+    pub details: Option<crate::details::View>,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
@@ -64,7 +66,8 @@ enum Command {
     Catalog(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
-    Effect(Msg, u64, u64),
+    Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Effect(Msg, u64, u64, u64),
 }
 pub struct CoreSession {
     environment: Arc<Environment>,
@@ -107,6 +110,7 @@ impl CoreSession {
             &ctx,
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
+            &MetaDetails::default(),
             0,
             0,
             0,
@@ -204,6 +208,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn load_details(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Details(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -233,6 +248,7 @@ fn snapshot(
     ctx: &Ctx,
     addon: &AddonDetails,
     catalog: &crate::catalog::Catalog,
+    details: &MetaDetails,
     catalog_choices_offset: usize,
     catalog_item_offset: usize,
     revision: u64,
@@ -246,6 +262,7 @@ fn snapshot(
         catalog_choices_offset,
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
+        details: crate::details::view(details),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -287,6 +304,8 @@ async fn run(
     let mut addon = AddonDetails::default();
     let mut catalog = crate::catalog::Catalog::default();
     let mut catalog_generation = 0u64;
+    let mut details = MetaDetails::default();
+    let mut details_generation = 0u64;
     let mut catalog_choices_offset = 0usize;
     let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
@@ -298,7 +317,7 @@ async fn run(
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
         };
-        let (message, reply, origin, catalog_origin) = match command {
+        let (message, reply, origin, catalog_origin, details_origin) = match command {
             Command::Language(language, reply) => {
                 error = None;
                 let mut settings = ctx.profile.settings.clone();
@@ -308,6 +327,7 @@ async fn run(
                     Some(reply),
                     addon_generation,
                     catalog_generation,
+                    details_generation,
                 )
             }
             Command::Addon(selected, reply) => {
@@ -329,6 +349,7 @@ async fn run(
                     Some(reply),
                     addon_generation,
                     catalog_generation,
+                    details_generation,
                 )
             }
             Command::Install(expected_revision, reply) => {
@@ -351,6 +372,7 @@ async fn run(
                     Some(reply),
                     addon_generation,
                     catalog_generation,
+                    details_generation,
                 )
             }
             Command::Catalog(index, expected, reply) => {
@@ -374,6 +396,7 @@ async fn run(
                     Some(reply),
                     addon_generation,
                     catalog_generation,
+                    details_generation,
                 )
             }
             Command::CatalogItems(offset, expected, reply) => {
@@ -399,6 +422,7 @@ async fn run(
                         Some(reply),
                         addon_generation,
                         catalog_generation,
+                        details_generation,
                     )
                 } else {
                     revision += 1;
@@ -406,6 +430,7 @@ async fn run(
                         &ctx,
                         &addon,
                         &catalog,
+                        &details,
                         catalog_choices_offset,
                         catalog_item_offset,
                         revision,
@@ -438,6 +463,7 @@ async fn run(
                     &ctx,
                     &addon,
                     &catalog,
+                    &details,
                     catalog_choices_offset,
                     catalog_item_offset,
                     revision,
@@ -448,9 +474,43 @@ async fn run(
                 let _ = reply.send(Ok(()));
                 continue;
             }
-            Command::Effect(message, generation, catalog_version) => {
+            Command::Details(index, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_catalog"));
+                    continue;
+                }
+                let item = crate::catalog::view(&catalog, catalog_item_offset)
+                    .and_then(|view| view.items.into_iter().nth(index));
+                let Some(item) = item else {
+                    let _ = reply.send(Err("invalid_catalog_item"));
+                    continue;
+                };
+                let Some(next) = details_generation.checked_add(1) else {
+                    env.fail();
+                    break;
+                };
+                details_generation = next;
+                // A fresh model also permits explicit retry of a cached failed result.
+                details = MetaDetails::default();
+                error = None;
+                let selected = DetailsSelected {
+                    meta_path: stremio_core::types::addon::ResourcePath::without_extra(
+                        "meta", &item.kind, &item.id,
+                    ),
+                    stream_path: None,
+                    guess_stream: false,
+                };
+                (
+                    Msg::Action(Action::Load(ActionLoad::MetaDetails(selected))),
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                )
+            }
+            Command::Effect(message, generation, catalog_version, details_version) => {
                 pending = pending.saturating_sub(1);
-                (message, None, generation, catalog_version)
+                (message, None, generation, catalog_version, details_version)
             }
         };
         let mut messages = VecDeque::from([message]);
@@ -505,10 +565,18 @@ async fn run(
                     &ctx,
                 )
             };
+            let stale_details = details_origin != details_generation
+                && matches!(&message, Msg::Internal(Internal::ResourceRequestResult(..)));
+            let details_effects = if stale_details {
+                Effects::none().unchanged()
+            } else {
+                <MetaDetails as UpdateWithCtx<NativeEnv>>::update(&mut details, &message, &ctx)
+            };
             let effects = retry
                 .join(context_effects)
                 .join(addon_effects)
-                .join(catalog_effects);
+                .join(catalog_effects)
+                .join(details_effects);
             if effects.has_changed {
                 revision += 1;
             }
@@ -526,6 +594,7 @@ async fn run(
                                             future.await,
                                             addon_generation,
                                             catalog_generation,
+                                            details_generation,
                                         ))
                                         .await;
                                 })
@@ -537,6 +606,7 @@ async fn run(
                                             future.await,
                                             addon_generation,
                                             catalog_generation,
+                                            details_generation,
                                         ))
                                         .await;
                                 })
@@ -550,6 +620,7 @@ async fn run(
             &ctx,
             &addon,
             &catalog,
+            &details,
             catalog_choices_offset,
             catalog_item_offset,
             revision,
@@ -570,6 +641,7 @@ async fn run(
         &ctx,
         &addon,
         &catalog,
+        &details,
         catalog_choices_offset,
         catalog_item_offset,
         revision,

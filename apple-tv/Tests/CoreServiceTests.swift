@@ -74,9 +74,18 @@ import Security
         if state.model?.catalog?.status == .ready { break }
         try await Task.sleep(for: .milliseconds(10))
     }
-    #expect(state.model?.catalog?.items.first?.id == "tt-fixture")
+    #expect(state.model?.catalog?.items.first?.id == "cue-fixture")
     #expect(state.model?.catalog?.items.first?.name == "Simulator film")
     #expect(state.model?.catalog?.items.count == 24)
+    try await service.loadDetails(index: 0, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.status == .ready { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.id == "cue-fixture")
+    #expect(state.model?.details?.name == "Detailed simulator film")
+    #expect(state.model?.details?.description == "Owned title details")
     for offset in [24, 27, 30] {
         try await service.showCatalogItems(offset: offset, expectedRevision: try #require(state.model?.revision))
         for _ in 0..<200 {
@@ -137,13 +146,15 @@ nonisolated private final class CoreHTTPFixture: Sendable {
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
                 let requestText = request.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                let isMetadata = requestText.contains("/meta/movie/cue-fixture.json")
                 let isCatalog = requestText.contains("/catalog/movie/fixture")
                 let range = requestText.contains("skip=30") ? 30..<30 : requestText.contains("skip=27") ? 27..<30 : 0..<27
-                let metas = range.map { index in ["id": index == 0 ? "tt-fixture" : "tt-fixture-\(index)", "name": index == 0 ? "Simulator film" : "Film \(index)", "type": "movie"] }
+                let metas = range.map { index in ["id": index == 0 ? "cue-fixture" : "cue-fixture-\(index)", "name": index == 0 ? "Simulator film" : "Film \(index)", "type": "movie"] }
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
                 let body = isCatalog
                     ? catalogBody
-                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"}]}]}"#
+                    : isMetadata ? #"{"meta":{"id":"cue-fixture","type":"movie","name":"Detailed simulator film","description":"Owned title details"}}"#
+                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"}]}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
             }

@@ -13,6 +13,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct CatalogChoice: Decodable, Sendable { let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
+    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String? }
     struct Model: Decodable, Sendable {
         let revision: UInt64
         let stopped: Bool
@@ -20,6 +21,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let catalogs: [CatalogChoice]
         let catalogChoicesOffset: Int
         let catalogTotal: Int
+        let details: Details?
         let catalog: Catalog?
         let addonCount: Int
         let addon: Addon?
@@ -39,6 +41,7 @@ nonisolated protocol CoreService: Sendable {
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
+    func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
@@ -97,6 +100,11 @@ actor NativeCoreService: CoreService {
 
     func installAddon(expectedRevision: UInt64) throws {
         try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
+    }
+
+    func loadDetails(index: Int, expectedRevision: UInt64) throws {
+        guard index >= 0 && index < 24 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "load_details", "index": index, "revision": expectedRevision])
     }
 
     func loadCatalog(index: Int, expectedRevision: UInt64) throws {
