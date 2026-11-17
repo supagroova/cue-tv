@@ -127,6 +127,26 @@ import Security
     }
     #expect(state.model?.detailsInLibrary == false)
 
+    let beforeWatched = try #require(state.model?.revision)
+    try await service.setDetailsWatched(true, videoID: nil, expectedRevision: beforeWatched)
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.watched == true { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.watched == true)
+    #expect(state.model?.detailsInLibrary == false)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_details")) {
+        try await service.setDetailsWatched(false, videoID: nil, expectedRevision: beforeWatched)
+    }
+    try await service.setDetailsWatched(false, videoID: nil, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.watched == false { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.watched == false)
+
     try await service.selectDetailsSeason(2, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {
         state = try await service.snapshot()
@@ -260,6 +280,24 @@ import Security
     #expect(state.model?.interfaceLanguage == "deu")
     #expect(state.model?.detailsInLibrary == true, "Cancellation must not pretend to roll back an admitted save")
     #expect(libraryCancelStarted.duration(to: .now) < .seconds(2))
+    let watchedRevision = try #require(state.model?.revision)
+    let watchedSave = Task { try await service.setDetailsWatched(true, videoID: nil, expectedRevision: watchedRevision) }
+    try await Task.sleep(for: .milliseconds(100))
+    await #expect(throws: NativeCoreService.Failure.busy) {
+        try await service.setDetailsLibrary(false, expectedRevision: watchedRevision)
+    }
+    let watchedCancelStarted = ContinuousClock.now
+    watchedSave.cancel()
+    await #expect(throws: CancellationError.self) { try await watchedSave.value }
+    try await service.setInterfaceLanguage("eng")
+    for _ in 0..<100 {
+        state = try await service.snapshot()
+        if state.model?.interfaceLanguage == "eng" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.interfaceLanguage == "eng")
+    #expect(state.model?.details?.watched == true)
+    #expect(watchedCancelStarted.duration(to: .now) < .seconds(2))
     try await service.stop()
     for _ in 0..<100 where !(await fixture.heldManifest.closed) { try await Task.sleep(for: .milliseconds(10)) }
     #expect(await fixture.heldManifest.closed)

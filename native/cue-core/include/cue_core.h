@@ -60,6 +60,13 @@ uint64_t cue_core_request_subtitles(uint64_t handle, const uint8_t *input, size_
  * Cancellation/timeout does not roll back an accepted mutation; refresh state.
  * Zero means invalid/busy/unavailable. */
 uint64_t cue_core_request_library(uint64_t handle, uint8_t member, uint64_t revision);
+/* Watched save shares take/discard. watched is 0 or 1; length 0 denotes film.
+ * Otherwise video points to length readable UTF-8 bytes (1..512), copied on call.
+ * Success request is {watched:bool,video_id:string|null} after effects settle.
+ * Cancellation/timeout does not roll back an accepted mutation.
+ * Zero means invalid/busy/unavailable. */
+uint64_t cue_core_request_watched(uint64_t handle, const uint8_t *video, size_t length,
+                                  uint8_t watched, uint64_t revision);
 // JSON v1 reply includes session, ticket, request or fixed error; at most 256 KiB.
 // Returns 0 pending, -1 invalid, or byte count. Only a full non-null copy consumes it.
 // NULL/0 queries length. Undersized buffers stay untouched. Stop discards the reply.

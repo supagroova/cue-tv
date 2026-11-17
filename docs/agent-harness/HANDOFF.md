@@ -113,3 +113,18 @@ precedence and checkpoints. These session actions acknowledge admission only;
 settled/error must be inspected before reporting durable success. Remote sync
 retry remains unimplemented. PR13 Apple jobs are now executing; no review threads
 were present on open stack PRs at 21:03 UTC. Local watched work is not yet pushed.
+
+Watched saves now cross C/Swift using an exclusive cancellable ticket and bounded
+UTF-8 episode ID (zero length means film). Success waits for Core effects; accepted
+mutations are not rolled back on cancellation. Receipt carries watched/video identity.
+FFI invalid-input/busy/error checks pass (1afdc7b905a14377805a420c59fd871d;
+missing-symbol red4ad09cd9dbaa479ebc2739ce6af5ac92). Swift missing API/state red:
+e80a961a3ef640038ecb7d193f573239. Real HTTP Swift film watched/unwatched/stale
+and held-effect cancellation checks pass with all60 tests
+(0e2c7a4106f6443e86b6a31cc9bbe5b4). Full native suite passes
+(72a81dd0ccee4d96965b76175f357f78), unsigned device build passes
+(e0038d599b8e4cfe9dd1c40bacc1949e), 15portable checks pass.
+Next: watched controls and remote UI journeys, including episode receipts and
+failed-save/disappearance coverage. Manual-override/automatic playback precedence
+and checkpoints remain pending. PR13 native/device CI passed; simulator still running
+at last poll. Preserve root worktree's unrelated dirty CI docs.

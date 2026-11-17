@@ -14,8 +14,8 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Library: Decodable, Sendable { let items: [CatalogItem]; let offset: Int; let total: Int }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
-    struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
-    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
+    struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32?; let watched: Bool? }
+    struct Details: Decodable, Sendable { let watched: Bool?; let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
     struct Source: Decodable, Sendable {
         enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
         let addonIndex: Int?; let addonName: String?
@@ -124,6 +124,7 @@ nonisolated protocol CoreService: Sendable {
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
     func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws
+    func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws
     func showLibrary(offset: Int, expectedRevision: UInt64) async throws
     func loadLibraryDetails(index: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
@@ -310,6 +311,21 @@ actor NativeCoreService: CoreService {
     func loadLibraryDetails(index: Int, expectedRevision: UInt64) throws {
         guard index >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "library_details", "index": index, "revision": expectedRevision])
+    }
+    private struct WatchedReceipt: Decodable, Sendable { let watched: Bool; let videoId: String? }
+    func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws {
+        try Task.checkCancellation()
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        if let videoID {
+            guard !videoID.isEmpty, videoID.utf8.count <= 512,
+                  videoID.rangeOfCharacter(from: .controlCharacters) == nil else { throw Failure.invalidRequest }
+        }
+        let bytes = Array((videoID ?? "").utf8)
+        let ticket = bytes.withUnsafeBufferPointer {
+            cue_core_request_watched(handle, $0.baseAddress, $0.count, watched ? 1 : 0, expectedRevision)
+        }
+        let receipt: WatchedReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.watched == watched, receipt.videoId == videoID else { throw Failure.malformedSnapshot }
     }
     private struct LibraryReceipt: Decodable, Sendable { let member: Bool }
     func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws {

@@ -319,6 +319,33 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::SaveWatched { ticket, video_id, watched, revision, cancellation } => {
+                                let save = async {
+                                    let identity = session.snapshot().details.map(|details| (details.kind, details.id));
+                                    session.set_details_watched(video_id.clone(), watched, revision).await?;
+                                    let state = session.settled().await?;
+                                    if let Some(error) = state.error { return Err(error); }
+                                    if state.details.map(|details| (details.kind, details.id)) != identity {
+                                        return Err("watched_selection_changed");
+                                    }
+                                    Ok(())
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("watched_save_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), save) => result.unwrap_or(Err("watched_save_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(()) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"watched":watched,"video_id":video_id},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SaveLibrary { ticket, member, revision, cancellation } => {
                                 let save = async {
                                     session.set_details_library(member, revision).await?;
@@ -395,6 +422,14 @@ async fn own(
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    #[serde(skip)]
+    SaveWatched {
+        ticket: u64,
+        video_id: Option<String>,
+        watched: bool,
+        revision: u64,
+        cancellation: CancellationToken,
+    },
     #[serde(skip)]
     SaveLibrary {
         ticket: u64,
@@ -495,7 +530,8 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::SaveLibrary { .. }
+            Self::SaveWatched { .. }
+            | Self::SaveLibrary { .. }
             | Self::DiscoverSubtitles { .. }
             | Self::PrepareTorrent { .. }
             | Self::PrepareHttps { .. }
@@ -907,6 +943,72 @@ pub extern "C" fn cue_core_request_library(handle: u64, member: u8, revision: u6
             .try_send(Command::SaveLibrary {
                 ticket,
                 member: member == 1,
+                revision,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Requests a watched-state save, sharing the exclusive take/discard slot.
+/// # Safety
+/// For nonzero length, video must point to length readable bytes. Input is copied.
+/// A zero length denotes a film; episode IDs are UTF-8 and at most 512 bytes.
+/// Cancellation does not roll back an admitted mutation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_request_watched(
+    handle: u64,
+    video: *const u8,
+    length: usize,
+    watched: u8,
+    revision: u64,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if watched > 1 || length > 512 || (length != 0 && video.is_null()) {
+            return 0;
+        }
+        let video_id = if length == 0 {
+            None
+        } else {
+            let Ok(value) =
+                std::str::from_utf8(unsafe { std::slice::from_raw_parts(video, length) })
+            else {
+                return 0;
+            };
+            if value.chars().any(char::is_control) {
+                return 0;
+            }
+            Some(value.to_owned())
+        };
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::SaveWatched {
+                ticket,
+                video_id,
+                watched: watched == 1,
                 revision,
                 cancellation,
             })

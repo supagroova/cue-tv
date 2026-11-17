@@ -25,6 +25,35 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     until(|| state(handle)["status"] == "ready");
     let revision = state(handle)["model"]["revision"].as_u64().unwrap();
     assert_eq!(cue_core_request_library(handle, 2, revision), 0);
+    unsafe {
+        assert_eq!(
+            cue_core_request_watched(handle, std::ptr::null(), 1, 1, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, std::ptr::null(), 0, 2, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, [b'x'; 513].as_ptr(), 513, 1, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, [255u8].as_ptr(), 1, 1, revision),
+            0
+        );
+        let watched = cue_core_request_watched(handle, std::ptr::null(), 0, 1, revision);
+        assert_ne!(watched, 0);
+        assert_eq!(cue_core_request_library(handle, 1, revision), 0);
+        until(|| cue_core_take_torrent(handle, watched, std::ptr::null_mut(), 0) > 0);
+        let mut bytes = vec![0; 4096];
+        let len = cue_core_take_torrent(handle, watched, bytes.as_mut_ptr(), bytes.len());
+        let receipt: serde_json::Value = serde_json::from_slice(&bytes[..len as usize]).unwrap();
+        assert_eq!(receipt["session"], handle);
+        assert_eq!(receipt["ticket"], watched);
+        assert_eq!(receipt["error"], "details_not_ready");
+        assert!(receipt["request"].is_null());
+    }
     let library = cue_core_request_library(handle, 1, revision);
     assert_ne!(library, 0);
     assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
