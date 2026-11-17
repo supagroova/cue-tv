@@ -11,7 +11,10 @@ use std::{
     ffi::CString,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -92,8 +95,12 @@ pub struct BudgetFactory {
     budget: StorageBudget,
     probe: DiskProbe,
     lock: Arc<Mutex<bool>>,
+    failed: Arc<AtomicBool>,
 }
 impl BudgetFactory {
+    pub fn has_failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
+    }
     /// Wait for in-flight storage calls and permanently reject subsequent I/O.
     pub fn close(&self) {
         let mut closed = self.lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -115,6 +122,7 @@ impl BudgetFactory {
             budget,
             probe: probe.unwrap_or_else(|| Arc::new(disk_usage)),
             lock: Arc::new(Mutex::new(false)),
+            failed: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -129,6 +137,7 @@ impl StorageFactory for BudgetFactory {
         Ok(BudgetStorage {
             inner: Box::new(FilesystemStorageFactory::default().create(shared, metadata)?),
             policy: self.clone(),
+            initial_allocated: 0,
             lengths: metadata.file_infos.iter().map(|f| f.len).collect(),
         })
     }
@@ -140,9 +149,20 @@ pub struct BudgetStorage {
     inner: Box<dyn TorrentStorage>,
     policy: BudgetFactory,
     lengths: Vec<u64>,
+    initial_allocated: u64,
 }
 impl BudgetStorage {
     fn guard_write(&self, file: usize, offset: u64, len: usize) -> Result<()> {
+        let result = self.check_write(file, offset, len);
+        if result.is_err() {
+            self.policy.failed.store(true, Ordering::Release);
+        }
+        result
+    }
+    fn check_write(&self, file: usize, offset: u64, len: usize) -> Result<()> {
+        if self.policy.has_failed() {
+            bail!("storage policy already failed");
+        }
         let expected = *self.lengths.get(file).context("invalid file index")?;
         let end = offset.checked_add(len as u64).context("write overflow")?;
         if end > expected {
@@ -155,7 +175,8 @@ impl BudgetStorage {
         })?;
         // A filesystem may allocate more than the incoming chunk (including full-file extents).
         // Preserve capacity for all remaining declared data before every mutating operation.
-        let remaining = declared.saturating_sub(usage.allocated);
+        let owned_allocation = usage.allocated.saturating_sub(self.initial_allocated);
+        let remaining = declared.saturating_sub(owned_allocation);
         let overhead = self
             .policy
             .budget
@@ -193,6 +214,7 @@ impl TorrentStorage for BudgetStorage {
         }
         std::fs::create_dir_all(&self.policy.root)?;
         let usage = (self.policy.probe)(&self.policy.root)?;
+        self.initial_allocated = usage.allocated;
         let full = self.lengths.iter().try_fold(
             self.policy
                 .budget
@@ -256,6 +278,7 @@ impl TorrentStorage for BudgetStorage {
         Ok(Box::new(Self {
             inner: self.inner.take()?,
             policy: self.policy.clone(),
+            initial_allocated: self.initial_allocated,
             lengths: self.lengths.clone(),
         }))
     }

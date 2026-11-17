@@ -3,6 +3,8 @@
 #include <stdint.h>
 // Borrowed UTF-8 JSON: api_version=1, exactly one torrent_path/magnet, output,
 // file_index, initial_peers, optional discovery {trackers,dht,bootstrap}.
+// Optional cache_root must be the existing output directory's direct parent;
+// allocated data and metadata across that root count toward the budget.
 // Returns zero for invalid/unsupported envelopes. Work runs on the native runtime.
 uint64_t cue_torrent_start(const char *config);
 // Versioned snapshot includes api_version=1 and session_id matching the handle.

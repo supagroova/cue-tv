@@ -37,6 +37,7 @@ struct Config {
     #[serde(default)]
     discovery: Discovery,
     output: PathBuf,
+    cache_root: Option<PathBuf>,
     file_index: usize,
     initial_peers: Vec<SocketAddr>,
 }
@@ -59,7 +60,7 @@ pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
                     (None, Some(magnet)) => TorrentSource::Magnet(magnet),
                     _ => anyhow::bail!("exactly one torrent source required"),
                 };
-                PlaybackSession::start_source(source, config.file_index, config.output, config.initial_peers, config.discovery).await
+                PlaybackSession::start_budgeted_in_root(source, config.file_index, config.output, config.initial_peers, config.discovery, super::storage_budget::StorageBudget::default(), None, config.cache_root).await
             };
             let session = tokio::select! {
                 _ = entry.cancel.cancelled() => return,

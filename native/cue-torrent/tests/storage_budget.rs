@@ -272,3 +272,95 @@ async fn closed_storage_rejects_late_initialization_without_creating_files() {
     assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
     session.stop().await;
 }
+
+#[tokio::test]
+async fn shared_cache_root_counts_existing_allocations_before_admission() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let output = cache.path().join("session");
+    std::fs::create_dir(&output).unwrap();
+    std::fs::write(cache.path().join("other-allocation"), vec![7u8; 100_000]).unwrap();
+    let result = PlaybackSession::start_budgeted_in_root(
+        TorrentSource::Bytes(torrent),
+        0,
+        output.clone(),
+        vec![],
+        Discovery::default(),
+        StorageBudget {
+            cap_bytes: 250_000,
+            reserve_bytes: 0,
+            metadata_bytes: 4096,
+            max_files: 8,
+        },
+        None,
+        Some(cache.path().to_owned()),
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_dir(output).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn cache_root_must_be_the_actual_output_parent() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let result = PlaybackSession::start_budgeted_in_root(
+        TorrentSource::Bytes(torrent),
+        0,
+        output.path().to_owned(),
+        vec![],
+        Discovery::default(),
+        StorageBudget::default(),
+        None,
+        Some(cache.path().to_owned()),
+    )
+    .await;
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_dir(output.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn existing_root_data_cannot_masquerade_as_downloaded_torrent_bytes() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let torrent = std::fs::read(root.join("fixtures/torrents/single.torrent")).unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let output = cache.path().join("session");
+    std::fs::create_dir(&output).unwrap();
+    let calls = AtomicUsize::new(0);
+    let probe = Arc::new(move |_: &std::path::Path| {
+        Ok(DiskUsage {
+            available: if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                1_000_000
+            } else {
+                150_000
+            },
+            allocated: 100_000,
+            metadata_allocated: 0,
+            block_size: 4096,
+        })
+    });
+    let result = PlaybackSession::start_budgeted_in_root(
+        TorrentSource::Bytes(torrent),
+        0,
+        output,
+        vec![],
+        Discovery::default(),
+        StorageBudget {
+            cap_bytes: 1_000_000,
+            reserve_bytes: 0,
+            metadata_bytes: 4096,
+            max_files: 8,
+        },
+        Some(probe),
+        Some(cache.path().to_owned()),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "the full remaining torrent must fit after unrelated root allocation"
+    );
+}

@@ -187,7 +187,47 @@ impl PlaybackSession {
         budget: StorageBudget,
         probe: Option<DiskProbe>,
     ) -> Result<Self> {
-        let storage = BudgetFactory::new(output.clone(), budget, probe);
+        Self::start_budgeted_in_root(
+            source,
+            index,
+            output,
+            initial_peers,
+            discovery,
+            budget,
+            probe,
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_budgeted_in_root(
+        source: TorrentSource,
+        index: usize,
+        output: PathBuf,
+        initial_peers: Vec<SocketAddr>,
+        discovery: Discovery,
+        budget: StorageBudget,
+        probe: Option<DiskProbe>,
+        cache_root: Option<PathBuf>,
+    ) -> Result<Self> {
+        let accounting_root = if let Some(root) = cache_root {
+            if !root.is_absolute()
+                || !output.is_absolute()
+                || std::fs::symlink_metadata(&root)?.file_type().is_symlink()
+                || std::fs::symlink_metadata(&output)?.file_type().is_symlink()
+            {
+                bail!("invalid cache root");
+            }
+            let canonical_root = root.canonicalize()?;
+            let canonical_output = output.canonicalize()?;
+            if canonical_output.parent() != Some(canonical_root.as_path()) {
+                bail!("cache root must be output parent");
+            }
+            canonical_root
+        } else {
+            output.clone()
+        };
+        let storage = BudgetFactory::new(accounting_root, budget, probe);
         let storage_lease = StorageLease(storage.clone());
         let source = match source {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
@@ -237,6 +277,9 @@ impl PlaybackSession {
                 .into_handle()
                 .context("torrent handle")?;
             handle.wait_until_initialized().await?;
+            if storage_lease.0.has_failed() {
+                bail!("storage policy failed during initialization");
+            }
             let len = handle
                 .with_metadata(|m| m.file_infos.get(index).map(|f| f.len))?
                 .context("file index")?;
@@ -280,6 +323,9 @@ impl PlaybackSession {
         }
     }
     pub fn snapshot(&self) -> serde_json::Value {
+        if self.storage.0.has_failed() {
+            return serde_json::json!({"state":"failed", "error":"Storage policy failed"});
+        }
         let stats = self.torrent.stats();
         let files = self.torrent.with_metadata(|m| m.file_infos.iter().enumerate().map(|(index, file)| {
             serde_json::json!({"index": index, "path": file.relative_filename.to_string_lossy(), "bytes": file.len})

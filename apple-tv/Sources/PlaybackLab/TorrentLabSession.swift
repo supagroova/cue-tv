@@ -36,6 +36,7 @@ final class TorrentLabSession {
             return
         }
         let config: [String: Any] = ["api_version": 1, "torrent_path": torrent.path, "output": output.path,
+                                   "cache_root": output.deletingLastPathComponent().path,
                                    "file_index": 0, "initial_peers": ["127.0.0.1:42424"]]
         guard let data = try? JSONSerialization.data(withJSONObject: config), let json = String(data: data, encoding: .utf8) else {
             try? await TorrentCacheStore.shared.release(output); return
