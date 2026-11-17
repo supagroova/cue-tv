@@ -21,6 +21,8 @@ targets:
     platform: tvOS
     sources:
       - Sources
+      - path: Resources/PlaybackLab
+        buildPhase: resources
       - path: TVConfig.plist
         buildPhase: resources
       - path: ../tvos/CouchTV/Assets.xcassets

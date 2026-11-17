@@ -1,0 +1,23 @@
+[
+  {
+    "id": "episode01",
+    "title": "Episode01",
+    "filename": "episode01.mp4",
+    "sha256": "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb",
+    "durationSeconds": 12
+  },
+  {
+    "id": "episode02",
+    "title": "Episode02",
+    "filename": "episode02.mp4",
+    "sha256": "f631461d61adde69f59ed6961a45bc1812b1dee0920497db67871a48a1652388",
+    "durationSeconds": 12
+  },
+  {
+    "id": "tail-index",
+    "title": "Tail Index",
+    "filename": "tail-index.mp4",
+    "sha256": "cd1bb60c5f2150fc19bcefc2682faf932e8826fb0e2eac7cf06daf1d605dad46",
+    "durationSeconds": 12
+  }
+]
