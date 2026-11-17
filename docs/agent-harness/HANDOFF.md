@@ -49,3 +49,8 @@ Membership retry now re-persists unchanged Core state after disk failure. Full
 native suite passes (`72dee7cbb2844c639d93ca0e1346b9d4`). FFI/Swift save receipt is
 still pending. PR8 Android Build run44168259064 failed on Maven HTTP429 and its
 failed job was rerun; Apple TV jobs were left intact.
+
+Phase 5 C save receipt is implemented; five FFI tests pass in record
+`bcbf7ccfd4ee430589e43eec24336ead`. Next: Swift service and real HTTP fixture
+success/failure receipt tests before UI controls. Local compiler output exhausted
+disk space; Cargo clean -p cue-core freed 11.9 GiB, preserving test evidence.

@@ -24,6 +24,26 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     assert_eq!(cue_core_release(handle), 0);
     until(|| state(handle)["status"] == "ready");
     let revision = state(handle)["model"]["revision"].as_u64().unwrap();
+    assert_eq!(cue_core_request_library(handle, 2, revision), 0);
+    let library = cue_core_request_library(handle, 1, revision);
+    assert_ne!(library, 0);
+    assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
+    until(|| unsafe { cue_core_take_torrent(handle, library, std::ptr::null_mut(), 0) } > 0);
+    let mut library_bytes = vec![0; 4096];
+    let library_len = unsafe {
+        cue_core_take_torrent(
+            handle,
+            library,
+            library_bytes.as_mut_ptr(),
+            library_bytes.len(),
+        )
+    };
+    let library_reply: serde_json::Value =
+        serde_json::from_slice(&library_bytes[..library_len as usize]).unwrap();
+    assert_eq!(library_reply["ticket"], library);
+    assert_eq!(library_reply["session"], handle);
+    assert_eq!(library_reply["error"], "details_not_ready");
+    assert!(library_reply["request"].is_null());
     let ticket = cue_core_request_torrent(handle, 0, revision);
     assert_ne!(ticket, 0);
     assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);

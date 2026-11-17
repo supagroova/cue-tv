@@ -50,3 +50,22 @@ item modification or force a remote upload. All three library cases pass
 (`72dee7cbb2844c639d93ca0e1346b9d4`), as do the 15 portable checks.
 The FFI/Swift operation and acknowledged save state remain next; no UI currently
 claims this operation has been durably saved. Remote retry remains Phase 5 sync work.
+
+## Native save-receipt interface
+
+`cue_core_request_library(handle, member, revision)` uses the existing exclusive
+ticket slot; member is strictly 0 or 1. The queued operation admits the guarded
+Core action, waits for settled effects, rejects any Core error or mismatched
+membership, then returns a versioned receipt. It has a four-second bound. Discard
+cancels observation, not an accepted mutation; callers must refresh state after
+cancellation/timeout. Stop still retires the native owner and discards replies.
+
+Missing-symbol red: `c5c634d395ea416cb56fc8397a6a1c4e`. All five FFI tests pass
+(`bcbf7ccfd4ee430589e43eec24336ead`), including invalid boolean, exclusive-slot
+admission and a no-selected-title failure with matching session/ticket and no
+success payload. The first build attempt failed from local disk exhaustion
+(`7c0ce8ae460d497eae1c5e486f26589d`); package-scoped Cargo clean removed only
+generated Cue Core output before the successful rebuild. All 15 portable checks
+pass. Successful save receipts through Swift and interrupted saves remain to
+be exercised; the previous native persistence tests do not establish that bridge
+coverage. No Swift-facing API or UI is added in this slice.

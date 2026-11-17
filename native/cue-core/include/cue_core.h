@@ -53,6 +53,11 @@ uint64_t cue_core_request_https(uint64_t handle, size_t index, uint64_t revision
 /* Bounded version-1 JSON identity {meta_id,video_id,kind}; shares take/discard.
  * Discard cancels active discovery. Input is copied; zero is invalid/busy. */
 uint64_t cue_core_request_subtitles(uint64_t handle, const uint8_t *input, size_t length);
+/* Selected-title membership save: member must be 0 or 1. Uses the exclusive
+ * take/discard slot. Success request is {member:bool} after effects settle.
+ * Cancellation/timeout does not roll back an accepted mutation; refresh state.
+ * Zero means invalid/busy/unavailable. */
+uint64_t cue_core_request_library(uint64_t handle, uint8_t member, uint64_t revision);
 // JSON v1 reply includes session, ticket, request or fixed error; at most 256 KiB.
 // Returns 0 pending, -1 invalid, or byte count. Only a full non-null copy consumes it.
 // NULL/0 queries length. Undersized buffers stay untouched. Stop discards the reply.

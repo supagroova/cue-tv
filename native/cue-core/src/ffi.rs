@@ -319,6 +319,30 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::SaveLibrary { ticket, member, revision, cancellation } => {
+                                let save = async {
+                                    session.set_details_library(member, revision).await?;
+                                    let state = session.settled().await?;
+                                    if let Some(error) = state.error { return Err(error); }
+                                    if state.details_in_library != Some(member) { return Err("library_selection_changed"); }
+                                    Ok(())
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("library_save_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), save) => result.unwrap_or(Err("library_save_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(()) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"member":member},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
@@ -369,6 +393,13 @@ async fn own(
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    #[serde(skip)]
+    SaveLibrary {
+        ticket: u64,
+        member: bool,
+        revision: u64,
+        cancellation: CancellationToken,
+    },
     #[serde(skip)]
     Login {
         email: String,
@@ -452,7 +483,8 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::DiscoverSubtitles { .. }
+            Self::SaveLibrary { .. }
+            | Self::DiscoverSubtitles { .. }
             | Self::PrepareTorrent { .. }
             | Self::PrepareHttps { .. }
             | Self::Login { .. } => false,
@@ -819,6 +851,49 @@ pub unsafe extern "C" fn cue_core_request_subtitles(
             .try_send(Command::DiscoverSubtitles {
                 ticket,
                 identity,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Saves selected-title membership using the exclusive reply slot. Member is 0 or 1.
+/// A successful receipt requires settled Core effects. Discard is not a rollback.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_library(handle: u64, member: u8, revision: u64) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if member > 1 {
+            return 0;
+        }
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::SaveLibrary {
+                ticket,
+                member: member == 1,
+                revision,
                 cancellation,
             })
             .is_err()
