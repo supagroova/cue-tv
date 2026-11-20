@@ -528,3 +528,94 @@ async fn explicit_retry_persists_failed_local_edit_before_upload() {
     drop(reopened);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[tokio::test]
+async fn retry_writer_barrier_holds_receipt_and_newer_edit_until_save_finishes() {
+    use futures::poll;
+    use std::sync::atomic::AtomicBool;
+    use stremio_core::runtime::EnvError;
+    let env = stored_pending().await;
+    let online = Arc::new(AtomicBool::new(false));
+    let network = online.clone();
+    *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, _| {
+        assert!(parts.uri.path().ends_with("/datastorePut"));
+        if !network.load(Ordering::SeqCst) {
+            return Err(EnvError::Fetch("fixture offline".into()));
+        }
+        Ok(br#"{"result":{"success":true}}"#.to_vec())
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if session.snapshot().error == Some("account_sync_failed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().state, "waiting");
+    let mut item = env
+        .scope(async {
+            NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .items["title"]
+                .clone()
+        })
+        .await;
+    item.state.time_offset = 200;
+    let (release, blocked) = tokio::sync::oneshot::channel();
+    let (entered, started) = tokio::sync::oneshot::channel();
+    env.scope(async {
+        NativeEnv::exec_sequential(async move {
+            let _ = entered.send(());
+            let _ = blocked.await;
+        });
+    })
+    .await;
+    started.await.unwrap();
+    {
+        let retry = session.retry_sync();
+        tokio::pin!(retry);
+        assert!(poll!(&mut retry).is_pending());
+        let edit = session.test_library_item(item);
+        tokio::pin!(edit);
+        assert!(poll!(&mut edit).is_pending());
+        tokio::select! {
+            result = &mut retry => panic!("Retry acknowledged before storage receipt: {result:?}"),
+            result = &mut edit => panic!("Newer mutation crossed the retry write barrier: {result:?}"),
+            _ = tokio::time::sleep(std::time::Duration::from_millis(30)) => {},
+        }
+        online.store(true, Ordering::SeqCst);
+        release.send(()).unwrap();
+        retry.await.unwrap();
+        edit.await.unwrap();
+    }
+    for _ in 0..200 {
+        if session
+            .snapshot()
+            .sync
+            .as_ref()
+            .is_some_and(|sync| sync.state == "idle")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().state, "idle");
+    env.scope(async {
+        let library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(library.items["title"].state.time_offset, 200);
+        let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!journal.has_pending());
+    })
+    .await;
+    session.stop().await;
+}
