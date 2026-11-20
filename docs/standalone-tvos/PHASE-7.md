@@ -1,6 +1,6 @@
 # Phase 7 — personal release and handover
 
-Status: preparation only; **no qualified signed release**. Branch
+Status: handover implementation in progress; **no qualified signed release**. Branch
 `codex/tvos-phase-7` stacks on phase 6. Neither this checklist nor green CI waives
 [phase 6 qualification](PHASE-6.md) or unresolved earlier gates.
 
@@ -70,8 +70,11 @@ The final app/help and handover must explain the tested behavior, including:
 - Only media formats, HDR/audio paths and accessibility flows actually tested on
   the target device. Framework capability lists are not product qualification.
 
-This user-facing help is still a deliverable, not an assertion that it already
-exists in the app.
+Home now provides a Help screen covering watch/resume, the current cache limit
+and reserve, peer sharing and account recovery. Its opt-in simulator journey
+verifies remote navigation, displayed sections and restored Home focus; visual
+review confirms readable text and an opaque background. Physical readability,
+VoiceOver and final device-qualified guidance remain unverified.
 
 ## Removal and troubleshooting protocol
 
@@ -90,7 +93,7 @@ raw tokens, configured tracker URLs/passkeys or private library snapshots.
 ## Exit status
 
 Signed install, renewal, same-identity upgrade, removal behavior, final binary
-notices/source manifest, user-facing cache/upload help and physical independent
+notices/source manifest, physical help/accessibility review and independent
 playback remain unverified or unfinished. The user must ultimately be able to
 launch, watch, resume and recover without developer assistance. Until the original
 plan's evidence supports that outcome, this phase and the stack are not merge-ready.

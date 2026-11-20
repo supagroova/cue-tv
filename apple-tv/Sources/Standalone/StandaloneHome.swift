@@ -15,6 +15,7 @@ struct StandaloneHome: View {
     @State private var restart = UUID()
     @State private var signIn: AccountSignInModel
     @State private var showSignIn = false
+    @State private var showHelp = false
     @State private var refreshAccount: AccountReauthenticationModel?
     @State private var preparingAccount = false
     @State private var accountError: String?
@@ -22,7 +23,7 @@ struct StandaloneHome: View {
     @State private var detailsOrigin = Screen.titles
     enum Screen: Hashable { case catalogs, titles, library, details, sources }
     enum Row: Hashable {
-        case libraryHome, catalog(Int), title(String, String), video(String), movie(String), source(String, Int)
+        case help, libraryHome, catalog(Int), title(String, String), video(String), movie(String), source(String, Int)
     }
     @FocusState private var focusedRow: Row?
     @State private var rememberedRows: [Screen: Row] = [:]
@@ -260,7 +261,15 @@ struct StandaloneHome: View {
             } else if model.error != nil {
                 Button("Retry Stremio") { screen = .catalogs; restart = UUID() }
             } else { ProgressView("Starting Stremio…") }
+            if screen == .catalogs {
+                Button("Help") { showHelp = true }
+                    .accessibilityIdentifier("standalone-help")
+                    .focused($focusedRow, equals: .help)
+            }
         }.padding(60)
+        .fullScreenCover(isPresented: $showHelp, onDismiss: { focusedRow = .help }) {
+            StandaloneHelpView { showHelp = false }
+        }
         .task(id: screen) {
             await Task.yield()
             focusedRow = rememberedRows[screen]
