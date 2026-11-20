@@ -38,8 +38,8 @@ loss at the CoreService boundary; actual native queue/timeout faults remain unqu
 Unreadable account-selection records now expose an explicit, confirmed reset. It
 removes only the invalid selection, retaining account files and keys; a valid
 replacement selection blocks the reset. Signing in again does not recover retained
-unsynced data. The model/storage path is simulator-tested; the new confirmation
-dialog still needs remote-navigation and visual qualification.
+unsynced data. The model/storage path and the confirmation dialog are simulator-tested, including
+remote navigation through Cancel and Reset, guest startup and visual review.
 
 Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
