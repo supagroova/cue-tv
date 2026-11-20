@@ -70,6 +70,26 @@ The evidence stays under `.agent-work/release-candidate-001`; it identifies this
 unsigned incremental candidate, not later commits or an independently reproduced
 clean build. Its task receipt is `1651cc4f10454521a5ca5abb91c250ce`.
 
+## Native notice collection
+
+With cached dependencies available and the pinned Rust toolchain on PATH:
+
+```sh
+python3 scripts/agent/collect-native-notices.py --output .agent-work/native-notices-001
+```
+
+Use a new output directory. The collector resolves locked/offline tvOS metadata,
+keeps runtime and build dependencies while excluding dev-only branches, retains
+source notice texts by checksum, and applies reviewed overrides only for matching
+versions and resolved source identities. Missing notices or stale overrides produce
+a nonzero result and an explicit missing list. The manifest records lock hashes,
+collector identity and whether the source checkout is dirty.
+
+The first collection covers all 327 graph packages. This is a source-notice set,
+not an exact linked-component list or complete license audit: nested third-party
+material and VLCKit's bundled components still require review. Keep the collected
+texts with the corresponding candidate; do not replace them with SPDX labels alone.
+
 ## First installation and upgrade protocol
 
 1. Complete the phase 6 release audit and select a fully reviewed commit. Record
