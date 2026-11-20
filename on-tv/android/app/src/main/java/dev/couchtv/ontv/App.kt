@@ -67,7 +67,7 @@ class App : Application() {
                     c.startActivity(Intent(c, SetupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("pin", true))
                 } catch (e: Exception) { }
                 // If Android blocks the screen from opening (app in the background), a toast still shows.
-                if (!inForeground) Auth.currentPin()?.let { Toast.makeText(c, "Couch TV phone code: ${it.take(3)} ${it.drop(3)}", Toast.LENGTH_LONG).show() }
+                if (!inForeground) Auth.currentPin()?.let { Toast.makeText(c, "Cue TV phone code: ${it.take(3)} ${it.drop(3)}", Toast.LENGTH_LONG).show() }
             }
         }
 
@@ -126,12 +126,12 @@ class BridgeService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         // Notification channels start at Android 8; Android 7 (Fire OS 6) builds the notification without one
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(NotificationChannel("bridge", "Couch TV remote", NotificationManager.IMPORTANCE_LOW))
+            nm.createNotificationChannel(NotificationChannel("bridge", "Cue TV remote", NotificationManager.IMPORTANCE_LOW))
             Notification.Builder(this, "bridge")
         } else {
             @Suppress("DEPRECATION") Notification.Builder(this)
         }
-        val n = b.setContentTitle("Couch TV").setContentText("Phone remote is on")
+        val n = b.setContentTitle("Cue TV").setContentText("Phone remote is on")
             .setSmallIcon(R.drawable.icon).setOngoing(true).build()
         // The typed startForeground and FOREGROUND_SERVICE_TYPE_SPECIAL_USE only exist on Android 14.
         // Older TVs (Android 9 to 13) crash on them, so they get the plain call.
@@ -199,7 +199,7 @@ class BridgeService : Service() {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
         App.startService(c)
-        // Xiaomi with "Couch TV in PatchWall's place": after a restart too (the screen-on receiver is not running yet then).
+        // Xiaomi with "Cue TV in PatchWall's place": after a restart too (the screen-on receiver is not running yet then).
         if (i.action == Intent.ACTION_BOOT_COMPLETED) {
             FireHome.onScreenOn()
             FireHome.restoreAfterBoot()

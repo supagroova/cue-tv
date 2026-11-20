@@ -83,12 +83,12 @@ object FireHome {
         }.getOrDefault(emptySet())
     }
     /**
-     * Xiaomi (opt-in, "patchwall_replace" on the setup page): Couch TV takes PatchWall's place.
+     * Xiaomi (opt-in, "patchwall_replace" on the setup page): Cue TV takes PatchWall's place.
      * On Xiaomi's Android TV builds PatchWall (com.mitv.tvhome.atv) is a launcher app, not the HOME:
      * the TV's partnercustomizer opens it by name from the remote's PatchWall button (KEYCODE_BUTTON_5,
      * see WatchService.onKeyEvent) and when the screen comes on, so no intent filter can claim it.
-     * With the switch on, PatchWall coming forward (its tile, the button, power-on) opens Couch TV
-     * instead (its own Settings screens are left alone), and at power-on Couch TV opens unless the TV
+     * With the switch on, PatchWall coming forward (its tile, the button, power-on) opens Cue TV
+     * instead (its own Settings screens are left alone), and at power-on Cue TV opens unless the TV
      * is going back to an HDMI or TV input. Tested on a Redmi MiTV-AXFR0 (Android 11).
      */
     const val PATCHWALL = "com.mitv.tvhome.atv"
@@ -131,7 +131,7 @@ object FireHome {
         wakeAt = android.os.SystemClock.elapsedRealtime()
         later.removeCallbacksAndMessages(null)
         later.postDelayed({
-            if (lastPkg == TV_APP) Log.i(TAG, "screen on: the TV is going back to an input, Couch TV stays back")
+            if (lastPkg == TV_APP) Log.i(TAG, "screen on: the TV is going back to an input, Cue TV stays back")
             else App.openHome()
         }, 2_000)
     }
@@ -159,7 +159,7 @@ object FireHome {
                     if (dump != null && HomeRestore.component(dump) != null) {
                         readHomes()
                         if (HomeRestore.shouldRestore(dump, homeClasses)) {
-                            Log.i(TAG, "Google home restored at boot: opening Couch TV")
+                            Log.i(TAG, "Google home restored at boot: opening Cue TV")
                             jump(force = true)
                         }
                         return@Thread

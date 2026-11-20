@@ -28,6 +28,10 @@ class CompanionSessionTest {
     @Test fun awakePeerReceivesNoExtraBackKey() = peer("awake") {
         it.verify(credentials()); it.start(); it.prepareForApp(); it.url("stremio:///detail/series/tt4574334")
     }
+    @Test fun selectAndTVButtonSendOneDownAndUpWithRealHoldDuration() = peer("buttons") {
+        it.verify(credentials()); it.start()
+        it.key(6); it.key(6, true); it.key(7); it.key(7, true)
+    }
     @Test fun changedIdentityIsRejectedBeforeSendingClientProof() = peer("identity") {
         assertThrows(IllegalArgumentException::class.java) { it.verify(credentials()) }
     }

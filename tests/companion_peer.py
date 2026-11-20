@@ -3,6 +3,7 @@ codec and cryptography implementation, plus disposable deterministic test identi
 import asyncio
 from pathlib import Path
 import sys
+import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'bridge'))
 import appletv as wire
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -65,15 +66,27 @@ async def main():
             await send(6, {'_pd': wire.tlv_encode([(6, b'\x04')])})
             incoming = wire.hkdf(shared, b'', b'ClientEncrypt-main')
             outgoing = wire.hkdf(shared, b'', b'ServerEncrypt-main')
-            events = ['_systemInfo', '_sessionStart', 'TVRCSessionStart', 'FetchAttentionState']
-            if mode != 'awake': events += ['_hidC', '_hidC']
-            events += ['_launchApp']
+            buttons = mode == 'buttons'
+            events = ['_systemInfo', '_sessionStart', 'TVRCSessionStart']
+            if buttons:
+                events += ['_hidC'] * 8
+            else:
+                events += ['FetchAttentionState']
+                if mode != 'awake': events += ['_hidC', '_hidC']
+                events += ['_launchApp']
             hid = 0
+            pressed_at = None
             for event in events:
                 message = await recv(8)
                 assert message['_i'] == event and message['_t'] == 2
                 if event == '_hidC':
-                    assert message['_c'] == {'_hBtS': hid + 1, '_hidC': 5}
+                    code = [6, 6, 7, 7][hid // 2] if buttons else 5
+                    state = hid % 2 + 1 if buttons else hid + 1
+                    assert message['_c'] == {'_hBtS': state, '_hidC': code}
+                    if state == 1: pressed_at = time.monotonic()
+                    elif buttons:
+                        elapsed = time.monotonic() - pressed_at
+                        assert elapsed >= .95 if hid // 2 in (1, 3) else elapsed < .9
                     hid += 1
                 if event == '_launchApp':
                     assert message['_c'] == {'_urlS': 'stremio:///detail/series/tt4574334'}

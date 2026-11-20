@@ -55,7 +55,7 @@
 
     <application
         android:name=".App"
-        android:label="Couch TV"
+        android:label="Cue TV"
         android:icon="@drawable/icon"
         android:banner="@drawable/banner"
         android:theme="@style/Couch"
@@ -63,7 +63,7 @@
         android:allowBackup="false"
         android:supportsRtl="false">
 
-        <!-- The setup screen: the "Couch TV" tile in the TV's app list. -->
+        <!-- The setup screen: the "Cue TV" tile in the TV's app list. -->
         <activity
             android:name=".SetupActivity"
             android:exported="true"
@@ -84,6 +84,8 @@
             android:stateNotNeeded="true"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale" />
+        <activity android:name=".CuePlayerActivity" android:exported="false" android:screenOrientation="landscape"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale" />
 
         <!-- OFF by default, so installing never takes over the home button. "Use as home screen" in setup turns it on. -->
@@ -113,7 +115,7 @@
         <service
             android:name=".WatchService"
             android:exported="false"
-            android:label="Couch TV home watch"
+            android:label="Cue TV home watch"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

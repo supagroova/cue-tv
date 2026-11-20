@@ -106,6 +106,16 @@ class StremioPlaybackTest {
         val expired = engine.ticket("stremio:///player/private-fixture"); time += 25001
         failure(404) { engine.player(expired) }
     }
+    @Test fun `native playback keeps the exact episode and private URL outside phone rows`() {
+        val engine = engine()
+        val rows = engine.sources(alice, "series", "tt1", "tt1:1:2")
+        val handle = rows.getJSONArray("items").getJSONObject(0).getString("id")
+        val media = engine.nativePlayer(engine.selected(alice, handle))
+        assertEquals("series", media.getString("type")); assertEquals("tt1:1:2", media.getString("video"))
+        assertTrue(media.getString("url").startsWith("https://torrentio.strem.fun/"))
+        assertFalse(rows.toString().contains(media.getString("url")))
+        assertEquals(1, media.getInt("season")); assertEquals(2, media.getInt("episode"))
+    }
     @Test fun `partial provider failures preserve available sources without private errors`() {
         val engine = engine(extra = JSONArray().put(addon("https://torrentio.strem.fun/realdebrid=unavailable-key/manifest.json", "Slow provider")))
         val result = engine.sources(alice, "movie", "tt1", "tt1")

@@ -106,6 +106,7 @@ export const api = {
   screens: () => call('GET', '/api/screens'),
   sleep: () => call('GET', '/api/sleep'),
   key: (key, hold = false) => call('POST', '/api/key', hold ? { key, hold: true } : { key }),
+  stremioCollections: () => call('GET', '/api/stremio/collections'),
   text: (text) => call('POST', '/api/text', { text }),
   launch: (app) => call('POST', '/api/launch', { app }),
   selectPlatform: (platform) => call('POST', '/api/platform', { platform }, 30000),

@@ -1,6 +1,29 @@
 import XCTest
 
 @MainActor final class YouTubeInlineUITests: XCTestCase {
+    func testAutomaticAddressChangesDoNotPlayUntilExplicitTVAction() {
+        let app = XCUIApplication()
+        app.launchEnvironment["COUCHTV_REMOTE_PREVIEW"] = "1"
+        app.launchEnvironment["COUCHTV_YOUTUBE_SELECTION_PREVIEW"] = "1"
+        app.launch()
+        let remote = app.webViews["tv-remote-web"]
+        XCTAssertTrue(remote.buttons["Watch"].waitForExistence(timeout: 20)); remote.buttons["Watch"].tap()
+        let youtube = remote.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "YouTube")).firstMatch
+        XCTAssertTrue(youtube.waitForExistence(timeout: 10)); youtube.tap()
+        let feed = app.webViews["youtube-inline-web"]
+        XCTAssertTrue(feed.staticTexts["Test recommendations"].waitForExistence(timeout: 15))
+        let play = app.buttons["Play on TV"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Try again"].exists)
+        XCTAssertFalse(remote.buttons["Remote"].isSelected)
+        let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = "Explicit YouTube TV playback"; screenshot.lifetime = .keepAlways; add(screenshot)
+        play.tap()
+        // A preview has no household pairing. This error proves only an explicit tap invokes handoff.
+        XCTAssertTrue(app.buttons["Try again"].waitForExistence(timeout: 10))
+        let cancel = app.buttons["Cancel selected video"]
+        XCTAssertTrue(cancel.exists); cancel.tap()
+        XCTAssertTrue(app.buttons["Try again"].waitForNonExistence(timeout: 10))
+    }
     func testSignInPopupRetainsItsOpenerAndReturnsToTheSameFeed() {
         let app = XCUIApplication()
         app.launchEnvironment["COUCHTV_REMOTE_PREVIEW"] = "1"

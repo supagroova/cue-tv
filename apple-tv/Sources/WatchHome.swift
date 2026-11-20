@@ -16,10 +16,9 @@ struct WatchHome: View {
             List(selection: $page) {
                 Section {
                     ForEach(WatchPage.allCases) { page in Label(page.rawValue, systemImage: page.symbol).tag(page) }
-                } header: { Text("TV").font(.system(size: 42, weight: .bold)).padding(.bottom, 24) }
+                } header: { Text("Cue TV").font(.system(size: 42, weight: .bold)).padding(.bottom, 24) }
                 Section("Apps") {
                     Button("YouTube", systemImage: "play.rectangle", action: model.youtube)
-                    Button("Stremio", systemImage: "play.circle", action: model.stremio)
                 }
             }
             .navigationTitle("")
@@ -59,6 +58,11 @@ struct WatchHome: View {
                 if page == .home || page == .series {
                     shelf("Trending Series", model.catalogue.trendingSeries ?? [])
                     shelf("Popular Series", model.catalogue.series)
+                }
+                if page == .home || page == .series || page == .movies {
+                    ForEach(model.collections.filter { page == .home || $0.type == (page == .series ? "series" : "movie") }) { row in
+                        shelf(row.title, row.items)
+                    }
                 }
                 if page == .home || page == .movies {
                     shelf("Trending Films", model.catalogue.trendingMovies ?? [])
@@ -132,6 +136,7 @@ private struct TitleDetail: View {
     let item: Title
     @Bindable var model: WatchModel
     @Environment(\.dismiss) private var dismiss
+    @State private var choosing = false
     var body: some View {
         ZStack(alignment: .leading) {
             GeometryReader { geo in
@@ -144,11 +149,12 @@ private struct TitleDetail: View {
                 Text(item.title).font(.system(size: 72, weight: .bold)).lineLimit(3)
                 if let year = item.year { Text(year).font(.title3).foregroundStyle(.secondary) }
                 if let description = item.description { Text(description).font(.title3).lineLimit(6) }
-                Button(item.inProgress == true ? "Continue in Stremio" : "Open in Stremio", systemImage: "play.fill") { model.open(item) }.padding(.top, 12)
+                Button(item.type == "series" ? "Episodes & Sources" : "Choose a source", systemImage: "play.fill") { choosing = true }.padding(.top, 12)
                 Button("Back", systemImage: "chevron.left") { dismiss() }
                 if let error = model.error { Text(error).foregroundStyle(.orange).font(.callout) }
             }.frame(maxWidth: 820, alignment: .leading).padding(100)
         }.onExitCommand { dismiss() }
+            .fullScreenCover(isPresented: $choosing) { CueEpisodeBrowser(item: item, service: model.service) }
     }
 }
 

@@ -36,7 +36,7 @@ object Tv {
         // Never pop "Allow debugging?" on the TV from a phone tap: the first connection is started
         // on purpose, from setup. After that, reconnecting is silent.
         if (!Adb.connected && (!(Adb.everAllowed || Adb.paired) || !Adb.ensure())) throw ApiError(503,
-            "$what needs ADB on the TV. Open Couch TV on the TV and connect it (see the setup page).")
+            "$what needs ADB on the TV. Open Cue TV on the TV and connect it (see the setup page).")
     }
 
     // ---------- keys and text ----------

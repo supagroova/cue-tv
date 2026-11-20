@@ -149,7 +149,7 @@ object Now {
 
     private fun readMedia(): JSONObject? {
         val pkg = front ?: return null
-        if (pkg in Apps.HOME_PACKAGES) return null
+        if (pkg in Apps.HOME_PACKAGES && pkg != BuildConfig.APPLICATION_ID) return null
         val (uptime, all) = Tv.sessions()
         val s = all.filter { it.pkg == pkg && it.state != null }.sortedWith(compareBy({ !it.active }, { it.state == "NONE" })).firstOrNull()
             ?: return null
@@ -191,6 +191,8 @@ object Now {
         if (Store.testProp("keep_log") == 1L) android.util.Log.d("couchtv.keep", "read front=$front title=${m?.optString("title")} state=${m?.optString("state")} source=${m?.optString("source")} pos=${m?.optLong("position_ms", -1L)}")
         runCatching { untitledStep(front, m); untitledResolve() }.onFailure { android.util.Log.w("couchtv.keep", "untitled: ${it.message}") }
         val pkg = front ?: return
+        // Cue's player records exact episode progress through CuePlayback, including completion.
+        if (pkg == BuildConfig.APPLICATION_ID) return
         // only a title the app itself reports (not the last show couch-tv opened in it)
         val title = m?.optString("title")?.takeIf { m.optString("state") == "playing" && m.optString("source") == "tv" && it.isNotEmpty() && it != "null" }
         val key = if (title == null) "" else pkg + "|" + Finder.norm(title) + "|" + (who ?: "")

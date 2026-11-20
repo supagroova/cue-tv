@@ -71,6 +71,8 @@ object AppleLink {
     fun app(bundle: String) = action { it.prepareForApp(); it.app(bundle) }
     fun stremio() = app(config()?.optString("stremio_bundle", "com.stremio.pal") ?: throw ApiError(503, "Apple TV needs setup first."))
     fun url(uri: String) = action { it.prepareForApp(); it.url(uri) }
+    // Apple TV's physical TV button is distinct from our Cue TV Home shortcut.
+    fun tvButton(hold: Boolean) = action { it.key(7, hold) }
     fun key(androidCode: String, hold: Boolean) {
         val code = mapOf("KEYCODE_DPAD_UP" to 1, "KEYCODE_DPAD_DOWN" to 2, "KEYCODE_DPAD_LEFT" to 3, "KEYCODE_DPAD_RIGHT" to 4,
             "KEYCODE_BACK" to 5, "KEYCODE_DPAD_CENTER" to 6, "KEYCODE_MEDIA_PLAY_PAUSE" to 14).get(androidCode)

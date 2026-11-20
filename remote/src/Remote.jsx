@@ -253,6 +253,7 @@ export function Pad({ onKey, offState, wakeError, onWake, onRetry, tvName, onLiv
 
   const down = (e) => {
     if (disabled || g.current || !e.isPrimary || e.target.closest?.('.pad-msg, .sr-only')) return;
+    e.preventDefault(); // This surface owns the gesture, including WebKit's press-and-hold.
     ref.current.setPointerCapture(e.pointerId);
     const r = ref.current.getBoundingClientRect();
     const zone = zoneAt(r, e.clientX, e.clientY);
@@ -269,6 +270,7 @@ export function Pad({ onKey, offState, wakeError, onWake, onRetry, tvName, onLiv
   };
   const move = (e) => {
     const s = g.current; if (!s || e.pointerId !== s.id) return;
+    if (s.held && s.zone === 'ok') return;
     const r = ref.current.getBoundingClientRect();
     setSpot({ x: e.clientX - r.left, y: e.clientY - r.top });
     const dx = e.clientX - s.ax; const dy = e.clientY - s.ay;
@@ -324,9 +326,11 @@ export function Pad({ onKey, offState, wakeError, onWake, onRetry, tvName, onLiv
 
   return (
     <div ref={ref} className={`pad glass ${disabled ? 'is-off' : ''} ${usePointerMode && !disabled ? 'pointer-mode' : ''}`} role="group"
-      aria-label={usePointerMode ? 'Touchpad. Drag to move the TV pointer, tap to click, two fingers to scroll.' : 'Swipe pad. Swipe or tap an arrow to move, tap the middle to select.'}
+      aria-label={usePointerMode ? 'Touchpad. Drag to move the TV pointer, tap to click, two fingers to scroll.' : 'Swipe pad. Swipe or tap an arrow to move, tap the middle to select, hold the middle for more options.'}
+      onContextMenu={(e) => e.preventDefault()}
       onPointerDown={usePointerMode && !disabled ? pDown : down} onPointerMove={usePointerMode && !disabled ? pMove : move}
-      onPointerUp={usePointerMode && !disabled ? pUp : up} onPointerCancel={usePointerMode && !disabled ? pUp : cancel}>
+      onPointerUp={usePointerMode && !disabled ? pUp : up} onPointerCancel={usePointerMode && !disabled ? pUp : cancel}
+      onLostPointerCapture={usePointerMode && !disabled ? undefined : cancel}>
       {onPointer && !disabled && (
         <button type="button" className={`pointer-toggle ${pointerOn ? 'on' : ''}`} aria-pressed={pointerOn}
           aria-label={pointerOn ? 'Pointer on: tap for arrows' : 'Arrows: tap for the TV pointer'}
@@ -337,6 +341,7 @@ export function Pad({ onKey, offState, wakeError, onWake, onRetry, tvName, onLiv
           {[['up', 'Up'], ['left', 'Left'], ['ok', 'Select'], ['right', 'Right'], ['down', 'Down']].map(([k, label]) => (
             <button key={k} type="button" onClick={() => { tick(); send(k); }}>{label}</button>
           ))}
+          <button type="button" onClick={() => { tick(); onKey('ok', true); }}>More options</button>
         </div>
       )}
       {!usePointerMode && ['up', 'down', 'left', 'right'].map((d) => <Ic.Chevron key={d} className={`chev ${d} ${lit === d ? 'lit' : ''}`} />)}
@@ -385,14 +390,17 @@ export function Controls({ tv, onKey, onVolume }) {
   const st = tv?.playing?.state;
   const upR = useRepeat(() => onVolume('up'));
   const downR = useRepeat(() => onVolume('down'));
+  const tvButton = useHoldButton(() => onKey('apple_tv'), () => onKey('apple_tv', true));
+  const apple = tv?.platform?.active === 'apple';
   return (
-    <div className="controls">
+    <div className={`controls ${apple ? 'apple-controls' : ''}`}>
       <button className="round big glass" aria-label={t('back')} onClick={() => { tick(); onKey('back'); }}><Ic.Back /></button>
       <button className="round big glass" aria-label={t('home')} onClick={() => { tick(); onKey('home'); }}><Ic.Home /></button>
       <button className="round big glass" aria-label={st === 'playing' ? t('pause') : st === 'paused' ? t('play') : t('play_pause')}
         onClick={() => { tick(); onKey('play_pause'); }}>
         {st === 'playing' ? <Ic.Pause /> : st === 'paused' ? <Ic.Play /> : <Ic.PlayPause />}
       </button>
+      {apple && <button type="button" className="round big glass" aria-label="TV button. Hold for Control Centre" title="TV. Hold for Control Centre" {...tvButton}><Ic.Screen /></button>}
       <div className="volume glass" role="group" aria-label={t('volume')}>
         <button aria-label="Volume down" {...downR}><Ic.Minus /></button>
         <button className="vol-mid" aria-label={v?.muted ? 'Unmute' : 'Mute'} onClick={() => { tick(); onVolume('mute'); }}>
@@ -403,6 +411,40 @@ export function Controls({ tv, onKey, onVolume }) {
       </div>
     </div>
   );
+}
+
+// One action per gesture. A cancelled hold must never turn into a tap on release.
+function useHoldButton(tap, hold) {
+  const gesture = useRef(null);
+  const lastPointer = useRef(0);
+  const callbacks = useRef({ tap, hold }); callbacks.current = { tap, hold };
+  const stop = () => { clearTimeout(gesture.current?.timer); gesture.current = null; };
+  useEffect(() => () => stop(), []);
+  return {
+    onContextMenu: (e) => e.preventDefault(),
+    onPointerDown: (e) => {
+      if (!e.isPrimary || gesture.current || e.button !== 0) return;
+      e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+      lastPointer.current = Date.now();
+      const s = { id: e.pointerId, x: e.clientX, y: e.clientY, held: false };
+      gesture.current = s;
+      s.timer = setTimeout(() => { if (gesture.current === s) { s.held = true; tick(); callbacks.current.hold(); } }, HOLD_MS);
+    },
+    onPointerMove: (e) => {
+      const s = gesture.current;
+      if (s?.id === e.pointerId && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) stop();
+    },
+    onPointerUp: (e) => {
+      const s = gesture.current;
+      lastPointer.current = Date.now();
+      if (s?.id !== e.pointerId) return;
+      if (!s.held) { tick(); callbacks.current.tap(); }
+      stop();
+    },
+    onPointerCancel: stop,
+    onLostPointerCapture: stop,
+    onClick: () => { if (Date.now() - lastPointer.current > 600) { tick(); callbacks.current.tap(); } },
+  };
 }
 
 export function AskButton({ onAsk, quiet }) {

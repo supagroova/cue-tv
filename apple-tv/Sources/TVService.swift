@@ -46,7 +46,17 @@ final class TVService {
     func confirmTitle(_ serial: Int64, opened: Bool) async throws {
         try await action("api/platform/apple/opened", body: ["serial": serial, "opened": opened])
     }
+    func cueChoice(_ choice: String) async throws -> CueMedia {
+        let result: CueMediaReply = try await post("api/stremio/playback/choice", body: ["id": choice])
+        return result.media
+    }
+    func progress(_ media: CueMedia, position: Int64, duration: Int64, state: String) async throws {
+        try await action("api/stremio/progress", body: ["playback": media.playback, "position": position, "duration": duration, "state": state])
+    }
     private func action(_ path: String, body: [String: Any]) async throws {
+        let _: Acknowledgement = try await post(path, body: body)
+    }
+    private func post<T: Decodable & Sendable>(_ path: String, body: [String: Any]) async throws -> T {
         guard let connection, let base = TVAddress.normalise(connection.address) else {
             throw TVError(message: "Connect to Sitting Room TV to open this app.", status: 401)
         }
@@ -55,7 +65,7 @@ final class TVService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer " + connection.token, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        _ = try await send(request, as: Acknowledgement.self)
+        return try await send(request, as: T.self)
     }
     /// Only while the app is in front. The Android service keeps working while tvOS suspends us.
     func events(_ onEvent: (TVEvent) -> Void) async {
