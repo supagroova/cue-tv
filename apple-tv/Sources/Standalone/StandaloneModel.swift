@@ -3,6 +3,16 @@ import Observation
 
 @MainActor @Observable
 final class StandaloneModel {
+    private(set) var canResetAccountSelection = false
+    func resetInvalidAccountSelection() async throws {
+        guard canResetAccountSelection, service == nil, !signingOut, pendingSignOut == nil else {
+            throw NativeCoreService.Failure.stopped
+        }
+        try await accountSelection.clearInvalidRecord()
+        canResetAccountSelection = false
+        restorationAccount = nil
+        error = nil
+    }
     private(set) var snapshot: CoreSnapshot?
     private(set) var error: String?
     private var service: (any CoreService)?
@@ -117,7 +127,14 @@ final class StandaloneModel {
         guard await closePlayback() else { return }
         do {
             if service == nil {
-                let account = try await accountSelection.load()
+                let account: CoreAccountSelection.Account?
+                do { account = try await accountSelection.load() }
+                catch CoreAccountSelection.Failure.invalidRecord {
+                    guard generation == token, !Task.isCancelled else { throw CancellationError() }
+                    canResetAccountSelection = true
+                    throw CoreAccountSelection.Failure.invalidRecord
+                }
+                canResetAccountSelection = false
                 guard generation == token, !Task.isCancelled else { throw CancellationError() }
                 restorationAccount = account
                 let selected: NativeCoreService

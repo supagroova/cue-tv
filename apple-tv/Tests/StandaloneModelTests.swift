@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 import Testing
 @testable import SittingRoomTV
 
@@ -340,4 +341,43 @@ private actor ActionGate {
     #expect(try await service.snapshot().status == .ready)
     run.cancel()
     await run.value
+}
+
+@Test @MainActor func malformedAccountSelectionCanRecoverWithoutDeletingAccountData() async throws {
+    let label = "invalid-selection-" + UUID().uuidString
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: CoreStorage.keyService, kSecAttrAccount as String: label]
+    defer { SecItemDelete(query as CFDictionary) }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    defer {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: CoreStorage.keyService,
+            kSecAttrAccount as String: "account-v1:" + namespace.uuidString.lowercased()] as CFDictionary)
+    }
+    let sentinel = configuration.directory.appendingPathComponent("state.bin")
+    try Data("encrypted-account-sentinel".utf8).write(to: sentinel)
+    #expect(SecItemAdd(query.merging([kSecValueData as String: Data("invalid-json".utf8)]) { _, new in new } as CFDictionary, nil) == errSecSuccess)
+    let selection = CoreAccountSelection(keyAccount: label)
+    let model = StandaloneModel(accountSelection: selection, accountRoot: root)
+    await model.run()
+    #expect(model.snapshot == nil)
+    #expect(model.canResetAccountSelection)
+    try await model.resetInvalidAccountSelection()
+    #expect(try await selection.load() == nil)
+    #expect(!model.canResetAccountSelection)
+    #expect(model.error == nil)
+    #expect(try Data(contentsOf: sentinel) == Data("encrypted-account-sentinel".utf8))
+    #expect(try await storage.prepareExistingAccount().key == configuration.key)
+    // A valid selection installed after the error must never be removed by recovery.
+    #expect(SecItemAdd(query.merging([kSecValueData as String: Data("invalid-json".utf8)]) { _, new in new } as CFDictionary, nil) == errSecSuccess)
+    await model.run()
+    let replacement = CoreAccountSelection.Account(namespace: UUID(), userID: "replacement-user")
+    try await selection.save(replacement)
+    await #expect(throws: CoreAccountSelection.Failure.alreadySelected) { try await model.resetInvalidAccountSelection() }
+    #expect(try await selection.load() == replacement)
+    #expect(try Data(contentsOf: sentinel) == Data("encrypted-account-sentinel".utf8))
 }

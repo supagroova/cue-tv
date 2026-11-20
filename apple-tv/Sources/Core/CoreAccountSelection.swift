@@ -59,6 +59,18 @@ actor CoreAccountSelection {
         let added = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
         guard added == errSecSuccess else { throw Failure.keychain(added) }
     }
+    /// Explicit recovery only: never infer an account directory from corrupt bytes.
+    /// Validation and deletion have no suspension point on this shared actor.
+    func clearInvalidRecord() throws {
+        do {
+            _ = try load()
+            throw Failure.alreadySelected
+        } catch Failure.invalidRecord {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.keychain(status) }
+        }
+    }
+
     /// A late sign-out from an older session must not remove a newer selection.
     @discardableResult
     func clear(ifMatching namespace: UUID) throws -> Bool {
