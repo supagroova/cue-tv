@@ -619,3 +619,139 @@ async fn retry_writer_barrier_holds_receipt_and_newer_edit_until_save_finishes()
     .await;
     session.stop().await;
 }
+
+#[tokio::test]
+async fn same_account_reauthentication_resumes_pending_upload_but_foreign_login_does_not() {
+    for (returned_uid, fail_save) in [("owner-a", false), ("owner-b", false), ("owner-a", true)] {
+        let directory = std::env::temp_dir().join(format!(
+            "cue-session-reauth-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let unavailable = directory.with_extension("unavailable");
+        let env = seed_pending(Environment::persistent(&directory, &[39; 32]).unwrap()).await;
+        let mut user = env
+            .scope(async {
+                NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .auth
+                    .unwrap()
+                    .user
+            })
+            .await;
+        user.id = returned_uid.parse().unwrap();
+        let login = serde_json::to_vec(
+            &serde_json::json!({"result":{"authKey":"replacement-token","user":user}}),
+        )
+        .unwrap();
+        let uploads = Arc::new(AtomicUsize::new(0));
+        let observed = uploads.clone();
+        *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, bytes| {
+            if parts.uri.path().ends_with("/login") {
+                return Ok(login.clone());
+            }
+            assert!(parts.uri.path().ends_with("/datastorePut"));
+            let request: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+            if request["authKey"] == "synthetic-token" {
+                return Ok(br#"{"error":{"code":1,"message":"expired fixture"}}"#.to_vec());
+            }
+            assert_eq!(request["authKey"], "replacement-token");
+            assert_eq!(request["changes"][0]["state"]["timeOffset"], 100);
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(br#"{"result":{"success":true}}"#.to_vec())
+        }));
+        let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+            .await
+            .unwrap();
+        for _ in 0..200 {
+            if session
+                .snapshot()
+                .sync
+                .as_ref()
+                .is_some_and(|sync| sync.state == "reauthentication_required")
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            session.snapshot().sync.as_ref().unwrap().state,
+            "reauthentication_required"
+        );
+        if fail_save {
+            std::fs::rename(&directory, &unavailable).unwrap();
+        }
+        session
+            .reauthenticate("fixture@example.test", "fixture-password")
+            .await
+            .unwrap();
+        for _ in 0..200 {
+            if session
+                .snapshot()
+                .sync
+                .as_ref()
+                .is_some_and(|sync| sync.state == "idle")
+                || matches!(
+                    session.snapshot().error,
+                    Some("reauthentication_identity_mismatch" | "reauthentication_save_failed")
+                )
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let accepted = returned_uid == "owner-a" && !fail_save;
+        if fail_save {
+            assert_eq!(
+                session.snapshot().error,
+                Some("reauthentication_save_failed")
+            );
+        }
+        assert_eq!(uploads.load(Ordering::SeqCst), usize::from(accepted));
+        assert_eq!(session.account_identity().as_deref(), Some("owner-a"));
+        assert_eq!(
+            session.snapshot().sync.as_ref().unwrap().state,
+            if accepted {
+                "idle"
+            } else {
+                "reauthentication_required"
+            }
+        );
+        env.scope(async {
+            let profile = NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                profile.auth.unwrap().key.0,
+                if accepted {
+                    "replacement-token"
+                } else {
+                    "synthetic-token"
+                }
+            );
+            let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                journal.revision("title"),
+                if accepted { None } else { Some(1) }
+            );
+        })
+        .await;
+        let snapshot = serde_json::to_string(&session.snapshot()).unwrap();
+        assert!(!snapshot.contains("replacement-token"));
+        assert!(!snapshot.contains("fixture-password"));
+        if fail_save {
+            std::fs::rename(&unavailable, &directory).unwrap();
+        }
+        session.stop().await;
+        drop(session);
+        drop(env);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

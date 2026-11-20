@@ -74,6 +74,11 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    Reauthenticate(String, String, oneshot::Sender<Result<(), &'static str>>),
+    Reauthenticated(
+        u64,
+        Result<stremio_core::types::profile::Auth, crate::reauth::Error>,
+    ),
     RetrySync(oneshot::Sender<Result<(), &'static str>>),
     #[cfg(test)]
     TestLibraryItem(
@@ -296,6 +301,27 @@ impl CoreSession {
     /// Explicit private identity copy for protected account selection, never UI snapshots.
     pub fn account_identity(&self) -> Option<String> {
         self.identity.borrow().clone()
+    }
+    /// Admit a same-account refresh. Completion/error is published in snapshots.
+    pub async fn reauthenticate(&self, email: &str, password: &str) -> Result<(), &'static str> {
+        if email.is_empty()
+            || email.len() > 512
+            || email.chars().any(char::is_control)
+            || password.is_empty()
+            || password.len() > 4096
+            || password.chars().any(char::is_control)
+        {
+            return Err("invalid_credentials");
+        }
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::Reauthenticate(
+                email.to_owned(),
+                password.to_owned(),
+                send,
+            ))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
     }
     pub async fn retry_sync(&self) -> Result<(), &'static str> {
         let (send, receive) = oneshot::channel();
@@ -838,6 +864,10 @@ async fn run(
     let sync_started = std::time::Instant::now();
     let mut sync_scheduler = crate::sync_scheduler::Scheduler::default();
     let mut sync_cancel = tokio_util::sync::CancellationToken::new();
+    let mut reauth_sequence = 0u64;
+    let mut reauth_active: Option<(u64, String)> = None;
+    let mut reauth_ready = None;
+    let mut reauth_cancel = tokio_util::sync::CancellationToken::new();
     let mut sync_ack: Option<(u64, crate::sync_journal::Upload)> = None;
     let mut sync_tick = tokio::time::interval(std::time::Duration::from_secs(1));
     sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -846,6 +876,40 @@ async fn run(
         // completions. No actor command mutates the captured library while this
         // short sequential write runs; the receipt uses a separate oneshot.
         if pending == 0 {
+            if let Some(auth) = reauth_ready.take() {
+                let prepared = crate::checkpoint::refresh_account(
+                    &ctx.profile,
+                    &auth,
+                    &ctx.library,
+                    journal.as_ref(),
+                );
+                let committed = match prepared {
+                    Ok((profile, write)) => {
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let _ = send.send(write.await.map(|_| profile));
+                        });
+                        tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => match result {
+                                Ok(Ok(profile)) => Ok(profile),
+                                _ => Err(()),
+                            },
+                        }
+                    }
+                    Err(_) => Err(()),
+                };
+                reauth_active = None;
+                match committed {
+                    Ok(profile) => {
+                        ctx.profile = profile;
+                        sync_scheduler.invalidate(sync_started.elapsed());
+                        error = None;
+                    }
+                    Err(()) => error = Some("reauthentication_save_failed"),
+                }
+                publish.send_modify(|state| state.error = error);
+            }
             if let Some((ticket, upload)) = sync_ack.take() {
                 if sync_scheduler.is_current(ticket) {
                     if let Some(current) = journal.clone() {
@@ -878,6 +942,7 @@ async fn run(
             }
         }
         if sync_allowed
+            && reauth_active.is_none()
             && journal
                 .as_ref()
                 .is_some_and(|journal| journal.has_pending())
@@ -929,6 +994,64 @@ async fn run(
                 details_generation,
                 source_generation,
             ),
+            Command::Reauthenticate(email, password, reply) => {
+                let Some(uid) = ctx.profile.uid().filter(|_| sync_allowed) else {
+                    let _ = reply.send(Err("account_sync_unavailable"));
+                    continue;
+                };
+                if reauth_active.is_some() || !sync_scheduler.is_paused() {
+                    let _ = reply.send(Err("account_busy"));
+                    continue;
+                }
+                let Some(ticket) = reauth_sequence.checked_add(1) else {
+                    let _ = reply.send(Err("account_unavailable"));
+                    continue;
+                };
+                reauth_sequence = ticket;
+                reauth_active = Some((ticket, uid.0.clone()));
+                reauth_cancel.cancel();
+                reauth_cancel = tokio_util::sync::CancellationToken::new();
+                let cancel = reauth_cancel.clone();
+                let sender = outgoing.clone();
+                error = None;
+                publish.send_modify(|state| state.error = None);
+                NativeEnv::exec_concurrent(async move {
+                    let result = tokio::select! { biased;
+                        _ = cancel.cancelled() => return,
+                        result = crate::reauth::authenticate(&uid.0, &email, &password) => result,
+                    };
+                    tokio::select! { biased;
+                        _ = cancel.cancelled() => {},
+                        _ = sender.send(Command::Reauthenticated(ticket, result)) => {},
+                    }
+                });
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::Reauthenticated(ticket, result) => {
+                if !sync_allowed
+                    || !reauth_active.as_ref().is_some_and(|(active, uid)| {
+                        *active == ticket
+                            && ctx.profile.uid().is_some_and(|current| current.0 == *uid)
+                    })
+                {
+                    continue;
+                }
+                match result {
+                    Ok(auth) => reauth_ready = Some(auth),
+                    Err(failure) => {
+                        reauth_active = None;
+                        error = Some(match failure {
+                            crate::reauth::Error::Identity => "reauthentication_identity_mismatch",
+                            crate::reauth::Error::InvalidRequest => "invalid_credentials",
+                            crate::reauth::Error::Rejected => "reauthentication_rejected",
+                            crate::reauth::Error::Transport => "reauthentication_failed",
+                        });
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
             Command::RetrySync(reply) => {
                 let result = if !sync_allowed || ctx.profile.auth.is_none() {
                     Err("account_sync_unavailable")
@@ -1180,6 +1303,9 @@ async fn run(
                     continue;
                 }
                 sync_allowed = false;
+                reauth_cancel.cancel();
+                reauth_active = None;
+                reauth_ready = None;
                 sync_cancel.cancel();
                 sync_scheduler.invalidate(sync_started.elapsed());
                 sync_ack = None;
@@ -2031,6 +2157,7 @@ async fn run(
             });
         }
     }
+    reauth_cancel.cancel();
     sync_cancel.cancel();
     inbox.close();
     identity.send_replace(None);
