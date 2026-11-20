@@ -9,6 +9,7 @@ struct StandaloneHome: View {
         _signIn = State(initialValue: makeSignIn())
         self.makeSignIn = makeSignIn
     }
+    @State private var confirmSelectionReset = false
     @State private var screen = Screen.catalogs
     @State private var manifest = ""
     @State private var search = ""
@@ -40,7 +41,10 @@ struct StandaloneHome: View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Cue TV").font(.largeTitle)
             Text(model.snapshot?.model?.authenticated == true ? "Stremio · Account" : "Stremio · Guest").foregroundStyle(.secondary)
-            if model.canSignOut {
+            if model.canResetAccountSelection {
+                Button("Reset unreadable account selection") { confirmSelectionReset = true }
+                    .accessibilityIdentifier("reset-account-selection")
+            } else if model.canSignOut {
                 HStack {
                     Button(model.needsSignOutRetry ? "Retry sign-out" : "Sign out of Stremio") {
                         accountError = nil
@@ -264,6 +268,21 @@ struct StandaloneHome: View {
         .task(id: screen) {
             await Task.yield()
             focusedRow = rememberedRows[screen]
+        }
+        .confirmationDialog("Reset account selection?", isPresented: $confirmSelectionReset, titleVisibility: .visible) {
+            Button("Reset selection", role: .destructive) {
+                Task {
+                    do {
+                        try await model.resetInvalidAccountSelection()
+                        accountError = nil
+                        screen = .catalogs
+                        restart = UUID()
+                    } catch { accountError = "Account selection could not be reset. Please retry Stremio." }
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This clears the unreadable sign-in selection so you can continue as a guest or sign in again. Existing encrypted account data stays on this Apple TV; unsynced changes are not restored by signing in again.")
         }
         .onExitCommand(perform: backAction)
         .task(id: restart) { await model.run() }
