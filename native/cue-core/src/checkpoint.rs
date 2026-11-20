@@ -1,13 +1,45 @@
 //! One local checkpoint replaces both Core library buckets atomically. No network effect.
 use crate::environment::NativeEnv;
+use futures::FutureExt;
 use std::collections::BTreeMap;
 use stremio_core::{
     constants::{LIBRARY_RECENT_STORAGE_KEY, LIBRARY_STORAGE_KEY},
-    runtime::{EnvError, TryEnvFuture},
+    runtime::{Env, EnvError, TryEnvFuture},
     types::library::{LibraryBucket, LibraryBucketRef},
 };
-pub(crate) fn write(library: &LibraryBucket) -> Result<TryEnvFuture<()>, EnvError> {
-    Ok(NativeEnv::set_storage_batch(batch(library)?))
+/// Execute on Core's sequential storage queue: read the last committed revision
+/// there, rather than capturing a stale journal when the checkpoint is prepared.
+pub(crate) fn write(library: &LibraryBucket, title_id: &str) -> Result<TryEnvFuture<()>, EnvError> {
+    let Some(uid) = library.uid.as_ref() else {
+        return Ok(NativeEnv::set_storage_batch(batch(library)?));
+    };
+    let item = library
+        .items
+        .get(title_id)
+        .ok_or(EnvError::StorageUnavailable)?;
+    let uid = uid.0.clone();
+    let title_id = title_id.to_owned();
+    let kind = item.r#type.clone();
+    let library = library.clone();
+    // Capture the environment while constructing the operation, as other Env calls do.
+    let stored =
+        NativeEnv::get_storage::<crate::sync_journal::Journal>(crate::sync_journal::STORAGE_KEY);
+    Ok(async move {
+        let journal = match stored.await? {
+            Some(journal) => journal,
+            None => {
+                crate::sync_journal::Journal::new(&uid).map_err(|_| EnvError::StorageUnavailable)?
+            }
+        };
+        journal
+            .validate_library(&library)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        let next = journal
+            .with_intent(&uid, &kind, &title_id)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        write_with_journal(&library, &next)?.await
+    }
+    .boxed())
 }
 
 pub(crate) fn write_with_journal(
@@ -59,6 +91,86 @@ mod journal_tests {
         }))
         .unwrap();
         LibraryBucket::new(Some("owner-a".parse().unwrap()), vec![item])
+    }
+
+    #[tokio::test]
+    async fn account_checkpoint_records_intent_and_coalesces_repeated_progress() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let first = write(&library(100), "title").unwrap();
+            let second = write(&library(200), "title").unwrap();
+            first.await.unwrap();
+            second.await.unwrap();
+            let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                .await
+                .unwrap()
+                .expect("Account progress requires durable pending intent");
+            assert_eq!(journal.revision("title"), Some(2));
+            let stored = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.items["title"].state.time_offset, 200);
+            journal.validate_library(&stored).unwrap();
+        })
+        .await;
+        env.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn checkpoint_rejects_foreign_journal_without_changing_progress() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let foreign = Journal::new("owner-b").unwrap();
+            NativeEnv::set_storage(LIBRARY_RECENT_STORAGE_KEY, Some(&library(100)))
+                .await
+                .unwrap();
+            NativeEnv::set_storage(crate::sync_journal::STORAGE_KEY, Some(&foreign))
+                .await
+                .unwrap();
+            assert!(write(&library(200), "title").unwrap().await.is_err());
+            let stored = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.items["title"].state.time_offset, 100);
+            assert_eq!(
+                NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap(),
+                Some(foreign)
+            );
+        })
+        .await;
+        env.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn guest_checkpoint_does_not_create_account_intent() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let mut guest = library(123);
+            guest.uid = None;
+            write(&guest, "title").unwrap().await.unwrap();
+            assert!(
+                NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .items["title"]
+                    .state
+                    .time_offset,
+                123
+            );
+        })
+        .await;
+        env.shutdown().await;
     }
 
     #[tokio::test]

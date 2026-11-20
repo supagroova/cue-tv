@@ -1214,8 +1214,9 @@ async fn run(
                     }
                 };
                 let mut library = ctx.library.clone();
+                let checkpoint_title = item.id.clone();
                 library.merge_items(vec![item]);
-                let write = match crate::checkpoint::write(&library) {
+                let write = match crate::checkpoint::write(&library, &checkpoint_title) {
                     Ok(write) => write,
                     Err(_) => {
                         let _ = reply.send(Err("checkpoint_write_failed"));
