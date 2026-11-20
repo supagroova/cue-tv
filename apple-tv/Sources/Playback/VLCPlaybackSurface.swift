@@ -89,7 +89,7 @@ struct VLCPlaybackSurface: UIViewRepresentable {
         coordinator.stop()
     }
     final class Coordinator {
-        let player = VLCMediaPlayer()
+        let player = PlaybackLogging.makePlayer()
         func stop() {
             polling?.cancel(); polling = nil
             player.stop(); player.drawable = nil; player.media = nil

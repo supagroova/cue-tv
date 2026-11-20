@@ -753,3 +753,27 @@ Simulator suite passed `a8e2504c40ba4da2a7633a20e8f7f8fe`; unsigned tvOS device 
 Extended the ACK barrier fixture to encrypted persistence and shared setup for two tests. Stopping with an ACK queued behind a held writer completes within the test bound, drops the held future, and preserves pending revision 1 and position 100 after encrypted reopen. The normal branch still verifies a queued newer edit and outgoing positions [100,200]. Initial fixture incorrectly read through the canceled environment (`b5a34948fcb547b2818fefff0c1cb6bf`); corrected to reopen storage rather than weakening cancellation. Focused stop test passed `e036ba5eafce472a954aa04c725d3e8d`; full native suite passed `4a4116a8d7e54ef0b2e3a409c7aa5dd2`.
 
 Batch with local ACK regression and foreground retry commits for PR13. Foreground Swift/device evidence remains a8e2504c40ba4da2a7633a20e8f7f8fe / 43bfceb273d64c009bc63c520b148949; subsequent changes are native tests only. This covers cooperative shutdown while a storage write is queued, not abrupt OS termination mid-filesystem-write or physical Home/sleep.
+
+### 2026-11-20 — diagnostics privacy audit and Android CI follow-up
+
+Source audit: Core Env::log discards upstream messages; torrent FailureCode serializes fixed categories/messages; standalone playback displays fixed coordinator failures. Added a focused native test proving arbitrary sensitive error-chain strings are discarded while a typed low-storage category survives context (`16389ba540014e4f8513a2952505b2b1`). Test changes remain local.
+
+Open diagnostic gates: Rust panic hooks may print payloads before catch_unwind (not yet bounded by app policy); VLCKit internal logging is unverified; native playback snapshot currently exposes verified/total bytes but lacks peer/rate/cache counters needed by the PRD diagnostic panel. These findings mean privacy/diagnostics are not complete. Legacy WatchModel localized errors are not used by StandaloneHome; do not confuse legacy code with the shipping route.
+
+PR13 head484c067 Android run44800036472 failed before compilation resolving multiple Maven artifacts (including Kotlin/ASM). No Android files changed in this batch. Saved failed log under ignored .agent-work/android-44800036472-failed.log and requested a single failed-job rerun to distinguish transient artifact resolution from a persistent build issue. Apple run44800036321 was in progress. Recheck actual job state before further action.
+
+### 2026-11-20 — VLCKit logging policy implementation
+
+Inspected pinned VLCKit revision3d0f0fa7031eab1a67c817c98a495e1c68fc998c headers and VLCLibrary.m. `setLoggers` installs libvlc_log_set only for a nonempty logger list; empty removes the callback. Added a stateless, nonisolated discard-only VLCLogging sink and routed the shared playback coordinator through a factory that installs it on the shared library before player/media construction. All app VLCMediaPlayer construction now uses this factory. Core and torrent UI error categories remain available.
+
+Simulator unit suite passed `75ceaafe087e4dc4a44ca67cc7318be8`. Changes remain local: run short playback tests and device build, inspect captured diagnostics with synthetic private inputs, then commit. This does not yet prove all third-party console output is suppressed; Rust panic payload policy remains open. Android rerun44800036472 job136510502916 was confirmed in progress in Build the TV apps after the prior artifact-resolution failure.
+
+### 2026-11-20 — logging playback verification in progress
+
+Started `task.py verify phase-5-library make apple-lab-test DESTINATION=platform=tvOS Simulator,id=2058C8D1-FCB2-4384-ACD2-B86EF556BE60` in exec session31002. Live xcodebuild is running; log `.agent-work/tasks/phase-5-library/e1d1e8b6ff72449da38313a088e91e0a.log` shows HEVC/alternate-track cases passing and continued tests. Resume this handle rather than restarting; no concurrent Xcode build. The local fixture seeder PID30860 remains listening on42424. After terminal result, run unsigned device build and record limits before committing privacy changes. GitHub Apple jobs136509881384/136509881743 and Android rerun136510502916 were confirmed active.
+
+### 2026-11-20 — VLC logging verification complete for this slice
+
+All12 short playback UI tests passed in115.941s (`e1d1e8b6ff72449da38313a088e91e0a`); unsigned device build passed `24575f698c2e4d0db0b7a2933bb4acaf`. The playback verification tree fingerprints differ because this handoff was appended while tests ran; playback source did not change during the run. Earlier75 unit tests and sensitive error-chain test also passed (75ceaafe087e4dc4a44ca67cc7318be8 / 16389ba540014e4f8513a2952505b2b1).
+
+Commit the explicit discard-only VLCKit callback and error snapshot regression. These establish compatibility and the selected log callback policy, not a complete runtime console capture guarantee. Rust panic output, direct third-party stderr outside the callback, synthetic-sensitive-input capture and required diagnostic counters remain open. Android rerun136510502916 succeeded3m53s without code changes; current remote native/device CI passed5m44s, simulator136509881743 stillrunning.
