@@ -813,3 +813,98 @@ async fn search_uses_declared_catalog_extra_and_rejects_unbounded_queries() {
     server.await.unwrap();
     session.stop().await;
 }
+
+#[tokio::test]
+async fn replacing_search_disconnects_old_http_and_retries_identical_query() {
+    use cue_core::{
+        environment::{Environment, NativeEnv},
+        session::CoreSession,
+    };
+    use stremio_core::{
+        constants::{PROFILE_STORAGE_KEY, SCHEMA_VERSION, SCHEMA_VERSION_STORAGE_KEY},
+        runtime::Env,
+        types::profile::Profile,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (received, waiting) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut old, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 8192];
+        let count = old.read(&mut buffer).await.unwrap();
+        assert!(String::from_utf8_lossy(&buffer[..count]).contains("search=blue%20sky"));
+        received.send(()).unwrap();
+        let closed =
+            tokio::time::timeout(std::time::Duration::from_secs(3), old.read(&mut buffer)).await;
+        assert!(
+            matches!(closed, Ok(Ok(0))),
+            "obsolete HTTP request remained open: {closed:?}"
+        );
+        let (mut fresh, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+        let count = fresh.read(&mut buffer).await.unwrap();
+        assert!(String::from_utf8_lossy(&buffer[..count]).contains("search=blue%20sky"));
+        let body =
+            r#"{"metas":[{"id":"replacement-result","type":"movie","name":"Fresh result"}]}"#;
+        fresh
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let env = Environment::new().unwrap();
+    let mut profile = Profile::default();
+    profile.addons = vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"search.fixture","name":"Search","version":"1.0.0","description":"Owned fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"search","type":"movie","extra":[{"name":"search","isRequired":true}]}]}})).unwrap()];
+    env.scope(async {
+        NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
+            .await
+            .unwrap();
+        NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+            .await
+            .unwrap();
+    })
+    .await;
+    let mut session = CoreSession::guest(env).await.unwrap();
+
+    session
+        .search_catalog(0, "blue sky", session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .search_catalog(0, "blue sky", session.snapshot().revision)
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(8), server).await;
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let state = session.snapshot();
+            if state.pending_effects == 0
+                && state.catalog.as_ref().is_some_and(|v| {
+                    v.items
+                        .first()
+                        .is_some_and(|i| i.id == "replacement-result")
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    session.stop().await;
+    result.unwrap().unwrap();
+    ready.unwrap();
+}

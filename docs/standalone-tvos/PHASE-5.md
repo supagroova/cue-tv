@@ -41,6 +41,10 @@ replacement selection blocks the reset. Signing in again does not recover retain
 unsynced data. The model/storage path and the confirmation dialog are simulator-tested, including
 remote navigation through Cancel and Reset, guest startup and visual review.
 
+Catalogue reselection now cancels obsolete catalogue HTTP, including identical-query
+retry, with a real-socket regression and full native/simulator/device-build evidence.
+This does not yet qualify obsolete metadata/source cancellation or catalogue retention budgets.
+
 Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed

@@ -44,6 +44,7 @@ pub struct Environment {
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     persistence: Option<crate::persistence::EncryptedStore>,
     canceled: CancellationToken,
+    catalog_requests: Mutex<CancellationToken>,
     failed: AtomicBool,
     tasks: tokio_util::task::TaskTracker,
     runtime: tokio::runtime::Handle,
@@ -54,6 +55,12 @@ pub struct Environment {
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
 }
 impl Environment {
+    pub(crate) fn replace_catalog_requests(&self) {
+        let mut token = self.catalog_requests.lock().unwrap();
+        token.cancel();
+        *token = CancellationToken::new();
+    }
+
     #[cfg(test)]
     pub(crate) fn queued_writes(&self) -> usize {
         self.sequential.max_capacity() - self.sequential.capacity()
@@ -114,6 +121,7 @@ impl Environment {
             storage: Mutex::new(values),
             persistence,
             canceled: CancellationToken::new(),
+            catalog_requests: Mutex::new(CancellationToken::new()),
             failed: AtomicBool::new(false),
             tasks: tokio_util::task::TaskTracker::new(),
             runtime: runtime.clone(),
@@ -179,6 +187,15 @@ fn context() -> Result<Arc<Environment>, EnvError> {
     CONTEXT
         .try_with(Arc::clone)
         .map_err(|_| EnvError::Other("Core context unavailable".into()))
+}
+pub(crate) fn catalog_request_cancellation() -> Result<CancellationToken, EnvError> {
+    let env = context()?;
+    let token = env
+        .catalog_requests
+        .lock()
+        .map_err(|_| EnvError::Other("Core request scope unavailable".into()))?
+        .clone();
+    Ok(token)
 }
 fn canceled() -> EnvError {
     EnvError::Other("Core session canceled".into())
