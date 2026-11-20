@@ -218,6 +218,7 @@ import Security
     #expect(handoff.fileMustInclude.isEmpty)
     #expect(handoff.playbackToken > 0)
     try await service.startPlayback(token: handoff.playbackToken)
+    try await service.startPlayback(token: handoff.playbackToken)
     let seek = try await service.playback(token: handoff.playbackToken, action: .seek, time: 800, duration: 1000)
     #expect(seek?.timeWatched == 0)
     let played = try await service.playback(token: handoff.playbackToken, action: .played, time: 900, duration: 1000)

@@ -120,6 +120,15 @@ async fn roundtrip(lose_close_receipt: bool) {
         )
         .await
         .unwrap();
+    // Repeating an admitted start must preserve the current playback clock.
+    session.start_playback(token).await.unwrap();
+    let after_start_retry = session
+        .playback_event(token, PlaybackEvent::Paused(false))
+        .await
+        .unwrap();
+    assert_eq!(after_start_retry.time, 400);
+    assert_eq!(after_start_retry.time_watched, 400);
+    assert_eq!(session.start_playback(u64::MAX).await, Err("playback_busy"));
     // Hold the real sequential writer to prove acknowledgement is not admission.
     let (release, blocked) = tokio::sync::oneshot::channel();
     let (entered, started) = tokio::sync::oneshot::channel();
@@ -284,6 +293,34 @@ async fn roundtrip(lose_close_receipt: bool) {
             .is_ok()
     );
     session.retire_playback(next.playback_token).await.unwrap();
+    session.retire_playback(next.playback_token).await.unwrap();
+    assert_eq!(
+        session.start_playback(next.playback_token).await,
+        Err("stale_playback")
+    );
+    let current = session
+        .prepare_torrent(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session
+        .start_playback(current.playback_token)
+        .await
+        .unwrap();
+    session.retire_playback(next.playback_token).await.unwrap();
+    assert!(
+        session
+            .playback_event(current.playback_token, PlaybackEvent::Paused(true))
+            .await
+            .is_ok()
+    );
+    session
+        .retire_playback(current.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        session.retire_playback(next.playback_token).await,
+        Err("stale_playback")
+    );
     assert_eq!(
         session.checkpoint_playback(token).await,
         Err("stale_playback")
@@ -347,6 +384,11 @@ async fn roundtrip(lose_close_receipt: bool) {
         }
     );
     resumed.retire_playback(fresh.playback_token).await.unwrap();
+    resumed.retire_playback(fresh.playback_token).await.unwrap();
+    assert_eq!(
+        resumed.close_playback(fresh.playback_token).await,
+        Err("stale_playback")
+    );
     assert_eq!(resumed.close_playback(token).await, Err("stale_playback"));
     let terminal = resumed
         .prepare_torrent(0, resumed.snapshot().revision)
@@ -365,6 +407,10 @@ async fn roundtrip(lose_close_receipt: bool) {
         .await
         .unwrap();
     resumed.logout().await.unwrap();
+    assert_eq!(
+        resumed.retire_playback(fresh.playback_token).await,
+        Err("stale_playback")
+    );
     assert_eq!(
         resumed.close_playback(terminal.playback_token).await,
         Err("stale_playback")

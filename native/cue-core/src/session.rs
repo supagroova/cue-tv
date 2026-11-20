@@ -584,6 +584,7 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Repeating Start for the same active, non-closing owner preserves its clock.
     pub async fn start_playback(&self, token: u64) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
@@ -622,7 +623,8 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
-    /// Retires accounting only. Durable close barriers are not yet exposed to Swift.
+    /// Retires accounting without saving. Its most recent successful token remains
+    /// acknowledged until another retirement or logout, independently of Close.
     pub async fn retire_playback(&self, token: u64) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
@@ -871,6 +873,7 @@ async fn run(
     let mut checkpoint_pending = false;
     let mut playback_closing = false;
     let mut last_closed_playback: Option<u64> = None;
+    let mut last_retired_playback: Option<u64> = None;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -1364,6 +1367,7 @@ async fn run(
                 pending_playback = None;
                 playback = None;
                 last_closed_playback = None;
+                last_retired_playback = None;
                 addon = AddonDetails::default();
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
@@ -1779,7 +1783,13 @@ async fn run(
                 )
             }
             Command::StartPlayback(token, reply) => {
-                let result = if playback.is_some() {
+                let result = if playback.as_ref().is_some_and(|owner| owner.token == token) {
+                    if playback_closing {
+                        Err("playback_closing")
+                    } else {
+                        Ok(())
+                    }
+                } else if playback.is_some() {
                     Err("playback_busy")
                 } else if pending_playback.as_ref().is_some_and(|pending| {
                     pending.token == token && pending.source_generation == source_generation
@@ -1806,10 +1816,13 @@ async fn run(
                 continue;
             }
             Command::RetirePlayback(token, reply) => {
-                let result = if checkpoint_pending {
+                let result = if last_retired_playback == Some(token) {
+                    Ok(())
+                } else if checkpoint_pending {
                     Err("checkpoint_busy")
                 } else if playback.as_ref().is_some_and(|owner| owner.token == token) {
                     playback = None;
+                    last_retired_playback = Some(token);
                     Ok(())
                 } else {
                     Err("stale_playback")

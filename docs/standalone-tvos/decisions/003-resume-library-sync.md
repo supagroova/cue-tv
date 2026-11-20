@@ -108,9 +108,14 @@ logout; it is not persisted across sessions. Failed or still-pending writes do n
 create successful receipts, and unrelated tokens still fail as stale.
 
 This changes duplicate Close from `stale_playback` to success for that one retained
-token. It does not make arbitrary playback operations replayable: start, retire,
-checkpoint and progress-operation ambiguity still require their own reconciliation
-proofs. The host regression holds the real sequential writer, drops the close
+token. Repeating Start for the same active, non-closing token acknowledges the
+existing player without resetting its clock. A different token cannot replace it.
+Retire independently retains its most recent successful token, clears it on logout,
+and acknowledges retries without touching a newer player. Retire never stands in
+for a durable Close. Both retained receipts are bounded and session-local.
+
+These guarantees do not make arbitrary playback operations replayable: checkpoint
+and progress-operation ambiguity still require their own reconciliation proofs. The host regression holds the real sequential writer, drops the close
 waiter, releases storage, then verifies retry, unchanged ciphertext and isolation
 from a newer player. The Swift bridge also exercises repeated Close.
 
