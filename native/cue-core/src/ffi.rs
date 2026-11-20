@@ -275,6 +275,7 @@ async fn own(
                         _ = entry.stop.cancelled() => break,
                         result = async { match command {
                             Command::Login { email, password } => session.login(&email, &password).await,
+                            Command::Reauthenticate { email, password } => session.reauthenticate(&email, &password).await,
                             Command::Logout { .. } => session.logout().await,
                             Command::RetrySync { .. } => session.retry_sync().await,
                             Command::PrepareTorrent { ticket, index, revision } => {
@@ -482,6 +483,11 @@ enum Command {
         email: String,
         password: String,
     },
+    #[serde(skip)]
+    Reauthenticate {
+        email: String,
+        password: String,
+    },
     Logout {
         version: u32,
     },
@@ -579,7 +585,8 @@ impl Command {
             | Self::DiscoverSubtitles { .. }
             | Self::PrepareTorrent { .. }
             | Self::PrepareHttps { .. }
-            | Self::Login { .. } => false,
+            | Self::Login { .. }
+            | Self::Reauthenticate { .. } => false,
             Self::Logout { version } | Self::RetrySync { version } => *version == 1,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
@@ -614,6 +621,38 @@ pub unsafe extern "C" fn cue_core_login(
     password: *const u8,
     password_length: usize,
 ) -> i32 {
+    unsafe {
+        admit_credentials(
+            handle,
+            email,
+            email_length,
+            password,
+            password_length,
+            false,
+        )
+    }
+}
+/// Refresh an existing paused account. Completion is reported through snapshots.
+/// # Safety
+/// Non-null input pointers must be readable for their supplied lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_reauthenticate(
+    handle: u64,
+    email: *const u8,
+    email_length: usize,
+    password: *const u8,
+    password_length: usize,
+) -> i32 {
+    unsafe { admit_credentials(handle, email, email_length, password, password_length, true) }
+}
+unsafe fn admit_credentials(
+    handle: u64,
+    email: *const u8,
+    email_length: usize,
+    password: *const u8,
+    password_length: usize,
+    refresh: bool,
+) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         if email.is_null()
             || password.is_null()
@@ -634,7 +673,10 @@ pub unsafe extern "C" fn cue_core_login(
         else {
             return -2;
         };
-        if email.chars().any(char::is_control) || password.contains('\0') {
+        if email.chars().any(char::is_control)
+            || password.contains('\0')
+            || (refresh && password.chars().any(char::is_control))
+        {
             return -2;
         }
         let Some(entry) = lookup(handle) else {
@@ -643,10 +685,18 @@ pub unsafe extern "C" fn cue_core_login(
         if entry.stop.is_cancelled() {
             return -1;
         }
-        match entry.commands.try_send(Command::Login {
-            email: email.to_owned(),
-            password: password.to_owned(),
-        }) {
+        let command = if refresh {
+            Command::Reauthenticate {
+                email: email.to_owned(),
+                password: password.to_owned(),
+            }
+        } else {
+            Command::Login {
+                email: email.to_owned(),
+                password: password.to_owned(),
+            }
+        };
+        match entry.commands.try_send(command) {
             Ok(()) => 0,
             Err(mpsc::error::TrySendError::Full(_)) => -3,
             Err(_) => -1,

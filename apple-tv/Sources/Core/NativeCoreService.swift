@@ -143,6 +143,7 @@ nonisolated protocol CoreService: Sendable {
     func start() async throws
     func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
+    func reauthenticate(email: String, password: String) async throws
     func retrySync() async throws
     func logout() async throws
     func snapshot() async throws -> CoreSnapshot
@@ -246,13 +247,27 @@ actor NativeCoreService: CoreService {
     /// Returns after queue admission; callers observe authenticated state/error separately.
     func login(email: String, password: String) throws {
         guard case .newAccount = startup else { throw Failure.invalidRequest }
+        try admitCredentials(email: email, password: password, refresh: false)
+    }
+
+    /// Admission only; credentials remain in the existing account namespace.
+    func reauthenticate(email: String, password: String) throws {
+        if case .guest = startup { throw Failure.invalidRequest }
+        try admitCredentials(email: email, password: password, refresh: true)
+    }
+
+    private func admitCredentials(email: String, password: String, refresh: Bool) throws {
         guard let handle, retirement == nil else { throw Failure.stopped }
         let emailBytes = Data(email.utf8)
         let passwordBytes = Data(password.utf8)
         let result = emailBytes.withUnsafeBytes { email in
             passwordBytes.withUnsafeBytes { password in
-                cue_core_login(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
-                               password.bindMemory(to: UInt8.self).baseAddress, password.count)
+                if refresh {
+                    return cue_core_reauthenticate(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
+                                                   password.bindMemory(to: UInt8.self).baseAddress, password.count)
+                }
+                return cue_core_login(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
+                                      password.bindMemory(to: UInt8.self).baseAddress, password.count)
             }
         }
         switch result {

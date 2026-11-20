@@ -19,6 +19,10 @@ uint64_t cue_core_create_account(const uint8_t *path, size_t path_length, const 
 // No control characters in email, no NUL in password. Never log these inputs.
 // Same admission result codes as dispatch; watch model.authenticated/model.error.
 int32_t cue_core_login(uint64_t handle, const uint8_t *email, size_t email_length, const uint8_t *password, size_t password_length);
+// Same bounded UTF-8 credential copy; control characters are rejected in both fields.
+// For an existing paused account only; never changes account identity or namespace.
+// Admission is not completion: watch model.sync.reauthenticating and snapshot errors.
+int32_t cue_core_reauthenticate(uint64_t handle, const uint8_t *email, size_t email_length, const uint8_t *password, size_t password_length);
 // Restore an existing account from the same encrypted directory/key contract.
 // Expected user ID is copied UTF-8, 1..512 bytes, no control characters.
 // It must come from protected app identity storage, not an arbitrary source URL.

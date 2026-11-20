@@ -552,6 +552,13 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     }
     #expect(state.status == .ready)
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.login(email: "", password: "synthetic-password") }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.reauthenticate(email: "", password: "synthetic-password") }
+    try await service.reauthenticate(email: "fixture@example.test", password: "synthetic-password")
+    for _ in 0..<100 where state.error != "account_sync_unavailable" {
+        try await Task.sleep(for: .milliseconds(10)); state = try await service.snapshot()
+    }
+    #expect(state.error == "account_sync_unavailable")
+    #expect(state.model?.authenticated == false)
     let revision = try #require(state.model?.revision)
     try await service.logout()
     for _ in 0..<200 where state.model?.revision == revision {

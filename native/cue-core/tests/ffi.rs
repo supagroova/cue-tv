@@ -369,3 +369,80 @@ fn subtitle_handoff_validates_input_and_shares_the_private_ticket_slot() {
     until(|| cue_core_stop_status(handle) == 1);
     assert_eq!(cue_core_release(handle), 1);
 }
+
+#[test]
+fn refresh_credentials_are_bounded_private_and_rejected_for_guests() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    let email = b"fixture@example.test";
+    let password = b"synthetic-password";
+    for invalid in [
+        vec![],
+        vec![0xff],
+        b"bad\npassword".to_vec(),
+        vec![b'x'; 4097],
+    ] {
+        assert_eq!(
+            unsafe {
+                cue_core_reauthenticate(
+                    handle,
+                    email.as_ptr(),
+                    email.len(),
+                    invalid.as_ptr(),
+                    invalid.len(),
+                )
+            },
+            -2
+        );
+    }
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                std::ptr::null(),
+                1,
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        -2
+    );
+    let json = br#"{"version":1,"action":"reauthenticate","email":"fixture@example.test","password":"synthetic-password"}"#;
+    assert_eq!(
+        unsafe { cue_core_dispatch(handle, json.as_ptr(), json.len()) },
+        -2
+    );
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                email.as_ptr(),
+                email.len(),
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        0
+    );
+    until(|| state(handle)["error"] == "account_sync_unavailable");
+    let snapshot = state(handle).to_string();
+    assert!(!snapshot.contains("synthetic-password"));
+    assert!(!snapshot.contains("fixture@example.test"));
+    assert_eq!(state(handle)["model"]["authenticated"], false);
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                email.as_ptr(),
+                email.len(),
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        -1
+    );
+}
