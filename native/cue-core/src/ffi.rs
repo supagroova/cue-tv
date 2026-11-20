@@ -67,6 +67,29 @@ fn publish(
         *snapshot = bytes;
     }
 }
+/// Explicit application opt-in: replaces the process-wide Rust panic hook.
+/// Call at startup before creating native sessions. Does not change unwinding.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_configure_private_diagnostics() -> i32 {
+    if std::thread::panicking() {
+        return -1;
+    }
+    catch_unwind(|| {
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        INSTALLED.call_once(|| {
+            std::panic::set_hook(Box::new(|_| {
+                use std::io::Write;
+                // Never format PanicHookInfo: payload and location may be private.
+                let _ = std::io::stderr()
+                    .lock()
+                    .write_all(b"Cue TV: native panic.\n");
+            }));
+        });
+        0
+    })
+    .unwrap_or(-1)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn cue_core_abi_version() -> u32 {
     1

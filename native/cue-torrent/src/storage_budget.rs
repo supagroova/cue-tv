@@ -338,19 +338,27 @@ mod diagnostic_tests {
     use std::io::Write;
 
     #[test]
-    fn diagnostic_cache_counts_allocated_blocks_not_sparse_length() {
+    fn diagnostic_cache_counts_allocated_blocks_not_logical_length() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("sparse.bin");
         let mut file = std::fs::File::create(&path).unwrap();
         file.set_len(8 * 1024 * 1024).unwrap();
         file.write_all(&[1]).unwrap();
         file.sync_all().unwrap();
+        // Some filesystems allocate extended files eagerly. A separate one-byte
+        // file makes logical total non-sector-aligned regardless of sparsity.
+        let tiny = root.path().join("one-byte.bin");
+        std::fs::write(&tiny, [1]).unwrap();
         let expected = (std::fs::metadata(&path).unwrap().blocks()
+            + std::fs::metadata(&tiny).unwrap().blocks()
             + std::fs::metadata(root.path()).unwrap().blocks())
             * 512;
         let policy = BudgetFactory::new(root.path().to_owned(), StorageBudget::default(), None);
         assert_eq!(policy.cache_allocated_bytes(), Some(expected));
-        assert!(expected < 8 * 1024 * 1024);
+        let logical =
+            std::fs::metadata(&path).unwrap().len() + std::fs::metadata(&tiny).unwrap().len();
+        assert_eq!(logical, 8 * 1024 * 1024 + 1);
+        assert_ne!(policy.cache_allocated_bytes(), Some(logical));
     }
 
     #[test]

@@ -5,6 +5,10 @@
 // Thread-safe; short internal locks, no waits for network/model completion.
 // Handles are never reused.
 uint32_t cue_core_abi_version(void);
+// Explicit app-startup opt-in: installs a process-wide Rust panic hook emitting
+// only a fixed category. Replaces prior hook; does not change panic recovery.
+// Call before native sessions. Idempotent; 0 on success, -1 if unavailable.
+int32_t cue_core_configure_private_diagnostics(void);
 // Starts an isolated guest session asynchronously; 0 means unavailable/capacity.
 uint64_t cue_core_create(void);
 // Existing app-owned absolute directory (UTF-8, no NUL), and exactly 32 key bytes.
