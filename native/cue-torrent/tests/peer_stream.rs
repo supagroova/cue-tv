@@ -295,6 +295,28 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
             .await
             .unwrap();
         assert_eq!(all.as_ref(), bytes.as_slice());
+        let snapshot = playback.snapshot();
+        let diagnostic = snapshot["diagnostics"]
+            .as_object()
+            .expect("safe diagnostic projection");
+        let mut keys: Vec<_> = diagnostic.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "cache_allocated_bytes",
+                "download_bytes_per_second",
+                "engine_state",
+                "live_peers",
+                "total_bytes",
+                "verified_bytes"
+            ]
+        );
+        assert_eq!(diagnostic["engine_state"], "live");
+        assert!(diagnostic["verified_bytes"].as_u64().unwrap() >= bytes.len() as u64);
+        assert!(diagnostic["total_bytes"].as_u64().unwrap() >= bytes.len() as u64);
+        assert!(diagnostic["live_peers"].as_u64().unwrap() <= 1);
+        assert!(diagnostic["download_bytes_per_second"].as_u64().is_some());
         let url = playback.url.clone();
         playback.stop().await;
         assert!(client.get(url).send().await.is_err());

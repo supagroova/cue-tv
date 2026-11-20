@@ -777,3 +777,37 @@ Started `task.py verify phase-5-library make apple-lab-test DESTINATION=platform
 All12 short playback UI tests passed in115.941s (`e1d1e8b6ff72449da38313a088e91e0a`); unsigned device build passed `24575f698c2e4d0db0b7a2933bb4acaf`. The playback verification tree fingerprints differ because this handoff was appended while tests ran; playback source did not change during the run. Earlier75 unit tests and sensitive error-chain test also passed (75ceaafe087e4dc4a44ca67cc7318be8 / 16389ba540014e4f8513a2952505b2b1).
 
 Commit the explicit discard-only VLCKit callback and error snapshot regression. These establish compatibility and the selected log callback policy, not a complete runtime console capture guarantee. Rust panic output, direct third-party stderr outside the callback, synthetic-sensitive-input capture and required diagnostic counters remain open. Android rerun136510502916 succeeded3m53s without code changes; current remote native/device CI passed5m44s, simulator136509881743 stillrunning.
+
+### 2026-11-20 — allowlisted torrent diagnostic counters
+
+Native ready snapshots now include a separate diagnostics object: engine_state from the pinned enum, live_peers and download_bytes_per_second from live stats (null when unavailable), plus verified_bytes/total_bytes. No upstream error strings, source URL, filenames or peer addresses enter this object; the private playback snapshot still carries its required playback fields. Rate uses rqbit Speed::as_bytes, whose source documents MiB/s conversion; no unit guessing. Verified bytes are not labeled cache allocation or playable buffer.
+
+Peer-stream fixture failed before implementation on missing safe projection (`bcdd6f426d474254aa9a6c2cc7ecdb53`). All7 peer-stream tests passed after implementation (`7341ddd2609543f39c21a4cd5fb70a28`), checking exact field allowlist and observed counters after byte transfer. Changes remain local/uncommitted. Next: typed Swift decode, generation-owned periodic monitoring and compact diagnostics UI; add measured cache/buffer semantics without substituting verified-byte totals, then full native and Apple checks. Panic-output policy remains open.
+
+### 2026-11-20 — typed playback diagnostics and live monitoring
+
+Swift now decodes allowlisted diagnostic fields, using a fixed engine-state enum and optional peer/rate values. SourcePlaybackModel publishes initial diagnostics and owns a one-second polling task through SourceOwner. Teardown cancels and joins it; updates check both generation and closed ownership after await. New-source/stop clears old diagnostics. Native failure after initial ready now reaches the existing failure UI. The screen displays only engine state/counts/rate/verified totals; unknown values remain Unknown.
+
+Simulator suite passed `6b9dadf060a34878b75a2b5f86927b2b`; controlled native-to-Swift fixture additionally asserts live state, known175917-byte total and available peer/rate fields. Remaining before shipping this slice: monitor stale/cancel behavior regression, device build, native checks and playback UI verification. Cache allocation and buffer measurements are still missing and are not replaced by verified totals. PR13 remote484c067 is fully green: simulator8m33s, native/device5m44s, Android rerun3m53s, both harness checks6s. Local logging commit6a1d657 and diagnostics work remain unpushed.
+
+### 2026-11-20 — real-peer diagnostic replacement regression
+
+Added a real-peer SourcePlaybackModel test: transfer known175917 bytes, wait for periodic diagnostics to report verified completion, replace with HTTPS, check diagnostics clear and remain absent beyond the old polling interval, then stop and reacquire cache. Shared only the controlled tracker fixture with the existing bridge test. Simulator suite passed76 tests (`c7bbef947f5e40b1978635546522c759`). Removing the new-source diagnostic reset caused the new test to fail (`38c28c260a7f4747a9df16ba9993a182`); production reset restored by finally. Next validation must rebuild the restored source (latest simulator executable contains the deliberate mutation).
+
+Pinned VLCKit exposes mediaPlayerBufferingChanged(progress) in [0,1], explicitly a readiness percentage rather than buffered duration. This is the prospective buffer metric; do not invent buffered seconds. Cache allocation can be sampled separately from storage-budget disk usage without treating verified bytes as allocated size. Both measurements remain to implement.
+
+### 2026-11-20 — measured cache and decoder buffering diagnostics
+
+BudgetFactory now samples real filesystem allocation (data+directory blocks) at most once/second, returning unknown on failure/symlink; it does not call the injected quota probe or substitute logical/verified byte counts. Tests prove sparse-file block measurement and no symlink traversal (missing-API red9a61a4b53b11440b96f84ad7740568e7; greenf4b110fbc70840ceb410b1d6b3781072). Cache allocation is included in the native allowlist and Swift display.
+
+VLC coordinator now owns the buffering delegate and reports a bounded finite readiness fraction via the existing generation-checked decoder snapshot. Stop disables delegate callbacks and clears readiness; source reset clears display. The UI labels it decoder buffer readiness, not duration/bytes. Callback test covers valid0.4, invalidNaN and a queued event after stop (missing-API red03f1a07514aa425d876c8fb98de17231).
+
+Full torrent suite passed a393f7ce09814480b2729e68e743d2ad; simulator suite passed39cc583587fd4e15966201b813e4e12f after restoring the previous mutation. Next: unsigned device build, actual standalone playback diagnostic UI check (including readability/focus), final review and combined push with logging commit6a1d657. Panic-output privacy and remaining Phase5/physical gates remain open.
+
+### 2026-11-20 — diagnostic UI qualification and shipping checkpoint
+
+Unsigned device build passed e9b25428b99a4009b23725cebef0cbb0. Direct xcodebuild journey invocation failed before playback because required fixture servers were not started (35fc09908f6644ef80438b82d90cf4c4); correct fixture runner then passed unchanged app code: `bash scripts/fixtures/check-journey.sh platform=tvOS\ Simulator,id=2058C8D1-FCB2-4384-ACD2-B86EF556BE60 StandaloneJourneyTests/testSelectedEpisodePlaysFromPeerAndCloses` (5e643ddaeb374ea68709dde0e0375859). Use quoted destination as usual.
+
+Journey assertions verify selected green episode pixels, playback/resume/Back focus, diagnostic readiness100%, available numeric fields, and no source identifiers in diagnostic presentation. Visually inspected exported playback screenshot: readable three-line diagnostics, no overlap with controls/subtitles/Close. Snapshot shows verified528KiB, allocated536KiB, decoder100%; these correctly remain distinct measures. Local screenshot .agent-work/diagnostics-ui-evidence/1754A39C-2E84-490A-9B95-AA8D7BD06FFC.png. Fixture script cleaned its server/seeder.
+
+Ready to commit this diagnostic slice and push with logging6a1d657. Not full Phase5 completion: Rust panic-output policy, broader raw-console privacy capture, connected-account cleanup/reauth fault/UI journeys, abrupt interruption/cache purge and physical gates remain open. Current77 unit/native suite evidence is recorded above.

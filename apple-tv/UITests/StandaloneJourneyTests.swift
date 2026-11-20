@@ -229,6 +229,16 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             waitForExpectations(timeout: 20)
             XCTAssertFalse(app.staticTexts["source-playback-error"].exists)
             XCTAssertEqual(clock.value as? String, "Duration: 36 seconds", "Duration must come from the selected decoded fixture")
+            let diagnostics = app.descendants(matching: .any).matching(identifier: "source-diagnostics").firstMatch
+            XCTAssertTrue(diagnostics.waitForExistence(timeout: 5))
+            expectation(for: NSPredicate { _, _ in diagnostics.label.contains("Decoder buffer readiness: 100%") }, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(diagnostics.label.contains("Cache allocated:"))
+            XCTAssertTrue(diagnostics.label.contains("Verified:"))
+            XCTAssertFalse(diagnostics.label.contains("Unknown"))
+            for privateValue in ["http", "cue-owned", "urn:btih", "episode02"] {
+                XCTAssertFalse(diagnostics.label.contains(privateValue), "Diagnostic presentation must omit source identifiers")
+            }
             let screenshot = app.screenshot()
             // Owned media encode episode one blue, episode two green, and the tail-index file red.
             // Inspect decoded pixels, independently of source labels and the requested file index.

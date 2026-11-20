@@ -40,9 +40,12 @@ mod tests {
         let error = anyhow::anyhow!("failed title=private-title token=synthetic-secret https://fixture.invalid/passkey/secret?auth=synthetic-key")
             .context("tracker failed for private-video-id");
         let diagnostic = FailureCode::from_error(&error).snapshot();
-        assert_eq!(diagnostic, serde_json::json!({
-            "state":"failed", "error_code":"read", "error":"Playback failed"
-        }));
+        assert_eq!(
+            diagnostic,
+            serde_json::json!({
+                "state":"failed", "error_code":"read", "error":"Playback failed"
+            })
+        );
         let typed = anyhow::Error::new(FailureCode::LowStorage)
             .context("private source URL and local file path");
         assert_eq!(FailureCode::from_error(&typed).code(), "low_storage");

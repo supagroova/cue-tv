@@ -6,6 +6,7 @@ import Observation
 final class SourcePlaybackModel {
     let coordinator = PlaybackSessionCoordinator()
     var stopDecoder: @MainActor () -> Void = {}
+    private(set) var diagnostics: NativePlaybackSnapshot.Diagnostics?
     private(set) var files: TorrentMetadataSnapshot?
     private(set) var playbackURL: URL?
     private(set) var generation: UUID?
@@ -21,7 +22,7 @@ final class SourcePlaybackModel {
             do { try await next.stop() }
             catch { self?.cleanupFailed = true }
         }) else { return }
-        owner = next; generation = token; files = nil; playbackURL = nil
+        owner = next; generation = token; files = nil; playbackURL = nil; diagnostics = nil
         guard case .torrent(let request) = source else {
             guard case .https(let request) = source,
                   request.url.utf8.count <= 16384,
@@ -89,6 +90,25 @@ final class SourcePlaybackModel {
                 if snapshot.state == "ready", let url = snapshot.url.flatMap(URL.init(string:)),
                    url.scheme == "http", url.host == "127.0.0.1" {
                     playbackURL = url
+                    diagnostics = snapshot.diagnostics
+                    owner.monitor = Task { [weak self, weak owner] in
+                        do {
+                            while !Task.isCancelled {
+                                try await Task.sleep(for: .seconds(1))
+                                let latest = try await session.snapshot()
+                                guard let self, let owner, !owner.closed, self.generation == token else { return }
+                                self.diagnostics = latest.diagnostics
+                                if latest.state == "failed" {
+                                    self.coordinator.receive(.failed(.native(code: latest.errorCode)), generation: token)
+                                    return
+                                }
+                            }
+                        } catch {
+                            guard !Task.isCancelled, let self, let owner, !owner.closed, self.generation == token else { return }
+                            self.diagnostics = nil
+                            self.coordinator.receive(.failed(.read), generation: token)
+                        }
+                    }
                     return // Decoder reports playing/progress; bytes alone do not imply playback.
                 }
                 try await Task.sleep(for: .milliseconds(100))
@@ -100,7 +120,7 @@ final class SourcePlaybackModel {
 
     func stop() async {
         let previous = owner
-        generation = nil; playbackURL = nil; files = nil
+        generation = nil; playbackURL = nil; files = nil; diagnostics = nil
         await coordinator.stop()
         if owner === previous { owner = nil }
     }
@@ -109,8 +129,12 @@ final class SourcePlaybackModel {
 @MainActor private final class SourceOwner {
     var creation: Task<TorrentPlaybackSession, any Error>?
     var closed = false
+    var monitor: Task<Void, Never>?
     func stop() async throws {
         closed = true
+        monitor?.cancel()
+        await monitor?.value
+        monitor = nil
         guard let creation else { return }
         creation.cancel()
         guard let session = try? await creation.value else { return }

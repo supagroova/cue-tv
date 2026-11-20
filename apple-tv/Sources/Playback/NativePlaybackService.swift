@@ -2,6 +2,16 @@ import Foundation
 import CueTorrent
 
 nonisolated struct NativePlaybackSnapshot: Decodable, Sendable {
+    struct Diagnostics: Decodable, Sendable {
+        enum EngineState: String, Decodable, Sendable { case initializing, live, paused, error }
+        let engineState: EngineState
+        let cacheAllocatedBytes: UInt64?
+        let livePeers: UInt32?
+        let downloadBytesPerSecond: UInt64?
+        let verifiedBytes: UInt64
+        let totalBytes: UInt64
+    }
+    let diagnostics: Diagnostics?
     let apiVersion: UInt32
     let sessionId: UInt64
     let state: String

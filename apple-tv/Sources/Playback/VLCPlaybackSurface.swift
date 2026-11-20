@@ -11,6 +11,7 @@ struct VLCPlaybackSnapshot {
     var failedSubtitleSelection: UUID? = nil
     var durationMilliseconds: Int = 0
     var reposition: PlaybackReposition? = nil
+    var bufferingProgress: Float? = nil
 }
 
 @MainActor final class VLCPlaybackController {
@@ -69,7 +70,7 @@ struct VLCPlaybackSurface: UIViewRepresentable {
                            selectedSubtitle: (subtitles.firstIndex(where: { $0.isSelected }) ?? -1) + 1,
                            state: coordinator.player.state, failedSubtitleSelection: coordinator.subtitleLoadFailed ? coordinator.appliedSubtitleID : nil,
                            durationMilliseconds: max(0, Int(coordinator.player.media?.length.intValue ?? 0)),
-                           reposition: coordinator.reposition))
+                           reposition: coordinator.reposition, bufferingProgress: coordinator.bufferingProgress))
                     try? await Task.sleep(for: .milliseconds(100))
                 }
             }
@@ -88,9 +89,24 @@ struct VLCPlaybackSurface: UIViewRepresentable {
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
         coordinator.stop()
     }
-    final class Coordinator {
+    final class Coordinator: NSObject, VLCMediaPlayerDelegate {
         let player = PlaybackLogging.makePlayer()
+        private(set) var bufferingProgress: Float?
+        private var acceptingEvents = true
+        override init() {
+            super.init()
+            player.delegate = self
+        }
+        nonisolated func mediaPlayerBufferingChanged(_ progress: Float) {
+            Task { @MainActor [weak self] in
+                guard let self, self.acceptingEvents else { return }
+                self.bufferingProgress = progress.isFinite && (0...1).contains(progress) ? progress : nil
+            }
+        }
         func stop() {
+            acceptingEvents = false
+            bufferingProgress = nil
+            player.delegate = nil
             polling?.cancel(); polling = nil
             player.stop(); player.drawable = nil; player.media = nil
         }

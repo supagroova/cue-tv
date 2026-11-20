@@ -22,6 +22,7 @@ struct SourcePlaybackView: View {
     @State private var subtitleCount = 0
     @State private var milliseconds = 0
     @State private var durationMilliseconds = 0
+    @State private var bufferingProgress: Float?
     @State private var seekRequest: UUID?
     @State private var seekTarget = 0
     @State private var hasPlayed = false
@@ -68,6 +69,7 @@ struct SourcePlaybackView: View {
                         }
                     }
                     if let rejected = snapshot.failedSubtitleSelection { subtitles.decoderFailed(selectionID: rejected) }
+                    bufferingProgress = snapshot.bufferingProgress
                     milliseconds = snapshot.milliseconds
                     durationMilliseconds = snapshot.durationMilliseconds
                     audioCount = snapshot.audioTracks; subtitleCount = snapshot.subtitleTracks
@@ -107,6 +109,14 @@ struct SourcePlaybackView: View {
                     }
                 }
             } else { ProgressView("Preparing video…") }
+            if let diagnostic = model.diagnostics {
+                VStack(spacing: 4) {
+                    Text("Engine: \(diagnostic.engineState.rawValue) · Peers: \(diagnostic.livePeers.map(String.init) ?? "Unknown") · Download: \(diagnostic.downloadBytesPerSecond.map { "\($0 / 1024) KiB/s" } ?? "Unknown")")
+                    Text("Verified: \(diagnostic.verifiedBytes / 1024) / \(diagnostic.totalBytes / 1024) KiB · Cache allocated: \(diagnostic.cacheAllocatedBytes.map { "\($0 / 1024) KiB" } ?? "Unknown")")
+                    Text("Decoder buffer readiness: \(bufferingProgress.map { "\(Int($0 * 100))%" } ?? "Unknown")")
+                }.font(.caption).monospacedDigit().accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("source-diagnostics")
+            }
             if !subtitleChoices.isEmpty, model.playbackURL != nil {
                 ScrollView(.horizontal) {
                     HStack {
@@ -174,7 +184,7 @@ struct SourcePlaybackView: View {
     }
     private func reset() {
         controller.stop(); paused = false; audio = 0; subtitle = -1
-        milliseconds = 0; durationMilliseconds = 0; hasPlayed = false; seekRequest = nil
+        milliseconds = 0; durationMilliseconds = 0; hasPlayed = false; seekRequest = nil; bufferingProgress = nil
     }
     private func seek(to target: Int) {
         guard let token = model.generation else { return }
