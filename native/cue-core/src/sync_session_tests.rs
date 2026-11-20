@@ -303,3 +303,104 @@ async fn logout_cancels_suspended_upload_and_keeps_intent_until_account_cleanup(
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     session.stop().await;
 }
+
+#[tokio::test]
+async fn full_sync_journal_rejects_manual_watched_before_details_change() {
+    let env = stored_pending().await;
+    env.scope(async {
+        let mut profile = NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        profile.addons = vec![serde_json::from_value(serde_json::json!({
+            "transportUrl":"https://fixture.example.test/manifest.json",
+            "manifest":{"id":"org.cue.capacity","version":"1.0.0","name":"Owned fixture",
+            "description":"Owned fixture","types":["movie"],"resources":["catalog","meta","stream"],
+            "catalogs":[{"id":"owned","type":"movie","name":"Owned"}]}
+        })).unwrap()];
+        NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+            .await
+            .unwrap();
+        let mut library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        let template = library.items.get("title").unwrap().clone();
+        let mut journal = Journal::new("owner-a").unwrap();
+        for index in 0..256 {
+            let mut item = template.clone();
+            item.id = format!("pending-{index}");
+            journal = journal.with_intent("owner-a", "movie", &item.id).unwrap();
+            library.merge_items(vec![item]);
+        }
+        crate::checkpoint::write_with_journal(&library, &journal)
+            .unwrap()
+            .await
+            .unwrap();
+    })
+    .await;
+    *env.test_http.lock().unwrap() = Some(Arc::new(|parts, _| {
+        let path = parts.uri.path();
+        let body = if path.ends_with("/datastorePut") {
+            r#"{"error":{"code":1,"message":"fixture rejection"}}"#
+        } else if path.ends_with("/datastoreGet") {
+            r#"{"result":[]}"#
+        } else if path.contains("/catalog/") {
+            r#"{"metas":[{"id":"title","type":"movie","name":"Fixture"}]}"#
+        } else if path.contains("/stream/") {
+            r#"{"streams":[{"url":"https://fixture.example.test/owned.mp4"}]}"#
+        } else if path.contains("/meta/") {
+            r#"{"meta":{"id":"title","type":"movie","name":"Fixture"}}"#
+        } else {
+            panic!("Unexpected fixture request: {path}")
+        };
+        Ok(body.as_bytes().to_vec())
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    session
+        .load_catalog(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session.settled().await.unwrap();
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session.settled().await.unwrap();
+    assert_eq!(
+        session.snapshot().details.as_ref().unwrap().watched,
+        Some(false)
+    );
+    session
+        .load_sources(None, session.snapshot().revision)
+        .await
+        .unwrap();
+    session.settled().await.unwrap();
+    let source = session
+        .prepare_https(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session.start_playback(source.playback_token).await.unwrap();
+    let result = session
+        .set_details_watched(None, true, session.snapshot().revision)
+        .await;
+    let progress = session
+        .playback_event(
+            source.playback_token,
+            crate::player::PlaybackEvent::Paused(true),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !progress.watched,
+        "Rejected watched intent changed the playback owner"
+    );
+    assert_eq!(
+        session.snapshot().details.as_ref().unwrap().watched,
+        Some(false)
+    );
+    assert_eq!(result, Err("library_write_failed"));
+    session.stop().await;
+}

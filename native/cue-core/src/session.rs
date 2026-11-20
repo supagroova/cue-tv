@@ -1051,6 +1051,20 @@ async fn run(
                         continue;
                     }
                 };
+                // Reject before changing the playback override or Core details. The
+                // synchronous message drain below admits no intervening commands;
+                // library_update commits this same title's intent before its write.
+                if crate::sync_journal::Journal::plan_intent(
+                    &journal,
+                    &ctx.library,
+                    &meta.r#type,
+                    &meta.id,
+                )
+                .is_err()
+                {
+                    let _ = reply.send(Err("library_write_failed"));
+                    continue;
+                }
                 if let Some(owner) = &mut playback {
                     owner.override_watched(
                         &meta.r#type,
