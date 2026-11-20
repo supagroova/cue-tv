@@ -17,6 +17,9 @@ pub(crate) struct Scheduler {
     paused: bool,
 }
 impl Scheduler {
+    pub(crate) fn is_current(&self, ticket: u64) -> bool {
+        self.in_flight == Some(ticket)
+    }
     pub(crate) fn begin(&mut self, now: Duration) -> Option<u64> {
         if self.paused || self.in_flight.is_some() || now < self.retry_at {
             return None;

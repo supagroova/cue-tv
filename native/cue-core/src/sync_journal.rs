@@ -130,6 +130,9 @@ impl Journal {
         next.encode()?;
         Ok(next)
     }
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.entries.is_empty()
+    }
     pub(crate) fn revision(&self, id: &str) -> Option<u64> {
         self.entries.get(id).map(|entry| entry.revision)
     }

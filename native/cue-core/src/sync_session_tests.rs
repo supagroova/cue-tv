@@ -1,0 +1,128 @@
+use crate::{
+    environment::{Environment, NativeEnv},
+    session::CoreSession,
+    sync_journal::Journal,
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
+use stremio_core::{
+    constants::*,
+    runtime::Env,
+    types::{library::LibraryBucket, profile::Profile},
+};
+
+#[tokio::test]
+async fn restored_pending_edit_uploads_and_acknowledges_without_user_interaction() {
+    let env = stored_pending().await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, bytes| {
+        assert!(parts.uri.path().ends_with("/datastorePut"));
+        let request: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(request["changes"][0]["state"]["timeOffset"], 100);
+        observed.fetch_add(1, Ordering::SeqCst);
+        Ok(br#"{"result":{"success":true}}"#.to_vec())
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    let mut cleared = false;
+    for _ in 0..200 {
+        cleared = env
+            .scope(async {
+                NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .revision("title")
+                    .is_none()
+            })
+            .await;
+        if cleared {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        cleared,
+        "Restored pending edits were never durably acknowledged"
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    session.stop().await;
+}
+
+async fn stored_pending() -> Arc<Environment> {
+    let env = Environment::new().unwrap();
+    let mut profile = Profile::default();
+    profile.auth = Some(serde_json::from_value(serde_json::json!({
+        "key":"synthetic-token", "user":{"_id":"owner-a","email":"fixture@example.test",
+        "lastModified":"2026-01-01T00:00:00Z","dateRegistered":"2026-01-01T00:00:00Z",
+        "premium_expire":null,"gdpr_consent":{"tos":true,"privacy":true,"marketing":false,"from":null}}
+    })).unwrap());
+    let item = serde_json::from_value(
+        serde_json::json!({"_id":"title","type":"movie","name":"Fixture",
+        "removed":false,"temp":false,"_mtime":"2026-01-01T00:00:00Z","state":{
+        "timeWatched":0,"timeOffset":100,"overallTimeWatched":0,"timesWatched":0,
+        "flaggedWatched":0,"duration":1000}}),
+    )
+    .unwrap();
+    let library = LibraryBucket::new(Some("owner-a".parse().unwrap()), vec![item]);
+    env.scope(async {
+        NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
+            .await
+            .unwrap();
+        NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+            .await
+            .unwrap();
+        let journal = Journal::new("owner-a")
+            .unwrap()
+            .with_intent("owner-a", "movie", "title")
+            .unwrap();
+        crate::checkpoint::write_with_journal(&library, &journal)
+            .unwrap()
+            .await
+            .unwrap();
+    })
+    .await;
+    env
+}
+
+#[tokio::test]
+async fn rejected_upload_keeps_intent_and_does_not_retry_without_reauthentication() {
+    let env = stored_pending().await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, _| {
+        assert!(parts.uri.path().ends_with("/datastorePut"));
+        observed.fetch_add(1, Ordering::SeqCst);
+        Ok(br#"{"error":{"code":1,"message":"synthetic-token rejected"}}"#.to_vec())
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if session.snapshot().error == Some("account_sync_failed") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(session.snapshot().error, Some("account_sync_failed"));
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    env.scope(async {
+        let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(journal.revision("title"), Some(1));
+    })
+    .await;
+    assert!(
+        !serde_json::to_string(&session.snapshot())
+            .unwrap()
+            .contains("synthetic-token")
+    );
+    session.stop().await;
+}

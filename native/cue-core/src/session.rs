@@ -68,6 +68,16 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    SyncPrepared(
+        u64,
+        stremio_core::types::profile::Auth,
+        Result<Option<crate::sync_journal::Upload>, ()>,
+    ),
+    SyncUploaded(
+        u64,
+        crate::sync_journal::Upload,
+        Result<(), crate::sync_upload::Error>,
+    ),
     Checkpoint(u64, bool, oneshot::Sender<Result<(), &'static str>>),
     CheckpointDone(
         Result<(), &'static str>,
@@ -750,14 +760,134 @@ async fn run(
     let mut revision = 0;
     let mut pending = 0usize;
     let mut error = None;
+    let mut sync_allowed = true;
+    let sync_started = std::time::Instant::now();
+    let mut sync_scheduler = crate::sync_scheduler::Scheduler::default();
+    let mut sync_cancel = tokio_util::sync::CancellationToken::new();
+    let mut sync_ack: Option<(u64, crate::sync_journal::Upload)> = None;
+    let mut sync_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        // Only enter the ACK barrier after all Core effects have delivered their
+        // completions. No actor command mutates the captured library while this
+        // short sequential write runs; the receipt uses a separate oneshot.
+        if pending == 0 {
+            if let Some((ticket, upload)) = sync_ack.take() {
+                if sync_scheduler.is_current(ticket) {
+                    if let Some(current) = journal.clone() {
+                        let library = ctx.library.clone();
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let result =
+                                crate::checkpoint::acknowledge(&library, &current, &upload).await;
+                            let _ = send.send(result);
+                        });
+                        let result = tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => result,
+                        };
+                        let outcome = match result {
+                            Ok(Ok(next)) => {
+                                journal = Some(next);
+                                error = None;
+                                crate::sync_scheduler::Outcome::Success
+                            }
+                            _ => {
+                                error = Some("account_sync_save_failed");
+                                crate::sync_scheduler::Outcome::Retry
+                            }
+                        };
+                        sync_scheduler.finish(ticket, sync_started.elapsed(), outcome);
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+            }
+        }
+        if sync_allowed
+            && journal
+                .as_ref()
+                .is_some_and(|journal| journal.has_pending())
+        {
+            if let Some(auth) = ctx.profile.auth.clone() {
+                if let Some(ticket) = sync_scheduler.begin(sync_started.elapsed()) {
+                    sync_cancel.cancel();
+                    sync_cancel = tokio_util::sync::CancellationToken::new();
+                    let cancel = sync_cancel.clone();
+                    let sender = outgoing.clone();
+                    NativeEnv::exec_sequential(async move {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let result = crate::checkpoint::committed_upload(&auth.user.id.0)
+                            .await
+                            .map_err(|_| ());
+                        tokio::select! { biased;
+                            _ = cancel.cancelled() => {},
+                            _ = sender.send(Command::SyncPrepared(ticket, auth, result)) => {},
+                        }
+                    });
+                }
+            }
+        }
         let command = tokio::select! { biased;
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
+            _ = sync_tick.tick() => continue,
         };
         let mut manual_library_title = None;
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
+            Command::SyncPrepared(ticket, auth, result) => {
+                if !sync_scheduler.is_current(ticket) {
+                    continue;
+                }
+                match result {
+                    Ok(Some(upload)) => {
+                        let sender = outgoing.clone();
+                        let cancel = sync_cancel.clone();
+                        NativeEnv::exec_concurrent(async move {
+                            let result = tokio::select! { biased;
+                                _ = cancel.cancelled() => return,
+                                result = crate::sync_upload::send(&upload, &auth) => result,
+                            };
+                            tokio::select! { biased;
+                                _ = cancel.cancelled() => {},
+                                _ = sender.send(Command::SyncUploaded(ticket, upload, result)) => {},
+                            }
+                        });
+                    }
+                    _ => {
+                        sync_scheduler.finish(
+                            ticket,
+                            sync_started.elapsed(),
+                            crate::sync_scheduler::Outcome::Retry,
+                        );
+                        error = Some("account_sync_read_failed");
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
+            Command::SyncUploaded(ticket, upload, result) => {
+                if !sync_scheduler.is_current(ticket) {
+                    continue;
+                }
+                match result {
+                    Ok(()) => sync_ack = Some((ticket, upload)),
+                    Err(failure) => {
+                        let outcome = match failure {
+                            crate::sync_upload::Error::Transport => {
+                                crate::sync_scheduler::Outcome::Retry
+                            }
+                            _ => crate::sync_scheduler::Outcome::Rejected,
+                        };
+                        sync_scheduler.finish(ticket, sync_started.elapsed(), outcome);
+                        error = Some("account_sync_failed");
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
             Command::DetailsWatched(video_id, watched, expected, reply) => {
                 if expected != revision {
                     let _ = reply.send(Err("stale_details"));
@@ -898,6 +1028,10 @@ async fn run(
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
+                sync_allowed = false;
+                sync_cancel.cancel();
+                sync_scheduler.invalidate(sync_started.elapsed());
+                sync_ack = None;
                 allow_login = false;
                 error = None;
                 addon_generation += 1;
@@ -1704,6 +1838,7 @@ async fn run(
             });
         }
     }
+    sync_cancel.cancel();
     inbox.close();
     identity.send_replace(None);
     publish.send_replace(snapshot(

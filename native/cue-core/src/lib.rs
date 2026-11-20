@@ -36,3 +36,6 @@ mod library_update;
 mod sync_upload;
 
 mod sync_scheduler;
+
+#[cfg(test)]
+mod sync_session_tests;
