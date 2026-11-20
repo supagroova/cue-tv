@@ -1,0 +1,48 @@
+{
+  "scope": "One opt-in simulator abrupt-termination journey, not physical suspension or ten physical resume cycles",
+  "test": "StandaloneJourneyTests/testPeriodicProgressSurvivesAbruptTermination",
+  "runtime": "tvOS Simulator 26.5",
+  "source_base": "71ed4ca7a2d37a0c7d040909556a963261047feb",
+  "tested_content_sha256": "9bc63a4a5ff097ba840143f6f837beb1797f3bcae0cbfa0e72a2ac012c34832c",
+  "method": "During real owned-peer episode playback, send a randomly namespaced Darwin notification to a DEBUG simulator-only fixture callback that calls kill(getpid(), SIGKILL). No Close/Home/pause precedes termination. Observe notRunning, relaunch the same encrypted account namespace, select the same episode and source, and verify Resume/Restart.",
+  "baseline_runs": [
+    {
+      "receipt": "e45e60efdac1460d823e4deff495845b",
+      "last_seconds": 23,
+      "restored_seconds": 20,
+      "resumed_seconds": 20,
+      "result": "pass"
+    },
+    {
+      "receipt": "a460b00109e74cb69133e741be943b80",
+      "last_seconds": 23,
+      "restored_seconds": 20,
+      "resumed_seconds": 19,
+      "result": "pass",
+      "test_duration_seconds": 101.384
+    }
+  ],
+  "sensitivity": {
+    "receipt": "52975cc603b248e8a5e5527fa4abbfdb",
+    "mutation": "Disable periodic playing checkpoints; retain initial seek checkpoints",
+    "last_seconds": 23,
+    "restored_seconds": 0,
+    "resumed_seconds": 0,
+    "result": "expected failure: restored clock below minimum and position loss exceeds 15 seconds",
+    "production_file_restored_sha256": "f467f9770f59bed9a979f07e2f8e53c0f41071843aeb937ce46f576210569451"
+  },
+  "retained_initial_failures": {
+    "b3400b8c98ad422a9c60debbc41f9ab0": "notify_register_dispatch not available through Swift import; replaced with CoreFoundation Darwin notification API",
+    "3fe2ecd89a6b4f99b6532291afe6359f": "20-second observation timeout was too short to reach 20 seconds of playback; margin increased to 30 seconds; all other assertions passed"
+  },
+  "device_build": {
+    "receipt": "d374a49fb52e4a0e8bc34dcafba5d0c7",
+    "result": "pass",
+    "all_packaged_files_exclude_notification_prefix": true
+  },
+  "limits": [
+    "Opt-in test remains excluded from routine CI.",
+    "Does not prove physical OS suspension, sleep, cache purge, independent playback or ten device resume cycles.",
+    "Checks recoverable stored progress and replay, not precise timing of a power-loss write failure."
+  ]
+}
