@@ -5,6 +5,7 @@ import CoreGraphics
 nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true, resume: true) }
+    @MainActor func testHomeInterruptionReturnsToSourceAndPreservesResume() throws { try journey(play: true, resume: true, background: true) }
     @MainActor func testProgressSurvivesProcessRelaunch() throws { try journey(play: true, resume: true, relaunch: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
@@ -159,7 +160,7 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertEqual(search.value as? String, query)
     }
     @MainActor func testEpisodeWatchedControlChangesOnlySelectedEpisodeAndPreservesBackFocus() throws { try journey(play: false, watched: true) }
-    @MainActor private func journey(play: Bool, resume: Bool = false, relaunch: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
+    @MainActor private func journey(play: Bool, resume: Bool = false, background: Bool = false, relaunch: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         if relaunch { app.launchEnvironment["CUE_JOURNEY_STORAGE"] = UUID().uuidString }
@@ -284,7 +285,19 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             }
             XCTAssertTrue(app.buttons["Close"].hasFocus)
             let lastVisibleSeconds = try XCTUnwrap(Int(clock.label.dropLast()))
-            XCUIRemote.shared.press(captions ? .menu : .select)
+            if background {
+                XCUIRemote.shared.press(.home)
+                expectation(for: NSPredicate { _, _ in
+                    app.state == .runningBackground || app.state == .runningBackgroundSuspended
+                }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertNotEqual(app.state, .notRunning, "Home must not crash or terminate the app")
+                app.activate()
+                XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+                XCTAssertFalse(app.otherElements["vlc-video-surface"].exists, "Returning from Home must not restart playback automatically")
+            } else {
+                XCUIRemote.shared.press(captions ? .menu : .select)
+            }
             XCTAssertTrue(source.waitForExistence(timeout: 5))
             expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
             waitForExpectations(timeout: 5)
