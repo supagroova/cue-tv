@@ -45,6 +45,11 @@ Catalogue reselection now cancels obsolete catalogue HTTP, including identical-q
 retry, with a real-socket regression and full native/simulator/device-build evidence.
 This does not yet qualify obsolete metadata/source cancellation or catalogue retention budgets.
 
+An opt-in simulator journey now covers pressing Home during peer playback,
+returning without autoplay, restored source focus, and Resume/Restart. It does not
+prove physical suspension, sleep, sustained background behavior or transfer counters
+while the app is suspended.
+
 Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
