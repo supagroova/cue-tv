@@ -32,3 +32,5 @@ mod checkpoint;
 mod sync_journal;
 
 mod library_update;
+
+mod sync_upload;

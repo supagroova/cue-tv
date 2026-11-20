@@ -41,6 +41,9 @@ pub(crate) struct Upload {
     item: stremio_core::types::library::LibraryItem,
 }
 impl Upload {
+    pub(crate) fn belongs_to(&self, uid: &str) -> bool {
+        self.uid == uid
+    }
     pub(crate) fn item(&self) -> &stremio_core::types::library::LibraryItem {
         &self.item
     }
