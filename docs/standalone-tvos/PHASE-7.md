@@ -70,6 +70,20 @@ The evidence stays under `.agent-work/release-candidate-001`; it identifies this
 unsigned incremental candidate, not later commits or an independently reproduced
 clean build. Its task receipt is `1651cc4f10454521a5ca5abb91c250ce`.
 
+A fresh-output build also succeeded at clean commit
+`dbcc61e4d8f08abc1c71dafd9bed58fa4631f18f` (task
+`fa705e57dc044422a2be9a475f2e120c`). Its record is retained locally as
+`.agent-work/release-candidate-clean-001`. Both native and app build directories
+started empty; cached source downloads and the pinned prebuilt VLCKit package were
+reused. Core and torrent libraries were rebuilt with `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`, `CARGO_BUILD_JOBS=4` and
+`CARGO_TARGET_DIR=$PWD/.agent-work/native-target`. The record includes these common
+build overrides; it does not dump unrelated environment variables or credentials.
+The unsigned/ATS/no-fixture audit passes, and the native-notice manifest hash matches.
+This proves a fresh build of the app and native adapters with the pinned binary
+player dependency; it does not prove a source rebuild of VLCKit or byte-identical
+outputs across machines.
+
 ## Native notice collection
 
 With cached dependencies available and the pinned Rust toolchain on PATH:
