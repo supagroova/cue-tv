@@ -26,6 +26,11 @@ pub(crate) async fn send(upload: &Upload, auth: &Auth) -> Result<(), Error> {
     match fetch_api::<crate::environment::NativeEnv, _, _, SuccessResponse>(&request).await {
         Ok(APIResult::Ok(_)) => Ok(()),
         Ok(APIResult::Err(_)) => Err(Error::Rejected),
+        Err(stremio_core::runtime::EnvError::Fetch(message))
+            if message == crate::environment::AUTH_REJECTED =>
+        {
+            Err(Error::Rejected)
+        }
         Err(_) => Err(Error::Transport),
     }
 }
@@ -107,6 +112,13 @@ mod tests {
             assert!(!format!("{result:?}").contains("synthetic-token"));
             assert_eq!(journal.revision("title"), Some(1));
         }
+        *env.test_http.lock().unwrap() = Some(Arc::new(|_, _| {
+            Err(stremio_core::runtime::EnvError::Fetch(
+                "HTTP authentication rejected".into(),
+            ))
+        }));
+        assert_eq!(env.scope(send(&upload, &auth)).await, Err(Error::Rejected));
+        assert_eq!(journal.revision("title"), Some(1));
         env.shutdown().await;
     }
 }

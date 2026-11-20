@@ -16,6 +16,8 @@ use stremio_core::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub(crate) const AUTH_REJECTED: &str = "HTTP authentication rejected";
+
 const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const STORAGE_LIMIT: usize = 16 * 1024 * 1024;
 tokio::task_local! { static CONTEXT: Arc<Environment>; }
@@ -248,6 +250,9 @@ impl Env for NativeEnv {
                     .send()
                     .await
                     .map_err(|_| EnvError::Fetch("Request failed".into()))?;
+                if matches!(response.status().as_u16(), 401 | 403) {
+                    return Err(EnvError::Fetch(AUTH_REJECTED.into()));
+                }
                 if !response.status().is_success() {
                     return Err(EnvError::Fetch("HTTP status rejected".into()));
                 }

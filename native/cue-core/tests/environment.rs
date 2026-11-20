@@ -419,3 +419,34 @@ async fn addon_activity_reporting_never_reaches_http_but_content_requests_do() {
         ["/manifest.json", "/catalog/movie/owned.json"]
     );
 }
+
+#[tokio::test]
+async fn http_auth_rejection_is_distinct_from_retryable_status_and_redacted() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        for status in [401, 403, 429, 503] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            let body = "synthetic-token private-title";
+            let response = format!(
+                "HTTP/1.1 {status} Rejected\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+    let env = Environment::new().unwrap();
+    env.scope(async {
+        for expected in ["HTTP authentication rejected", "HTTP authentication rejected", "HTTP status rejected", "HTTP status rejected"] {
+            let request = http::Request::get(format!("http://{address}/fixture")).body(()).unwrap();
+            let error = NativeEnv::fetch::<_, Value>(request).await.unwrap_err();
+            assert!(matches!(error, stremio_core::runtime::EnvError::Fetch(ref text) if text == expected));
+            assert!(!error.to_string().contains("synthetic-token"));
+            assert!(!error.to_string().contains("private-title"));
+        }
+    }).await;
+    env.shutdown().await;
+    server.await.unwrap();
+}
