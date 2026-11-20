@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -52,6 +53,17 @@ def require_unchanged(before, after):
         raise ValueError('Source changed during build; no candidate manifest issued')
 
 
+def build_environment(environment):
+    # Retained locally with the candidate. Do not dump credentials or unrelated env.
+    keys = ('CARGO_PROFILE_DEV_DEBUG', 'CARGO_PROFILE_DEV_OPT_LEVEL',
+            'CARGO_PROFILE_TEST_DEBUG', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS',
+            'CARGO_TARGET_DIR', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS',
+            'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CC', 'CXX', 'CFLAGS',
+            'CXXFLAGS', 'LDFLAGS', 'AR', 'SDKROOT', 'DEVELOPER_DIR',
+            'MACOSX_DEPLOYMENT_TARGET', 'TVOS_DEPLOYMENT_TARGET')
+    return {key: environment.get(key) for key in keys}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path, help='New local evidence directory; must not exist')
@@ -61,13 +73,14 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     private_names = ('apple-tv/Config/Signing.mine.xcconfig', 'apple-tv/TVConfig.plist')
     private_before = {name: checksum(ROOT / name) for name in private_names}
+    environment = build_environment(os.environ)
     command = ['make', 'apple-release-build']
     tools = {'xcode': run('xcodebuild', '-version'), 'sdk': run('xcrun', '--sdk', 'appletvos', '--show-sdk-version'),
              'rust': run('rustc', '+1.100.0', '--version'), 'xcodegen': run('xcodegen', '--version')}
     with (output / 'build.log').open('w') as log:
         result = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
     receipt = {'command': command, 'exit_code': result.returncode, 'source_before': before,
-               'at': datetime.now(timezone.utc).isoformat(), 'toolchain': tools}
+               'at': datetime.now(timezone.utc).isoformat(), 'toolchain': tools, 'build_environment': environment}
     (output / 'build-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     if result.returncode:
         raise SystemExit(result.returncode)
@@ -102,6 +115,7 @@ def main():
     notice_manifest = output / 'native-notices/manifest.json'
     manifest = {'schema': 1, 'source': before, 'command': command, 'toolchain': tools,
                 'configuration': 'Xcode Release; Cargo development profile', 'signed': False,
+                'build_environment': environment,
                 'bundle': {key: info.get(key) for key in ('CFBundleIdentifier', 'CFBundleVersion', 'CFBundleShortVersionString', 'CFBundleExecutable')},
                 'dependencies': dependencies, 'native_archives': archives,
                 'native_notices': {'manifest': 'native-notices/manifest.json', 'sha256': checksum(notice_manifest)},
@@ -110,6 +124,7 @@ def main():
                 'qualification': 'Inventory only; not a signed or device-qualified release',
                 'limitations': ['Incremental build; clean rebuild repeatability still requires independent evidence',
                                'Private build inputs are hashed, not copied; retain them locally to reproduce',
+                               'Build environment records common overrides, not arbitrary custom tool wrappers/configuration',
                                'Dependency inventory does not establish complete license/source obligations']}
     require_unchanged(before, source_identity())
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

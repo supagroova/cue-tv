@@ -38,3 +38,14 @@ class ReleaseRecordTests(unittest.TestCase):
         for after in ({**before, 'commit': 'new'}, {**before, 'submodules': ['different']}):
             with self.assertRaisesRegex(ValueError, 'Source changed'):
                 record.require_unchanged(before, after)
+
+    def test_build_overrides_are_recorded_without_copying_unrelated_secrets(self):
+        captured = record.build_environment({'CARGO_PROFILE_DEV_DEBUG': '0', 'CARGO_INCREMENTAL': '0',
+                                             'RUSTFLAGS': '-C opt-level=1', 'GH_TOKEN': 'private-fixture',
+                                             'CUSTOM_PASSWORD': 'private-fixture'})
+        self.assertEqual(captured['CARGO_PROFILE_DEV_DEBUG'], '0')
+        self.assertEqual(captured['CARGO_INCREMENTAL'], '0')
+        self.assertEqual(captured['RUSTFLAGS'], '-C opt-level=1')
+        self.assertIsNone(captured['SDKROOT'])
+        self.assertNotIn('GH_TOKEN', captured)
+        self.assertNotIn('CUSTOM_PASSWORD', captured)
