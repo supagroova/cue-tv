@@ -46,3 +46,31 @@ Core's undeclared metadata entries are cue-core, localsearch, stremio-core,
 stremio-derive and stremio-watched-bitfield; the torrent graph's is cue-torrent.
 Existing source notices must be matched explicitly before resolving these gaps;
 missing Cargo fields do not imply absent source licenses.
+
+
+The six undeclared metadata entries above now have explicit source-notice mappings
+in [PROVENANCE.json](../../native/licenses/PROVENANCE.json): the repository MIT
+notice covers Cue's crates, the pinned Stremio root notice covers its workspace,
+and localsearch's retained notice matches its pinned source byte-for-byte. The
+Stremio retained file was normalized to the source's final blank line, without
+changing its text. rqbit's root Apache notice is now retained and mapped to its
+workspace crates. This records source correspondence, not completed combined-app
+license qualification.
+
+The union of both non-dev/build graphs contains 327 packages. Initial top-level and
+explicit-file discovery still needs additional source notice evidence for fxhash
+0.2.1, stremio-official-addons 2.1.2, assert_cfg 0.1.0 and governor 0.10.4. fxhash
+contains a license/copyright header in lib.rs; Stremio's README references a license
+file absent from its crate archive; assert_cfg/governor retain exact VCS revisions
+in their crate archives. Use those identities when retrieving missing materials.
+
+
+Follow-up source retrieval retained the omitted assert_cfg/governor notices at the
+crate-recorded VCS revisions, and the Stremio official-addons notice at the resolved
+v2.1.2 commit. Stremio's lib.rs Git blob matches the published crate. fxhash's lib.rs
+also matches commit 537570af68de22d2f4bbdd5bee5d6e07268e6f42; its copyright/license
+header is retained alongside the full Apache 2.0 alternative from Apache's official
+license URL. rqbit's source file is an attribution notice, so the full Apache text
+is retained separately as well. All retained files have checksums in PROVENANCE.json.
+Collecting the remaining graph notices and matching VLCKit bundled components are
+still required; this targeted source recovery does not complete that inventory.
