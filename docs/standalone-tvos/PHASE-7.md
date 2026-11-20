@@ -107,6 +107,15 @@ now retains this notice set and hashes its manifest alongside the built app; fai
 collection prevents it from issuing a candidate manifest. Keep the collected
 texts with the corresponding candidate; do not replace them with SPDX labels alone.
 
+The [packaged VLC symbol inventory](evidence/vlckit-binary-symbols-2026-11-20.json)
+records 299 defined VLC entry symbols from the checksum-matched tvOS framework.
+It identifies compiled modules, including codec and network modules, and provides
+concrete starting points for the remaining bundled-source review. Exported symbols
+alone omitted these module entries, so extraction uses the full symbol table.
+Neither module names nor defined version-function symbols establish exact dependency
+versions, complete transitive dependencies, license terms or corresponding source.
+No tvOS binary code was executed on the Mac during this inspection.
+
 ## First installation and upgrade protocol
 
 1. Complete the phase 6 release audit and select a fully reviewed commit. Record
