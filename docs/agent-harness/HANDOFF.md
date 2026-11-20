@@ -899,3 +899,12 @@ Expanded the real sequential-writer checkpoint fixture to drop both checkpoint a
 Targeted checkpoint+catalog suites passf589c0c569994bb4946105669e51d68a. Only host tests/docs changed, so device/simulator behavior inherits the previously validated af59595 code; do not claim those builds were rerun for test-only edits. The full Swift/UI FFI-timeout-and-retry journey remains unqualified even though native semantics now have direct evidence. Other live-account, transient reauth cleanup failure, abrupt/physical, earlier-stage and phase6/7 gates remain open.
 
 Remote af59595 Apple run44814398278 jobs136558847238/136558846486 and Android44814397506 remain active; harness checks passed. Do not restart/cancel those runs. Next: finish their monitoring, push this host-test coverage to existing PR13 with remote blob verification, then continue the remaining gates. Prior lifecycle commits8eea26b/af59595 are already pushed and PR13 body updated.
+
+
+### 2026-11-20 — retain refresh ownership after lost cleanup receipts
+
+Added accountRefreshRetainsOwnershipAfterLostCancellationReceipts using real synthetic HTTP, NativeCoreService/FFI and encrypted storage. A forwarding CoreService boundary drops the first two cancellation receipts only after native cancellation succeeds. The test checks retained sequence ownership, disabled resubmission, unchanged pending ciphertext, retry-Cancel recovery and eventual same-account upload without replacing the session/library. Production code is unchanged.
+
+Initial harness117809a9b8c1455eaa23586b2971b02a raced cancellation before admission and failed to exercise the intended boundary; corrected by waiting for wrong-account rejection and automatic cleanup. Focused green d02369f7765d4a9a8771acf32b559705 passed one test. Mutation8d88c4fb2a0440af979b8129f569519c moved sequence release before cancellation acknowledgment and failed six intended assertions. The production file was restored byte-for-byte; final baseline f15b3366a160445e90d8519591369123 passed exactly one test in1.016s with stable source fingerprints. This is controlled receipt loss, not an actual native queue-full/timeout fault or UI/physical qualification. No claim that the entire simulator suite was rerun.
+
+Remaining gates include actual native timeout faults, complete Swift/UI operation reconciliation, live services, abrupt/physical lifecycle and earlier/later phase requirements. Carry this test through phases6/7 after review; retain current CI runs rather than restarting them for this test-only addition.
