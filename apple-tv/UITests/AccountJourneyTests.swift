@@ -101,6 +101,38 @@ nonisolated final class AccountJourneyTests: XCTestCase {
         app.launchEnvironment["CUE_ACCOUNT_JOURNEY_EXPECT_EMPTY"] = "1"
     }
 
+    @MainActor func testUnreadableSelectionRequiresConfirmationAndReturnsToGuest() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_FIXTURE"] = "1"
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_INVALID_SELECTION"] = "1"
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_STORAGE"] = UUID().uuidString
+        registerCleanup(app)
+        app.launch()
+        let reset = app.buttons["reset-account-selection"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Sign in to Stremio"].exists)
+        try focus(reset, direction: .down)
+        XCUIRemote.shared.press(.select)
+        let confirm = app.buttons["Reset selection"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Unreadable account selection confirmation"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        try focus(app.buttons["Cancel"].firstMatch, direction: .left)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(reset.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Sign in to Stremio"].exists)
+        try focus(reset, direction: .up)
+        XCUIRemote.shared.press(.select)
+        try focus(confirm, direction: .right)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["My library"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Sign in to Stremio"].exists)
+        XCTAssertFalse(reset.exists)
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_EXPECT_EMPTY"] = "1"
+    }
+
     private enum NavigationFailure: Error { case missingElement, missingFocus }
 
     @MainActor private func registerCleanup(_ app: XCUIApplication) {
