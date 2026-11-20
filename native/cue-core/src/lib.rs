@@ -34,3 +34,5 @@ mod sync_journal;
 mod library_update;
 
 mod sync_upload;
+
+mod sync_scheduler;
