@@ -233,3 +233,65 @@ async fn older_upload_reply_cannot_clear_a_new_edit_admitted_during_http() {
     assert_eq!(*observed.lock().unwrap(), vec![100, 200]);
     session.stop().await;
 }
+
+struct NotifyOnDrop(Arc<tokio::sync::Notify>);
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+#[tokio::test]
+async fn logout_cancels_suspended_upload_and_keeps_intent_until_account_cleanup() {
+    use futures::FutureExt;
+    let env = stored_pending().await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (start, cancel, count) = (started.clone(), cancelled.clone(), requests.clone());
+    *env.test_http_async.lock().unwrap() = Some(Arc::new(move |parts, _| {
+        if parts.uri.path().ends_with("/datastorePut") {
+            count.fetch_add(1, Ordering::SeqCst);
+            let (start, cancel) = (start.clone(), cancel.clone());
+            async move {
+                let _drop = NotifyOnDrop(cancel);
+                start.notify_one();
+                futures::future::pending().await
+            }
+            .boxed()
+        } else {
+            assert!(parts.uri.path().ends_with("/logout"));
+            async { Ok(br#"{"result":{"success":true}}"#.to_vec()) }.boxed()
+        }
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    session.logout().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), cancelled.notified())
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if session.account_identity().is_none() && session.snapshot().pending_effects == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(session.account_identity().is_none());
+    env.scope(async {
+        assert_eq!(
+            NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision("title"),
+            Some(1)
+        );
+    })
+    .await;
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    session.stop().await;
+}
