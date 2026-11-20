@@ -47,3 +47,15 @@ class NativeNoticeTests(unittest.TestCase):
             override = {'packages': ['fixture'], 'versions': {'fixture': '1.0.0'}, 'resolved_sources': {'fixture': 'git+fixture#old'}}
             with self.assertRaisesRegex(ValueError, 'source mismatch'):
                 self.collector.notice_inputs(package, [override], root)
+
+    def test_nested_vendor_and_spdx_license_directory_texts_are_retained(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ('LICENSE', 'third_party/codec/COPYRIGHT', 'LICENSES/MIT.txt', 'target/NOTICE'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
+            package = {'name': 'fixture', 'version': '1.0.0', 'manifest_path': str(root / 'Cargo.toml')}
+            paths = self.collector.notice_inputs(package, [], root)
+            self.assertEqual({str(p.relative_to(root)) for p in paths},
+                             {'LICENSE', 'third_party/codec/COPYRIGHT', 'LICENSES/MIT.txt'})

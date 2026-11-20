@@ -5,6 +5,7 @@ import hashlib
 import json
 import plistlib
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -96,10 +97,14 @@ def main():
         archives[name] = {'sha256': checksum(path), 'bytes': path.stat().st_size}
     private_inputs = {name: checksum(ROOT / name) for name in private_names}
     require_unchanged(private_before, private_inputs)
+    subprocess.run([sys.executable, str(ROOT / 'scripts/agent/collect-native-notices.py'),
+                    '--output', str(output / 'native-notices')], cwd=ROOT, check=True)
+    notice_manifest = output / 'native-notices/manifest.json'
     manifest = {'schema': 1, 'source': before, 'command': command, 'toolchain': tools,
                 'configuration': 'Xcode Release; Cargo development profile', 'signed': False,
                 'bundle': {key: info.get(key) for key in ('CFBundleIdentifier', 'CFBundleVersion', 'CFBundleShortVersionString', 'CFBundleExecutable')},
                 'dependencies': dependencies, 'native_archives': archives,
+                'native_notices': {'manifest': 'native-notices/manifest.json', 'sha256': checksum(notice_manifest)},
                 'private_input_sha256': private_inputs, 'files': inventory(bundle),
                 'linked_libraries': run('otool', '-L', str(executable)).splitlines()[1:],
                 'qualification': 'Inventory only; not a signed or device-qualified release',

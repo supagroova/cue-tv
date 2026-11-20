@@ -85,9 +85,12 @@ versions and resolved source identities. Missing notices or stale overrides prod
 a nonzero result and an explicit missing list. The manifest records lock hashes,
 collector identity and whether the source checkout is dirty.
 
-The first collection covers all 327 graph packages. This is a source-notice set,
-not an exact linked-component list or complete license audit: nested third-party
-material and VLCKit's bundled components still require review. Keep the collected
+The extended collection covers all 327 graph packages with 244 unique texts,
+including nested copyright, third-party and LICENSES-directory files. This is a source-notice set,
+not an exact linked-component list or complete license audit: embedded source
+headers and VLCKit's bundled components still require review. The candidate recorder
+now retains this notice set and hashes its manifest alongside the built app; failed
+collection prevents it from issuing a candidate manifest. Keep the collected
 texts with the corresponding candidate; do not replace them with SPDX labels alone.
 
 ## First installation and upgrade protocol

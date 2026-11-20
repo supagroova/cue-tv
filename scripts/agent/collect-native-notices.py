@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -29,8 +30,17 @@ def reachable_packages(metadata):
 
 def notice_inputs(package, overrides, root):
     source = Path(package['manifest_path']).parent
-    files = {path for path in source.iterdir() if path.is_file() and
-             path.name.lower().startswith(('license', 'copying', 'notice'))}
+    files = set()
+    for directory, children, names in os.walk(source, followlinks=False):
+        children[:] = [name for name in children if name not in {'.git', 'target', 'node_modules', '.agent-work'}]
+        parent = Path(directory)
+        license_directory = any(part.lower() in {'licenses', 'licences'} for part in parent.relative_to(source).parts)
+        for name in names:
+            path = parent / name
+            if license_directory or name.lower().startswith(('license', 'copying', 'notice', 'copyright')):
+                if path.is_symlink():
+                    raise ValueError(f'Notice symlink needs explicit review: {package["name"]}/{name}')
+                files.add(path)
     if package.get('license_file'):
         files.add(source / package['license_file'])
     for record in overrides:
@@ -92,7 +102,9 @@ def main():
             destination = texts / (sha + '.txt')
             if not destination.exists():
                 destination.write_bytes(path.read_bytes())
-            notices.append({'source_filename': path.name, 'sha256': sha, 'text': 'texts/' + destination.name})
+            package_root = Path(package['manifest_path']).parent
+            origin = str(path.relative_to(package_root)) if path.is_relative_to(package_root) else str(path.relative_to(ROOT))
+            notices.append({'source_path': origin, 'sha256': sha, 'text': 'texts/' + destination.name})
         source = package.get('source') or str(Path(package['manifest_path']).parent.relative_to(ROOT))
         records.append({'name': package['name'], 'version': package['version'], 'source': source,
                         'declared_license': package.get('license'), 'notices': notices})
@@ -101,7 +113,7 @@ def main():
               'collector_sha256': digest(Path(__file__)),
               'lockfiles': locks, 'provenance_sha256': digest(ROOT / 'native/licenses/PROVENANCE.json'),
               'scope': 'tvOS non-dev dependency graph including build dependencies; not exact binary linkage',
-              'limitations': ['Top-level/explicit source notices plus reviewed overrides; nested third-party notices need audit',
+              'limitations': ['Filename/directory-based source notice discovery plus reviewed overrides; embedded source headers still need audit',
                              'Does not inventory VLCKit components or establish license compliance'],
               'packages': records, 'missing': missing}
     (output / 'manifest.json').write_text(json.dumps(result, indent=2) + '\n')
