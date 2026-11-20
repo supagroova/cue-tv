@@ -10,7 +10,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: '6.0'
-    SWIFT_INCLUDE_PATHS: $(SRCROOT)/../native/cue-torrent/include
+    SWIFT_INCLUDE_PATHS: $(SRCROOT)/../native/cue-torrent/include $(SRCROOT)/../native/cue-core/include
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     SWIFT_APPROACHABLE_CONCURRENCY: YES
@@ -37,14 +37,17 @@ targets:
     dependencies:
       - package: VLCKit
     preBuildScripts:
+      - name: Build embedded Stremio Core
+        script: bash "$SRCROOT/../scripts/native/build-core.sh"
+        basedOnDependencyAnalysis: false
       - name: Build embedded torrent engine
         script: bash "$SRCROOT/../scripts/native/build.sh"
         basedOnDependencyAnalysis: false
     settings:
       base:
         OTHER_LDFLAGS: $(inherited) -lc++ -lz -framework Security -framework SystemConfiguration -framework CoreFoundation
-        OTHER_LDFLAGS[sdk=appletvsimulator*]: $(inherited) $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos-sim/debug/libcue_torrent.a
-        OTHER_LDFLAGS[sdk=appletvos*]: $(inherited) $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos/debug/libcue_torrent.a
+        OTHER_LDFLAGS[sdk=appletvsimulator*]: $(inherited) $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos-sim/debug/libcue_torrent.a $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos-sim/debug/libcue_core.a
+        OTHER_LDFLAGS[sdk=appletvos*]: $(inherited) $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos/debug/libcue_torrent.a $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos/debug/libcue_core.a
         PRODUCT_BUNDLE_IDENTIFIER: com.rupertlaycock.couchtv.appletv
         ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
     info:

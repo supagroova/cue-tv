@@ -13,7 +13,7 @@ make apple-build
 make apple-test DESTINATION='platform=tvOS Simulator,id=YOUR_SIMULATOR_UDID'
 ```
 
-`doctor` inventories tools without installation or pairing. `check` runs portable harness integrity checks and their tests; it does not compile the app. `apple-build` generates the Xcode project and builds unsigned for tvOS. `apple-test` requires an explicit simulator destination and runs the existing unit-test target. Use `make apple-ui-test` for UI tests against the configured backend/fixtures; they may not support standalone flows yet. No command installs on the Apple TV. Logs and derived data live under ignored `.agent-work/`.
+`doctor` inventories tools without installation or pairing. `check` runs portable harness integrity checks and their tests; it does not compile the app. `apple-build` generates the Xcode project and builds unsigned for tvOS. `apple-test` requires an explicit simulator destination and runs the unit-test target. Its magnet-to-byte integration test also requires the owned loopback fixture seeder: run `cargo +1.100.0 run --locked --manifest-path native/cue-torrent/Cargo.toml --example seed` in a separate terminal first. The test starts its own local tracker, disables DHT, verifies fixture bytes, and fails if the seeder is absent; CI already starts this seeder. Use `make apple-ui-test` for UI tests against the configured backend/fixtures; they may not support standalone flows yet. No command installs on the Apple TV. Logs and derived data live under ignored `.agent-work/`.
 
 The native Rust workspace is not present yet, so no cargo command is advertised as passing. When introduced, add pinned toolchain/dependency manifests, host tests, formatting/lint checks and tvOS compilation to the project gate in the same change.
 

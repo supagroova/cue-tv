@@ -1,6 +1,8 @@
 //! Embedded byte transport. The HTTP adapter binds only to loopback.
 pub mod failure;
 mod ffi;
+pub mod metadata;
+mod metadata_ffi;
 use failure::FailureCode;
 pub mod storage_budget;
 use anyhow::{Context, Result, bail};
@@ -146,6 +148,29 @@ pub enum TorrentSource {
 }
 
 impl PlaybackSession {
+    /// Consume metadata and discovered peers after an explicit file choice.
+    /// Reuses the resolved torrent rather than repeating magnet discovery.
+    pub async fn start_resolved(
+        resolved: metadata::Resolved,
+        index: usize,
+        output: PathBuf,
+        discovery: Discovery,
+        cache_root: Option<PathBuf>,
+    ) -> Result<Self> {
+        resolved.selected_file(index)?;
+        Self::start_budgeted_in_root(
+            TorrentSource::Bytes(resolved.torrent_bytes),
+            index,
+            output,
+            resolved.seen_peers,
+            discovery,
+            StorageBudget::default(),
+            None,
+            cache_root,
+        )
+        .await
+    }
+
     pub async fn start(
         torrent: Vec<u8>,
         index: usize,

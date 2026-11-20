@@ -196,25 +196,56 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
             format!("http://{tracker_address}/announce")
         };
         let download = tempfile::tempdir().unwrap();
-        let playback = PlaybackSession::start_source(
-            if magnet {
+        let resolved = if magnet && protocol == "direct" {
+            let result = cue_torrent::metadata::resolve(
                 TorrentSource::Magnet(format!(
-                    "magnet:?xt=urn:btih:{}&tr={tracker_url}",
+                    "magnet:?xt=urn:btih:{}",
                     seed.info_hash().as_string()
-                ))
-            } else {
-                TorrentSource::Bytes(torrent)
-            },
-            index,
-            download.path().to_owned(),
-            if tracker { vec![] } else { vec![address] },
-            Discovery {
-                trackers: tracker && protocol != "dht",
-                dht: protocol == "dht",
-                bootstrap: Some(vec![dht_address.to_string()]),
-            },
-        )
-        .await
+                )),
+                download.path().to_owned(),
+                vec![address],
+                Discovery::default(),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(std::fs::read_dir(download.path()).unwrap().count(), 0);
+            assert_eq!(result.files[index].index, index);
+            assert_eq!(result.files[index].bytes, bytes.len() as u64);
+            Some(result)
+        } else {
+            None
+        };
+        let playback = if let Some(metadata) = resolved {
+            PlaybackSession::start_resolved(
+                metadata,
+                index,
+                download.path().to_owned(),
+                Discovery::default(),
+                None,
+            )
+            .await
+        } else {
+            PlaybackSession::start_source(
+                if magnet {
+                    TorrentSource::Magnet(format!(
+                        "magnet:?xt=urn:btih:{}&tr={tracker_url}",
+                        seed.info_hash().as_string()
+                    ))
+                } else {
+                    TorrentSource::Bytes(torrent)
+                },
+                index,
+                download.path().to_owned(),
+                if tracker { vec![] } else { vec![address] },
+                Discovery {
+                    trackers: tracker && protocol != "dht",
+                    dht: protocol == "dht",
+                    bootstrap: Some(vec![dht_address.to_string()]),
+                },
+            )
+            .await
+        }
         .unwrap();
         let client = reqwest::Client::new();
         let tail = client

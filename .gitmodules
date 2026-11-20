@@ -1,0 +1,4 @@
+[submodule "native/stremio-core"]
+	path = native/stremio-core
+	url = https://github.com/Stremio/stremio-core.git
+	shallow = true

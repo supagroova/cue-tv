@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class AppleCommandTests(unittest.TestCase):
-    def run_combined(self, xcode_exit=0, playback_lab=True):
+    def run_combined(self, xcode_exit=0):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             script = root / "scripts/agent/apple.sh"
@@ -20,10 +20,6 @@ class AppleCommandTests(unittest.TestCase):
             shutil.copy2(ROOT / "scripts/agent/apple.sh", script)
             (root / "apple-tv/Config").mkdir(parents=True)
             (root / "apple-tv/TVConfig.example.plist").write_text("fixture")
-            if playback_lab:
-                lab = root / "apple-tv/UITests/PlaybackLabTests.swift"
-                lab.parent.mkdir(parents=True)
-                lab.write_text("// Test selection fixture")
             binary = root / "bin"
             binary.mkdir()
             (binary / "xcodegen").write_text("#!/bin/sh\nexit 0\n")
@@ -61,10 +57,3 @@ class AppleCommandTests(unittest.TestCase):
         result, commands = self.run_combined(xcode_exit=7)
         self.assertEqual(len(commands), 1)
         self.assertEqual(result.returncode, 7)
-
-    def test_baseline_runs_unit_tests_without_selecting_absent_playback_lab(self):
-        result, commands = self.run_combined(playback_lab=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(commands), 1)
-        self.assertEqual([arg for arg in commands[0] if arg.startswith("-only-testing:")],
-                         ["-only-testing:SittingRoomTVTests"])

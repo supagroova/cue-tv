@@ -4,23 +4,33 @@ inputs:
   cache-role:
     description: Independent build lane; prevents partial caches overwriting one another.
     required: true
+  native-artifact-hit:
+    description: Exact simulator artifacts were verified before setup; Cargo is unnecessary.
+    default: 'false'
 runs:
   using: composite
   steps:
-    - name: Restore native and Swift package build caches
+    - name: Restore native build cache
+      if: inputs.native-artifact-hit != 'true'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
           .agent-work/native-target
-          .agent-work/DerivedData/SourcePackages
-        key: apple-lanes-v1-${{ inputs.cache-role }}-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}
+        key: apple-native-v2-${{ inputs.cache-role }}-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}
         restore-keys: |
+          apple-native-v2-${{ inputs.cache-role }}-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
           apple-lanes-v1-${{ inputs.cache-role }}-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}-
           apple-lanes-v1-${{ inputs.cache-role }}-${{ runner.arch }}-rust-1.100.0-xcode-26.6-
           apple-nodebug-v1-${{ runner.arch }}-rust-1.100.0-xcode-26.6-${{ hashFiles('native/**/Cargo.lock', 'apple-tv/project.yml') }}
+    - name: Restore Swift package cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .agent-work/DerivedData/SourcePackages
+        key: apple-swift-v1-${{ inputs.cache-role }}-${{ runner.arch }}-xcode-26.6-${{ hashFiles('apple-tv/project.yml') }}
     - name: Keep only native targets used by this lane
+      if: inputs.native-artifact-hit != 'true'
       shell: bash
       env:
         CACHE_ROLE: ${{ inputs.cache-role }}
@@ -43,6 +53,6 @@ runs:
         xcodebuild -version
         xcodebuild -showsdks
     - name: Install pinned native toolchain
-      if: hashFiles('native/**/Cargo.toml') != ''
+      if: inputs.native-artifact-hit != 'true'
       shell: bash
       run: rustup toolchain install 1.100.0 --profile minimal --target aarch64-apple-tvos,aarch64-apple-tvos-sim

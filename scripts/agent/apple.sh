@@ -27,8 +27,8 @@ else
   [[ "$action" == lab-test ]] && target=SittingRoomTVUITests/PlaybackLabTests
   [[ "$action" == long-test ]] && target=SittingRoomTVUITests/LongPlaybackTests
   selectors=(-only-testing:"$target")
-  if [[ "$action" == ci-test && -f apple-tv/UITests/PlaybackLabTests.swift ]]; then
-    selectors+=(-only-testing:SittingRoomTVUITests/PlaybackLabTests)
+  if [[ "$action" == ci-test ]]; then
+    selectors=(-only-testing:SittingRoomTVTests -only-testing:SittingRoomTVUITests/PlaybackLabTests)
   fi
   xcodebuild "${args[@]}" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= AppIdentifierPrefix=CueTVSimulator. -destination "$DESTINATION" "${selectors[@]}" test
 fi

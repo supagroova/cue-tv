@@ -16,11 +16,11 @@ apple-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh test
 apple-ui-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh ui-test
-hooks:
-	bash scripts/agent/install-hooks.sh
 apple-lab-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh lab-test
 apple-ci-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh ci-test
 apple-long-test:
 	DESTINATION='$(DESTINATION)' bash scripts/agent/apple.sh long-test
+hooks:
+	bash scripts/agent/install-hooks.sh

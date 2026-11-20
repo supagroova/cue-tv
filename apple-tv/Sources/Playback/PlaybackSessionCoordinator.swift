@@ -32,7 +32,7 @@ final class PlaybackSessionCoordinator {
         }
     }
     enum State: Equatable {
-        case idle, resolving, discovering, buffering, playing, paused, seeking, stopping
+        case idle, resolving, discovering, choosingFile, buffering, playing, paused, seeking, stopping
         case failed(Failure)
     }
     private(set) var state: State = .idle

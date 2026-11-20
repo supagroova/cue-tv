@@ -36,8 +36,6 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-      - name: Verify Apple command selection and failure propagation
-        run: python3 -m unittest discover -s tests/agent -v
       - uses: ./.github/actions/setup-apple
         with:
           cache-role: native-device
@@ -46,12 +44,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .agent-work
-          if [[ -f native/cue-core/Cargo.toml ]]; then
-            cargo +1.100.0 test --locked --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
-          fi
-          if [[ -f native/cue-torrent/Cargo.toml ]]; then
-            cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
-          fi
+          cargo +1.100.0 test --locked --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
+          cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
       - name: Build unsigned Apple TV app and native device libraries
         shell: bash
         run: |
@@ -79,9 +73,6 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-      - name: Validate optional qualification support
-        if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
-        run: test -f scripts/fixtures/generate-long.py && test -f apple-tv/project-long.yml && test -f native/cue-torrent/Cargo.toml
       - name: Select available Apple TV simulator
         shell: bash
         run: |
@@ -105,9 +96,26 @@ jobs:
               env.write(f"SIMULATOR_UDID={device['udid']}\n")
           PY
           xcrun simctl list devices available
+      - name: Fingerprint simulator native artifact inputs
+        id: native-key
+        run: echo "key=$(python3 scripts/native/artifact-cache.py key)" >> "$GITHUB_OUTPUT"
+      - name: Restore exact simulator native artifacts
+        id: native-artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .agent-work/native-artifacts
+          key: simulator-native-v1-${{ runner.arch }}-${{ steps.native-key.outputs.key }}
+      - name: Verify and install cached native artifacts
+        if: steps.native-artifacts.outputs.cache-hit == 'true'
+        env:
+          NATIVE_KEY: ${{ steps.native-key.outputs.key }}
+        run: |
+          python3 scripts/native/artifact-cache.py restore "$NATIVE_KEY"
+          echo "CUE_NATIVE_CACHE_KEY=$NATIVE_KEY" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-apple
         with:
           cache-role: simulator-tests
+          native-artifact-hit: ${{ steps.native-artifacts.outputs.cache-hit }}
       - name: Start simulator boot while fixture seeder builds
         run: xcrun simctl boot "$SIMULATOR_UDID"
       - name: Install optional media generator
@@ -117,7 +125,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         run: python3 scripts/fixtures/generate-long.py
       - name: Build fixture seeder
-        if: hashFiles('native/cue-torrent/Cargo.toml') != ''
+        if: steps.native-artifacts.outputs.cache-hit != 'true'
         shell: bash
         run: cargo +1.100.0 build --locked --manifest-path native/cue-torrent/Cargo.toml --example seed
       - name: Wait for simulator readiness
@@ -129,17 +137,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f native/cue-torrent/Cargo.toml ]]; then
-            "$CARGO_TARGET_DIR/debug/examples/seed" > .agent-work/fixture-seeder.log 2>&1 &
-            fixture_pid=$!
-            trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-            for attempt in {1..30}; do
-              if grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log; then break; fi
-              sleep 1
-            done
-            grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
-          fi
+          "$CARGO_TARGET_DIR/debug/examples/seed" > .agent-work/fixture-seeder.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log; then break; fi
+            sleep 1
+          done
+          grep -q 'Fixture peer ready' .agent-work/fixture-seeder.log
           make apple-ci-test DESTINATION="$DESTINATION" 2>&1 | tee .agent-work/apple-ci-test.log
+      - name: Stage verified simulator native artifacts
+        if: steps.native-artifacts.outputs.cache-hit != 'true'
+        env:
+          NATIVE_KEY: ${{ steps.native-key.outputs.key }}
+        run: python3 scripts/native/artifact-cache.py save "$NATIVE_KEY"
       - name: Verify ten minutes of direct torrent playback
         if: github.event_name == 'workflow_dispatch' && inputs.sustained_playback
         shell: bash

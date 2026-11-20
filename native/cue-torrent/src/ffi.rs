@@ -15,7 +15,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+pub(crate) static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -46,23 +46,53 @@ struct Config {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
     std::panic::catch_unwind(|| {
-        if config.is_null() { return 0; }
-        let Ok(config) = serde_json::from_slice::<Config>(unsafe { CStr::from_ptr(config) }.to_bytes()) else { return 0; };
-        if config.api_version != 1 { return 0; }
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let entry = Arc::new(Entry { done: CancellationToken::new(), status: Mutex::new(r#"{"state":"starting"}"#.into()), cancel: CancellationToken::new() });
-        SESSIONS.lock().unwrap().insert(id, entry.clone());
-        RUNTIME.spawn(async move {
-            // Declared first, dropped last: all setup/session storage leases close before acknowledgement.
-            let _done = entry.done.clone().drop_guard();
-            let setup = async {
-                let source = match (config.torrent_path, config.magnet) {
-                    (Some(path), None) => TorrentSource::Bytes(std::fs::read(path)?),
-                    (None, Some(magnet)) => TorrentSource::Magnet(magnet),
-                    _ => anyhow::bail!(FailureCode::InvalidMetadata),
-                };
-                PlaybackSession::start_budgeted_in_root(source, config.file_index, config.output, config.initial_peers, config.discovery, super::storage_budget::StorageBudget::default(), None, config.cache_root).await
+        if config.is_null() {
+            return 0;
+        }
+        let Ok(config) =
+            serde_json::from_slice::<Config>(unsafe { CStr::from_ptr(config) }.to_bytes())
+        else {
+            return 0;
+        };
+        if config.api_version != 1 {
+            return 0;
+        }
+        let setup = async move {
+            let source = match (config.torrent_path, config.magnet) {
+                (Some(path), None) => TorrentSource::Bytes(std::fs::read(path)?),
+                (None, Some(magnet)) => TorrentSource::Magnet(magnet),
+                _ => anyhow::bail!(FailureCode::InvalidMetadata),
             };
+            PlaybackSession::start_budgeted_in_root(
+                source,
+                config.file_index,
+                config.output,
+                config.initial_peers,
+                config.discovery,
+                super::storage_budget::StorageBudget::default(),
+                None,
+                config.cache_root,
+            )
+            .await
+        };
+        launch(setup)
+    })
+    .unwrap_or(0)
+}
+
+pub(crate) fn launch(
+    setup: impl std::future::Future<Output = anyhow::Result<PlaybackSession>> + Send + 'static,
+) -> u64 {
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    let entry = Arc::new(Entry {
+        done: CancellationToken::new(),
+        status: Mutex::new(r#"{"state":"starting"}"#.into()),
+        cancel: CancellationToken::new(),
+    });
+    SESSIONS.lock().unwrap().insert(id, entry.clone());
+    RUNTIME.spawn(async move {
+        let _done = entry.done.clone().drop_guard();
+        let setup = setup;
             let session = tokio::select! {
                 _ = entry.cancel.cancelled() => return,
                 result = setup => match result {
@@ -82,9 +112,9 @@ pub unsafe extern "C" fn cue_torrent_start(config: *const c_char) -> u64 {
             }
             session.stop().await;
         });
-        id
-    }).unwrap_or(0)
+    id
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn cue_torrent_snapshot(id: u64) -> *mut c_char {
     std::panic::catch_unwind(|| {
