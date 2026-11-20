@@ -4,8 +4,8 @@ Status as of 20 November 2026: implementation is in progress; this phase is not
 merge-ready. The standalone app has acknowledged library/watched saves, five-second
 playback checkpoints, Resume/Restart, an encrypted bounded sync journal with capped
 retry and same-account reauthentication, and local playback diagnostics. Controlled
-simulator playback and ten graceful exit/relaunch cycles have passed. These do not
-establish abrupt termination, physical suspension or live-account qualification.
+simulator playback and ten graceful exit/relaunch cycles have passed. An opt-in SIGKILL journey now also verifies periodic progress recovery after abrupt
+termination on the simulator. Physical suspension and live-account qualification remain open.
 
 The contract is [decision 003](decisions/003-resume-library-sync.md); the full exit
 gates remain in [stage 5 of the plan](IMPLEMENTATION-PLAN.md#stage-5--resume-library-and-recovery).
@@ -50,7 +50,16 @@ returning without autoplay, restored source focus, and Resume/Restart. It does n
 prove physical suspension, sleep, sustained background behavior or transfer counters
 while the app is suspended.
 
-Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
+The [abrupt-resume evidence](evidence/abrupt-resume-2026-11-20.json) records a
+simulator process kill during active owned-peer playback at 23 seconds. Relaunch
+restored 20 seconds and decoded again within tolerance. Disabling periodic saves
+made the same test restore zero and fail the 15-second bound; the original code
+was restored and the test passed again. The kill hook requires a random fixture
+namespace and is compiled only for Debug simulator builds. Device compilation and
+packaged-file inspection confirm its notification prefix is absent there. This is
+one opt-in journey, not ten physical interruption cycles or a power-loss write test.
+
+Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and physical interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
 filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
