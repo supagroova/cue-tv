@@ -2,10 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 action=${1:-build}
-case "$action" in build|test|ui-test|lab-test|ci-test|long-test) ;; *) echo "usage: apple.sh build|test|ui-test|lab-test|ci-test|long-test" >&2; exit 2;; esac
+case "$action" in build|release-build|test|ui-test|lab-test|ci-test|long-test) ;; *) echo "usage: apple.sh build|release-build|test|ui-test|lab-test|ci-test|long-test" >&2; exit 2;; esac
 command -v xcodegen >/dev/null || { echo 'Install XcodeGen before generating the project.' >&2; exit 2; }
 command -v xcodebuild >/dev/null || { echo 'Select a supported Xcode installation first.' >&2; exit 2; }
-if [[ "$action" != build && -z "${DESTINATION:-}" ]]; then
+if [[ "$action" != build && "$action" != release-build && -z "${DESTINATION:-}" ]]; then
   echo 'Set DESTINATION to an explicit tvOS simulator destination.' >&2; exit 2
 fi
 mkdir -p .agent-work
@@ -18,8 +18,10 @@ fi
 spec=apple-tv/project.yml
 [[ "$action" == long-test ]] && spec=apple-tv/project-long.yml
 xcodegen generate --spec "$spec"
-args=(-project apple-tv/SittingRoomTV.xcodeproj -scheme SittingRoomTV -configuration Debug -derivedDataPath .agent-work/DerivedData )
-if [[ "$action" == build ]]; then
+configuration=Debug
+[[ "$action" == release-build ]] && configuration=Release
+args=(-project apple-tv/SittingRoomTV.xcodeproj -scheme SittingRoomTV -configuration "$configuration" -derivedDataPath .agent-work/DerivedData )
+if [[ "$action" == build || "$action" == release-build ]]; then
   xcodebuild "${args[@]}" CODE_SIGNING_ALLOWED=NO -sdk appletvos -destination 'generic/platform=tvOS' build
 else
   target=SittingRoomTVTests

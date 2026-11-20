@@ -10,11 +10,12 @@ The user selected simulator-first development and deferred physical Apple TV pai
 | 3 | PR #7: pinned Core environment and Swift/C/Rust boundaries; encrypted identity-scoped storage, Keychain account selection, login/restore primitives; bounded HTTP, joined cancellation, paged catalogs/search/metadata/source handoffs | Retained model/cache bounds, remaining library/player operations, complete authentication/cancellation/crash-recovery qualification, physical Core proof |
 | 4 | PR #8: native guest/account Home, sign-in/cancel/sign-out/recovery, catalog search, season/episode filtering, revision-bound row selection, source/file selection, shared torrent/HTTPS player with deadlines, controls and bounded stream-provided and separately discovered add-on subtitles; local TLS, encrypted restoration, remote Back/focus and complete owned catalog-to-peer playback fixtures | Hash-dependent subtitle hints, artwork, search/season-picker/movie UI coverage, permitted live add-on validation, live authentication and process-crash cleanup |
 | 5 | PR #13: durable progress and Resume/Restart, library/watched actions, encrypted bounded sync journal, same-account refresh, local diagnostics; real-peer simulator and synthetic account UI evidence; lost Close receipt and Start/Retire retry fixes | Full UI timeout/cleanup-failure journeys, live accounts, abrupt interruption, physical lifecycle/privacy qualification; phase remains incomplete |
-| 6–7 | Not implemented | Qualification and reproducible personal release/handover |
+| 6 | Qualification matrix, unsigned Release build entry point and packaged ATS audit in PHASE-6.md; no physical results yet | Release hardening, measurements and every mandatory A2737 qualification row |
+| 7 | Not implemented | Reproducible personal release, signed install/upgrade and handover |
 
 PR #2 was merged by the user into the planning branch. Its merge commit is included downstream, and Phase 0 now targets that planning branch. No implementation PR has been merged by the agent.
 
-See PHASE-0.md through PHASE-5.md and the decisions directory for commands, measured evidence and limits. The original PRD and implementation plan still define the complete scope; this status does not replace their acceptance criteria.
+See PHASE-0.md through PHASE-6.md and the decisions directory for commands, measured evidence and limits. The original PRD and implementation plan still define the complete scope; this status does not replace their acceptance criteria.
 
 The repository was transferred to public supagroova/cue-tv by its owner. The local origin now uses that canonical address. Earlier GitHub Actions jobs failed before starting because of billing/spending limits; after the transfer, harness CI passes and build jobs start again. The complete stack is not yet verified green.
 
