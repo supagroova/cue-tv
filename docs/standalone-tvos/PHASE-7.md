@@ -41,6 +41,28 @@ back in; Debug retains them for its existing playback tests. The configuration
 uses Apple's [excluded-source build setting](https://developer.apple.com/documentation/xcode/build-settings-reference).
 This packaging check does not qualify the remaining binary notices or device runtime.
 
+## Unsigned candidate inventory
+
+After initializing local Apple configuration with the normal build command, commit
+all source changes and run (with the pinned toolchain on PATH):
+
+```sh
+python3 scripts/agent/release-record.py --output .agent-work/release-candidate-001
+```
+
+Use a new output directory and do not run another build concurrently. The recorder
+requires a clean checkout and pinned submodules, runs the unsigned Release build,
+retains its log/receipt, and refuses to issue a manifest if source or existing private
+configuration changes. It copies both Cargo lockfiles and Swift's resolved package
+file, hashes native archives and every packaged app file, and records tool versions,
+bundle versions and linked libraries. Signed or unexpectedly symlinked artifacts
+require separate handling rather than silently receiving an unsigned inventory.
+
+Keep this evidence local: private configuration is hashed rather than copied.
+The recorder identifies an incremental unsigned build; independent clean-rebuild
+repeatability, complete notices/source materials and physical qualification remain
+separate gates. It does not replace the historical source snapshot manifest.
+
 ## First installation and upgrade protocol
 
 1. Complete the phase 6 release audit and select a fully reviewed commit. Record
