@@ -57,6 +57,33 @@ pub(crate) fn write_with_journal(
     Ok(NativeEnv::set_storage_batch(values))
 }
 
+/// Run on the sequential storage queue, after preceding writes. Never build an
+/// outbound request from session state whose checkpoint may still fail.
+pub(crate) async fn committed_upload(
+    expected_uid: &str,
+) -> Result<Option<crate::sync_journal::Upload>, EnvError> {
+    let Some(journal) =
+        NativeEnv::get_storage::<crate::sync_journal::Journal>(crate::sync_journal::STORAGE_KEY)
+            .await?
+    else {
+        return Ok(None);
+    };
+    let uid = Some(stremio_core::types::profile::UserId(expected_uid.into()));
+    let mut library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_STORAGE_KEY)
+        .await?
+        .unwrap_or_else(|| LibraryBucket::new(uid.clone(), vec![]));
+    let recent = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+        .await?
+        .unwrap_or_else(|| LibraryBucket::new(uid.clone(), vec![]));
+    if library.uid != uid || recent.uid != uid {
+        return Err(EnvError::StorageUnavailable);
+    }
+    library.merge_bucket(recent);
+    journal
+        .next_upload(&library)
+        .map_err(|_| EnvError::StorageUnavailable)
+}
+
 fn batch(library: &LibraryBucket) -> Result<crate::environment::StorageBatch, EnvError> {
     let (recent, older) = library.split_items_by_recent();
     let encode = |items: &[_]| {
@@ -91,6 +118,33 @@ mod journal_tests {
         }))
         .unwrap();
         LibraryBucket::new(Some("owner-a".parse().unwrap()), vec![item])
+    }
+
+    #[tokio::test]
+    async fn upload_reads_committed_state_and_rejects_another_account() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            assert!(committed_upload("owner-a").await.unwrap().is_none());
+            write(&library(100), "title").unwrap().await.unwrap();
+            let not_saved = write(&library(200), "title").unwrap();
+            let upload = committed_upload("owner-a").await.unwrap().unwrap();
+            assert_eq!(upload.item().state.time_offset, 100);
+            assert!(committed_upload("owner-b").await.is_err());
+            not_saved.await.unwrap();
+            assert_eq!(
+                committed_upload("owner-a")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .item()
+                    .state
+                    .time_offset,
+                200
+            );
+            assert_eq!(upload.item().state.time_offset, 100);
+        })
+        .await;
+        env.shutdown().await;
     }
 
     #[tokio::test]

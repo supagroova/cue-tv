@@ -33,6 +33,22 @@ pub(crate) struct Journal {
     entries: BTreeMap<String, Pending>,
 }
 
+/// Immutable request payload and acknowledgement identity. Deliberately no Debug:
+/// full library records contain viewing history and must not enter diagnostic logs.
+pub(crate) struct Upload {
+    uid: String,
+    revision: u64,
+    item: stremio_core::types::library::LibraryItem,
+}
+impl Upload {
+    pub(crate) fn item(&self) -> &stremio_core::types::library::LibraryItem {
+        &self.item
+    }
+    pub(crate) fn acknowledge(&self, journal: &Journal) -> Result<Journal, Error> {
+        journal.acknowledge(&self.uid, &self.item.id, self.revision)
+    }
+}
+
 fn valid_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
 }
@@ -174,6 +190,27 @@ impl Journal {
         Ok(merged)
     }
 
+    /// Capture only from a committed library/journal pair. Oldest pending revision
+    /// goes first so repeatedly edited titles cannot starve other queued titles.
+    pub(crate) fn next_upload(
+        &self,
+        library: &stremio_core::types::library::LibraryBucket,
+    ) -> Result<Option<Upload>, Error> {
+        self.validate_library(library)?;
+        let Some((id, pending)) = self
+            .entries
+            .iter()
+            .min_by_key(|(_, pending)| pending.revision)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Upload {
+            uid: self.uid.clone(),
+            revision: pending.revision,
+            item: library.items.get(id).ok_or(Error::Identity)?.clone(),
+        }))
+    }
+
     pub(crate) fn encode(&self) -> Result<Vec<u8>, Error> {
         let bytes = serde_json::to_vec(self).map_err(|_| Error::Invalid)?;
         if bytes.len() > MAX_BYTES {
@@ -263,6 +300,38 @@ mod tests {
             local.items["clean"].state.time_offset, 300,
             "Planning must leave canonical state unchanged"
         );
+    }
+
+    #[test]
+    fn upload_snapshot_keeps_exact_payload_and_cannot_ack_a_later_edit() {
+        use stremio_core::types::library::LibraryBucket;
+        let item = serde_json::from_value(
+            serde_json::json!({"_id":"title","type":"movie","name":"Fixture",
+            "removed":false,"temp":false,"_mtime":"2026-01-01T00:00:00Z","state":{
+            "timeWatched":0,"timeOffset":100,"overallTimeWatched":0,"timesWatched":0,
+            "flaggedWatched":0,"duration":1000}}),
+        )
+        .unwrap();
+        let mut library = LibraryBucket::new(Some("owner-a".parse().unwrap()), vec![item]);
+        let first = Journal::new("owner-a")
+            .unwrap()
+            .with_intent("owner-a", "movie", "title")
+            .unwrap();
+        let upload = first.next_upload(&library).unwrap().unwrap();
+        library.items.get_mut("title").unwrap().state.time_offset = 200;
+        let newer = first.with_intent("owner-a", "movie", "title").unwrap();
+        assert_eq!(upload.item().state.time_offset, 100);
+        assert_eq!(
+            upload.acknowledge(&newer).unwrap().revision("title"),
+            Some(2)
+        );
+        let acknowledged = upload.acknowledge(&first).unwrap();
+        assert_eq!(acknowledged.revision("title"), None);
+        assert!(acknowledged.next_upload(&library).unwrap().is_none());
+        assert!(matches!(
+            upload.acknowledge(&Journal::new("owner-b").unwrap()),
+            Err(Error::Identity)
+        ));
     }
 
     #[test]
