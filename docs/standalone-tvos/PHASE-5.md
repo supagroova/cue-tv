@@ -27,7 +27,7 @@ snapshot, fixing immediate retry against a stale active flag. These tests exerci
 real HTTP, FFI and storage, but do not establish the full SwiftUI journey.
 
 Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
-a successful account-refresh UI journey, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
+first-sign-in UI and live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
 filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
@@ -39,6 +39,32 @@ proves that all OS crash reports or third-party output are private.
 The sections below are chronological implementation records. Their statements of
 “next” work or missing APIs describe the date of each slice, not the current state.
 Use the latest [handoff entries](../agent-harness/HANDOFF.md) for subsequent evidence.
+
+## Opt-in account-recovery UI journey
+
+From the repository root, with the pinned build toolchain installed and an available
+tvOS simulator, run:
+
+```sh
+bash scripts/fixtures/check-account-journey.sh \
+  'platform=tvOS Simulator,id=YOUR_SIMULATOR_UDID'
+```
+
+The runner owns a loopback server on port 42429 and stops it on exit. It waits for
+that process's readiness log before launching Xcode. The simulator-only debug view
+creates an isolated synthetic account and a real rejected pending library upload.
+The UI test then uses remote focus and text entry to reject a password, retry with
+replacement credentials, browse the retained library title, and sign out. It also
+checks that the password is cleared after rejection. The server independently
+asserts two accepted logins, one rejected login, one rejected upload and one
+accepted upload. No live account service or credentials are used.
+
+The test cleans its opaque storage namespace/Keychain selection in a separate
+launch even after assertion failures. The test view and startup flag are absent
+from physical-device builds. This journey stays outside routine CI and does not
+prove first sign-in UI, live-service compatibility, or physical remote behavior.
+The captured recovered-library screenshot was visually reviewed for readable
+content and focus. Exact local result and screenshot paths are in the handoff.
 
 ## Native membership slice
 

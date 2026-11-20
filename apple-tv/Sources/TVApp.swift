@@ -14,8 +14,14 @@ import CueCore
         WindowGroup {
             Group {
                 #if DEBUG
+                #if targetEnvironment(simulator)
+                if ProcessInfo.processInfo.environment["CUE_ACCOUNT_JOURNEY_FIXTURE"] == "1" { AccountJourneyFixtureView() }
+                else if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
+                else { StandaloneHome() }
+                #else
                 if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
                 else { StandaloneHome() }
+                #endif
                 #else
                 StandaloneHome()
                 #endif
