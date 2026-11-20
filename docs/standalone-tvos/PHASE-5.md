@@ -59,7 +59,14 @@ namespace and is compiled only for Debug simulator builds. Device compilation an
 packaged-file inspection confirm its notification prefix is absent there. This is
 one opt-in journey, not ten physical interruption cycles or a power-loss write test.
 
-Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and physical interruption
+A [credential-save UI journey](evidence/credential-save-ui-2026-11-21.json) now
+makes the isolated account directory unavailable, verifies the storage error and
+cleared password, then restores storage and retries through the production form.
+The pending library title uploads, remains browsable and is removed with account
+state on sign-out. All four account UI journeys and their independent HTTP counts
+pass. This qualifies credential-save recovery, not playback-save failure UI.
+
+Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, playback-save failure UI and physical interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
 filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
@@ -83,13 +90,16 @@ bash scripts/fixtures/check-account-journey.sh \
 ```
 
 The runner owns a loopback server on port 42429 and stops it on exit. It waits for
-that process's readiness log before launching Xcode. Two remote-driven UI tests
-use isolated synthetic accounts: Guest → rejected password → successful first
-sign-in → catalog browsing → sign-out; and rejected pending library upload →
-rejected refresh password → successful refresh → retained library → sign-out.
-Both check that rejection clears the password. The server independently asserts
-three accepted logins, two rejected logins, one rejected upload and one accepted
-upload. No live account service or credentials are used.
+that process's readiness log before launching Xcode. Four remote-driven UI tests use isolated synthetic accounts: first sign-in with
+rejected-password retry; same-account refresh with rejected-password retry;
+credential-save failure and recovery; and invalid-selection confirmation/reset.
+The sign-in/refresh cases verify password clearing and sign-out cleanup. The server
+independently asserts six accepted logins, two rejected logins, two rejected uploads
+and two accepted uploads. No live account service or credentials are used.
+
+Pass `failed-save` as the second script argument to run only the credential-save
+journey; it asserts three accepted logins, no rejected logins and one rejected then
+one accepted library upload. Other case names are rejected before starting servers.
 
 XCTest teardown cleans each opaque storage namespace/Keychain selection in a
 separate launch, including after fatal UI-query failures. Successful journeys also

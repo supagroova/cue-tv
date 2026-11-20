@@ -1,6 +1,7 @@
 #if DEBUG && targetEnvironment(simulator)
 import SwiftUI
 import Security
+import CoreFoundation
 
 /// Creates a real paused synthetic account; all subsequent controls are production UI.
 struct AccountJourneyFixtureView: View {
@@ -10,6 +11,7 @@ struct AccountJourneyFixtureView: View {
     @State private var model: StandaloneModel?
     @State private var failed = false
     @State private var cleared = false
+    @State private var storageFault: AccountJourneyStorageFault?
     var body: some View {
         Group {
             if cleared { Text(leftovers ? "Account journey cleared leftover data" : "Account journey storage cleared") }
@@ -35,6 +37,11 @@ struct AccountJourneyFixtureView: View {
                 let storage = CoreStorage.account(id: namespace, root: root)
                 let selection = CoreAccountSelection(keyAccount: "account-journey-" + namespace.uuidString.lowercased())
                 if environment["CUE_ACCOUNT_JOURNEY_CLEAR"] == "1" {
+                    let original = root.appendingPathComponent(namespace.uuidString.lowercased(), isDirectory: true)
+                    let held = original.appendingPathExtension("held")
+                    if FileManager.default.fileExists(atPath: held.path) {
+                        try FileManager.default.moveItem(at: held, to: original)
+                    }
                     let selected: CoreAccountSelection.Account?
                     do { selected = try await selection.load() }
                     catch CoreAccountSelection.Failure.invalidRecord {
@@ -73,7 +80,8 @@ struct AccountJourneyFixtureView: View {
                     model = StandaloneModel(service: NativeCoreService(), accountSelection: selection, accountRoot: root)
                     return
                 }
-                let service = NativeCoreService(persistence: try await storage.prepare(), startup: .fixtureAccount(42429))
+                let persistence = try await storage.prepare()
+                let service = NativeCoreService(persistence: persistence, startup: .fixtureAccount(42429))
                 owner = service
                 try await service.start()
                 _ = try await waitFor(service) { $0.status == .ready }
@@ -92,6 +100,11 @@ struct AccountJourneyFixtureView: View {
                 guard let revision = state.model?.revision else { throw NativeCoreService.Failure.malformedSnapshot }
                 try await service.setDetailsLibrary(true, expectedRevision: revision)
                 _ = try await waitFor(service) { $0.model?.sync?.state == .reauthenticationRequired && $0.model?.sync?.pendingTitles == 1 }
+                if environment["CUE_ACCOUNT_JOURNEY_FAILED_SAVE"] == "1" {
+                    let held = persistence.directory.appendingPathExtension("held")
+                    try FileManager.default.moveItem(at: persistence.directory, to: held)
+                    storageFault = AccountJourneyStorageFault(original: persistence.directory, held: held, namespace: namespace)
+                }
                 model = StandaloneModel(service: service, accountSelection: selection, accountRoot: root)
             } catch {
                 try? await owner?.stop()
@@ -109,4 +122,28 @@ struct AccountJourneyFixtureView: View {
         throw NativeCoreService.Failure.requestTimeout
     }
 }
+/// Keeps fault repair outside production focus/navigation and scopes it to one fixture.
+nonisolated private final class AccountJourneyStorageFault {
+    let original: URL
+    let held: URL
+    let notification: CFNotificationName
+    init(original: URL, held: URL, namespace: UUID) {
+        self.original = original
+        self.held = held
+        notification = CFNotificationName("cue.account.restore.\(namespace.uuidString)" as CFString)
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let fault = Unmanaged<AccountJourneyStorageFault>.fromOpaque(observer).takeUnretainedValue()
+                // A failed repair leaves the real storage fault in place; UI retry must still fail.
+                if FileManager.default.fileExists(atPath: fault.held.path) {
+                    try? FileManager.default.moveItem(at: fault.held, to: fault.original)
+                }
+            }, notification.rawValue, nil, .deliverImmediately)
+    }
+    deinit {
+        CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), Unmanaged.passUnretained(self).toOpaque(), notification, nil)
+    }
+}
+
 #endif

@@ -1,4 +1,5 @@
 import XCTest
+import CoreFoundation
 
 /// Opt-in; requires scripts/fixtures/check-account-journey.sh.
 nonisolated final class AccountJourneyTests: XCTestCase {
@@ -130,6 +131,61 @@ nonisolated final class AccountJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["My library"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Sign in to Stremio"].exists)
         XCTAssertFalse(reset.exists)
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_EXPECT_EMPTY"] = "1"
+    }
+
+    @MainActor func testFailedCredentialSaveRetainsPendingLibraryAndCanRetry() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_FIXTURE"] = "1"
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_FAILED_SAVE"] = "1"
+        app.launchEnvironment["CUE_ACCOUNT_JOURNEY_STORAGE"] = UUID().uuidString
+        registerCleanup(app)
+        app.launch()
+        let open = app.buttons["Sign in again"]
+        XCTAssertTrue(open.waitForExistence(timeout: 20))
+        for attempt in 0..<2 {
+            try focus(open, direction: .down)
+            XCUIRemote.shared.press(.select)
+            let email = app.textFields["account-refresh-email"]
+            let password = app.secureTextFields["account-refresh-password"]
+            let submit = app.buttons["account-refresh-submit"]
+            XCTAssertTrue(email.waitForExistence(timeout: 10))
+            try focus(email, direction: .up)
+            XCUIRemote.shared.press(.select)
+            email.typeText("fixture@example.test")
+            XCUIRemote.shared.press(.menu)
+            try enterPassword("replacement-password", field: password, direction: .down)
+            try focus(submit, direction: .down)
+            XCUIRemote.shared.press(.select)
+            if attempt == 0 {
+                let error = app.staticTexts["account-refresh-error"]
+                XCTAssertTrue(error.waitForExistence(timeout: 10))
+                XCTAssertEqual(error.label, "Sign-in could not be saved. Your pending changes have been kept.")
+                XCTAssertFalse(submit.isEnabled, "Failed save must clear the submitted password")
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Credential save failure retains pending changes"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(open.waitForExistence(timeout: 10))
+                let namespace = try XCTUnwrap(app.launchEnvironment["CUE_ACCOUNT_JOURNEY_STORAGE"])
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                    CFNotificationName("cue.account.restore.\(namespace)" as CFString), nil, nil, true)
+            } else {
+                expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: submit)
+                waitForExpectations(timeout: 10)
+            }
+        }
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: open)
+        waitForExpectations(timeout: 10)
+        XCTAssertTrue(app.staticTexts["Stremio · Account"].exists)
+        try focus(app.buttons["My library"], direction: .down)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["Owned account title"].waitForExistence(timeout: 10))
+        XCUIRemote.shared.press(.menu)
+        try focus(app.buttons["Sign out of Stremio"], direction: .up)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Stremio · Guest"].waitForExistence(timeout: 10))
         app.launchEnvironment["CUE_ACCOUNT_JOURNEY_EXPECT_EMPTY"] = "1"
     }
 
