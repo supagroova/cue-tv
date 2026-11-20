@@ -934,9 +934,42 @@ async fn run(
                     Err("account_sync_unavailable")
                 } else if sync_scheduler.is_paused() {
                     Err("reauthentication_required")
+                } else if pending != 0 || sync_scheduler.has_in_flight() {
+                    Err("account_busy")
                 } else {
-                    sync_scheduler.retry_now(sync_started.elapsed());
-                    Ok(())
+                    // A failed Core write leaves admitted intent in memory. Repair
+                    // that atomic library/journal snapshot before reading uploads
+                    // from storage. With no pending effects or upload, this actor
+                    // barrier cannot race a newer admission or queued ACK.
+                    let result = if let Some(current) = journal.as_ref().filter(|j| j.has_pending())
+                    {
+                        let write = crate::checkpoint::write_with_journal(&ctx.library, current);
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let result = match write {
+                                Ok(write) => write.await,
+                                Err(error) => Err(error),
+                            };
+                            let _ = send.send(result);
+                        });
+                        tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => match result {
+                                Ok(Ok(())) => Ok(()),
+                                _ => Err("account_sync_save_failed"),
+                            },
+                        }
+                    } else {
+                        Ok(())
+                    };
+                    if result.is_ok() {
+                        sync_scheduler.retry_now(sync_started.elapsed());
+                        error = None;
+                    } else {
+                        error = Some("account_sync_save_failed");
+                    }
+                    publish.send_modify(|state| state.error = error);
+                    result
                 };
                 let _ = reply.send(result);
                 continue;

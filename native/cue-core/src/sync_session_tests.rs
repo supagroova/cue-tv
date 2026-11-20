@@ -54,7 +54,10 @@ async fn restored_pending_edit_uploads_and_acknowledges_without_user_interaction
 }
 
 async fn stored_pending() -> Arc<Environment> {
-    let env = Environment::new().unwrap();
+    seed_pending(Environment::new().unwrap()).await
+}
+
+async fn seed_pending(env: Arc<Environment>) -> Arc<Environment> {
     let mut profile = Profile::default();
     profile.auth = Some(serde_json::from_value(serde_json::json!({
         "key":"synthetic-token", "user":{"_id":"owner-a","email":"fixture@example.test",
@@ -403,4 +406,125 @@ async fn full_sync_journal_rejects_manual_watched_before_details_change() {
     );
     assert_eq!(result, Err("library_write_failed"));
     session.stop().await;
+}
+
+#[tokio::test]
+async fn explicit_retry_persists_failed_local_edit_before_upload() {
+    let directory = std::env::temp_dir().join(format!(
+        "cue-sync-retry-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let unavailable = directory.with_extension("unavailable");
+    let env = seed_pending(Environment::persistent(&directory, &[31; 32]).unwrap()).await;
+    let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = sent.clone();
+    *env.test_http.lock().unwrap() = Some(Arc::new(move |parts, bytes| {
+        assert!(parts.uri.path().ends_with("/datastorePut"));
+        let body: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        observed
+            .lock()
+            .unwrap()
+            .push(body["changes"][0]["state"]["timeOffset"].as_u64().unwrap());
+        Ok(br#"{"result":{"success":true}}"#.to_vec())
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if session
+            .snapshot()
+            .sync
+            .as_ref()
+            .is_some_and(|sync| sync.state == "idle")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().state, "idle");
+    let mut item = env
+        .scope(async {
+            NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .items["title"]
+                .clone()
+        })
+        .await;
+    item.state.time_offset = 200;
+    std::fs::rename(&directory, &unavailable).unwrap();
+    let _ = session.test_library_item(item).await;
+    session.settled().await.unwrap();
+    for _ in 0..200 {
+        if session
+            .snapshot()
+            .sync
+            .as_ref()
+            .is_some_and(|sync| sync.state == "waiting")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().pending_titles, 1);
+    assert_eq!(*sent.lock().unwrap(), vec![100]);
+    assert_eq!(session.retry_sync().await, Err("account_sync_save_failed"));
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().pending_titles, 1);
+    assert_eq!(*sent.lock().unwrap(), vec![100]);
+    std::fs::rename(&unavailable, &directory).unwrap();
+    session.retry_sync().await.unwrap();
+    for _ in 0..200 {
+        if session
+            .snapshot()
+            .sync
+            .as_ref()
+            .is_some_and(|sync| sync.state == "idle")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        *sent.lock().unwrap(),
+        vec![100, 200],
+        "Retry never uploaded the unsaved edit"
+    );
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().state, "idle");
+    env.scope(async {
+        let library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(library.items["title"].state.time_offset, 200);
+        let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!journal.has_pending());
+    })
+    .await;
+    session.stop().await;
+    drop(session);
+    drop(env);
+    let reopened = Environment::persistent(&directory, &[31; 32]).unwrap();
+    reopened
+        .scope(async {
+            let library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(library.items["title"].state.time_offset, 200);
+            let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!journal.has_pending());
+        })
+        .await;
+    reopened.shutdown().await;
+    drop(reopened);
+    std::fs::remove_dir_all(directory).unwrap();
 }
