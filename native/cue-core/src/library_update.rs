@@ -19,6 +19,69 @@ pub(crate) fn update(
             msg::{Event, Internal},
         },
     };
+    // Apply the same account-key guard as pinned Core before touching session state.
+    if let Msg::Internal(Internal::LibraryPullResult(request, Ok(items))) = message {
+        if ctx
+            .profile
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.key == request.auth_key)
+        {
+            if let stremio_core::types::api::DatastoreCommand::Get { ids, .. } = &request.command {
+                let planned = (|| {
+                    let base = match journal.as_ref() {
+                        Some(journal) => journal.clone(),
+                        None => crate::sync_journal::Journal::new(
+                            &ctx.profile
+                                .uid()
+                                .ok_or(crate::sync_journal::Error::Identity)?
+                                .0,
+                        )?,
+                    };
+                    let merged = base.reconcile(&ctx.library, items.clone())?;
+                    Ok::<_, crate::sync_journal::Error>((base, merged))
+                })();
+                let event = Event::LibraryItemsPulledFromAPI { ids: ids.clone() };
+                let (base, merged) = match planned {
+                    Ok(plan) => plan,
+                    Err(_) => {
+                        return Effects::msg(Msg::Event(Event::Error {
+                            error: CtxError::from(EnvError::StorageUnavailable),
+                            source: Box::new(event),
+                        }))
+                        .unchanged();
+                    }
+                };
+                let write = match crate::checkpoint::write_with_journal(&merged, &base) {
+                    Ok(write) => write,
+                    Err(_) => {
+                        return Effects::msg(Msg::Event(Event::Error {
+                            error: CtxError::from(EnvError::StorageUnavailable),
+                            source: Box::new(event),
+                        }))
+                        .unchanged();
+                    }
+                };
+                ctx.library = merged;
+                *journal = Some(base);
+                let future = async move {
+                    match write.await {
+                        Ok(()) => Msg::Event(event),
+                        Err(error) => Msg::Event(Event::Error {
+                            error: CtxError::from(error),
+                            source: Box::new(event),
+                        }),
+                    }
+                }
+                .boxed();
+                return Effects::future(EffectFuture::Sequential(future))
+                    .join(Effects::msg(Msg::Internal(Internal::LibraryChanged(true))))
+                    .join(Effects::msg(Msg::Event(Event::UserLibraryMissing {
+                        library_missing: false,
+                    })));
+            }
+        }
+    }
     let title = if ctx.profile.auth.is_some() {
         match message {
             Msg::Internal(Internal::UpdateLibraryItem(item)) => Some(item.id.clone()),
@@ -109,6 +172,16 @@ mod tests {
             let mut admitted = None;
             let effects = update(&mut ctx, &Msg::Internal(Internal::UpdateLibraryItem(item)), None, &mut admitted);
             assert_eq!(admitted.as_ref().and_then(|journal| journal.revision("fixture")), Some(1), "Intent must be reserved before effects execute");
+            let mut remote_item = ctx.library.items["fixture"].clone();
+            remote_item.state.flagged_watched = 0;
+            remote_item.mtime += chrono::Duration::days(1);
+            let pull = stremio_core::types::api::DatastoreRequest {
+                auth_key: ctx.profile.auth.as_ref().unwrap().key.clone(),
+                collection: stremio_core::constants::LIBRARY_COLLECTION_NAME.into(),
+                command: stremio_core::types::api::DatastoreCommand::Get { ids: vec!["fixture".into()], all: false },
+            };
+            let remote_effects = update(&mut ctx, &Msg::Internal(Internal::LibraryPullResult(pull, Ok(vec![remote_item]))), None, &mut admitted);
+            assert_eq!(ctx.library.items["fixture"].state.flagged_watched, 1, "Remote response overwrote an admitted edit before its save");
             let mut writes = 0;
             for effect in effects {
                 match effect {
@@ -121,6 +194,12 @@ mod tests {
                 }
             }
             assert_eq!(writes, 1);
+            for effect in remote_effects {
+                if let Effect::Future(EffectFuture::Sequential(write)) = effect {
+                    assert!(!matches!(write.await, Msg::Event(stremio_core::runtime::msg::Event::Error { .. })));
+                }
+            }
+
             let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY).await.unwrap().unwrap();
             assert_eq!(journal.revision("fixture"), Some(1));
             assert_eq!(ctx.library.items["fixture"].state.flagged_watched, 1);
