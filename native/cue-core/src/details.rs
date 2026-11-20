@@ -18,8 +18,13 @@ pub struct View {
     pub videos: Vec<Video>,
     pub video_total: usize,
     pub video_offset: usize,
+    pub seasons: Vec<u32>,
+    pub selected_season: Option<u32>,
 }
 pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
+    view_filtered(model, offset, None)
+}
+pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) -> Option<View> {
     let selected = model.selected.as_ref()?;
     let ready = model
         .meta_items
@@ -39,10 +44,28 @@ pub fn view(model: &MetaDetails, offset: usize) -> Option<View> {
             .flat_map(|item| &item.videos)
             .filter(|video| !video.id.is_empty() && video.id.len() <= 512)
     };
+    let seasons = valid_videos()
+        .filter_map(|video| video.series_info.as_ref().map(|info| info.season))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(128)
+        .collect();
+    let matching = || {
+        valid_videos().filter(|video| {
+            season.is_none_or(|season| {
+                video
+                    .series_info
+                    .as_ref()
+                    .is_some_and(|info| info.season == season)
+            })
+        })
+    };
     Some(View {
-        video_total: valid_videos().count(),
+        seasons,
+        selected_season: season,
+        video_total: matching().count(),
         video_offset: offset,
-        videos: valid_videos()
+        videos: matching()
             .skip(offset)
             .take(24)
             .map(|video| Video {

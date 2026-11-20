@@ -14,9 +14,10 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
     struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
-    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int }
+    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
     struct Source: Decodable, Sendable {
         enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
+        let addonIndex: Int?; let addonName: String?
         let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
     }
     struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
@@ -43,7 +44,20 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     let error: String?
 }
 
+nonisolated struct CoreSubtitle: Decodable, Sendable {
+    let id: String
+    let language: String
+    let label: String?
+    let url: String
+}
+
+nonisolated struct CoreSubtitleDiscovery: Decodable, Sendable {
+    let tracks: [CoreSubtitle]
+    let failedProviders: Int
+}
+
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
     let kind: String
@@ -52,11 +66,44 @@ nonisolated struct CoreTorrentRequest: Decodable, Sendable {
     let fileMustInclude: [String]
 }
 
-nonisolated private struct CoreTorrentReply: Decodable, Sendable {
+nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
+    var subtitles: [CoreSubtitle] = []
+    let metaId: String
+    let videoId: String
+    let kind: String
+    let url: String
+}
+
+extension CoreTorrentRequest {
+    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
+    nonisolated init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
+        metaId = try values.decode(String.self, forKey: .metaId)
+        videoId = try values.decode(String.self, forKey: .videoId)
+        kind = try values.decode(String.self, forKey: .kind)
+        magnet = try values.decode(String.self, forKey: .magnet)
+        fileIndex = try values.decodeIfPresent(UInt16.self, forKey: .fileIndex)
+        fileMustInclude = try values.decode([String].self, forKey: .fileMustInclude)
+    }
+}
+extension CoreHTTPSRequest {
+    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, url }
+    nonisolated init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
+        metaId = try values.decode(String.self, forKey: .metaId)
+        videoId = try values.decode(String.self, forKey: .videoId)
+        kind = try values.decode(String.self, forKey: .kind)
+        url = try values.decode(String.self, forKey: .url)
+    }
+}
+
+nonisolated private struct CoreSourceReply<Request: Decodable & Sendable>: Decodable, Sendable {
     let version: Int
     let session: UInt64
     let ticket: UInt64
-    let request: CoreTorrentRequest?
+    let request: Request?
     let error: String?
 }
 
@@ -69,6 +116,7 @@ nonisolated protocol CoreService: Sendable {
     func setInterfaceLanguage(_ language: String) async throws
     func loadAddon(_ manifestURL: String) async throws
     func installAddon(expectedRevision: UInt64) async throws
+    func selectDetailsSeason(_ season: UInt32?, expectedRevision: UInt64) async throws
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
@@ -77,7 +125,9 @@ nonisolated protocol CoreService: Sendable {
     func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
     func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws
     func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws
+    func discoverSubtitles(metaId: String, videoId: String, kind: String) async throws -> CoreSubtitleDiscovery
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest
+    func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest
     func stop() async throws
 }
 
@@ -202,6 +252,10 @@ actor NativeCoreService: CoreService {
         try dispatch(["version": 1, "action": "install_addon", "revision": expectedRevision])
     }
 
+    func selectDetailsSeason(_ season: UInt32?, expectedRevision: UInt64) throws {
+        try dispatch(["version": 1, "action": "details_season", "season": season.map { $0 as Any } ?? NSNull(), "revision": expectedRevision])
+    }
+
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) throws {
         guard offset >= 0 else { throw Failure.invalidRequest }
         try dispatch(["version": 1, "action": "details_videos", "offset": offset, "revision": expectedRevision])
@@ -244,10 +298,27 @@ actor NativeCoreService: CoreService {
     }
 
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest {
+        try await prepareSource(index: index, expectedRevision: expectedRevision, https: false)
+    }
+    func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest {
+        try await prepareSource(index: index, expectedRevision: expectedRevision, https: true)
+    }
+    func discoverSubtitles(metaId: String, videoId: String, kind: String) async throws -> CoreSubtitleDiscovery {
+        try Task.checkCancellation()
+        guard [metaId, videoId, kind].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 && $0.rangeOfCharacter(from: .controlCharacters) == nil }), kind.utf8.count <= 64 else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "meta_id": metaId, "video_id": videoId, "kind": kind])
+        let ticket = data.withUnsafeBytes { cue_core_request_subtitles(handle, $0.bindMemory(to: UInt8.self).baseAddress, $0.count) }
+        return try await readPrivateReply(handle: handle, ticket: ticket)
+    }
+    private func prepareSource<Request: Decodable & Sendable>(index: Int, expectedRevision: UInt64, https: Bool) async throws -> Request {
         try Task.checkCancellation()
         guard index >= 0 else { throw Failure.invalidRequest }
         guard let handle, retirement == nil else { throw Failure.stopped }
-        let ticket = cue_core_request_torrent(handle, index, expectedRevision)
+        let ticket = https ? cue_core_request_https(handle, index, expectedRevision) : cue_core_request_torrent(handle, index, expectedRevision)
+        return try await readPrivateReply(handle: handle, ticket: ticket)
+    }
+    private func readPrivateReply<Request: Decodable & Sendable>(handle: UInt64, ticket: UInt64) async throws -> Request {
         guard ticket != 0 else { throw Failure.busy }
         defer { _ = cue_core_discard_torrent(handle, ticket) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -261,7 +332,7 @@ actor NativeCoreService: CoreService {
                 guard length <= bytes.count else { throw Failure.malformedSnapshot }
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
-                let reply = try decoder.decode(CoreTorrentReply.self, from: Data(bytes.prefix(length)))
+                let reply = try decoder.decode(CoreSourceReply<Request>.self, from: Data(bytes.prefix(length)))
                 guard reply.version == 1, reply.session == handle, reply.ticket == ticket else { throw Failure.malformedSnapshot }
                 if let error = reply.error { throw Failure.requestFailed(error) }
                 guard let request = reply.request else { throw Failure.malformedSnapshot }
@@ -326,5 +397,37 @@ actor NativeCoreService: CoreService {
         if let handle, retirement == nil {
             Task.detached { try? await Self.retire(handle) }
         }
+    }
+}
+
+
+nonisolated struct CoreSourceGroup: Identifiable, Sendable {
+    let id: Int?
+    let name: String
+    var items: [CoreSnapshot.Source]
+}
+extension CoreSnapshot.Sources {
+    nonisolated var groups: [CoreSourceGroup] {
+        var groups: [CoreSourceGroup] = []
+        for item in items {
+            if let index = groups.firstIndex(where: { $0.id == item.addonIndex }) {
+                groups[index].items.append(item)
+            } else {
+                let name = item.addonName.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown add-on"
+                groups.append(CoreSourceGroup(id: item.addonIndex, name: name, items: [item]))
+            }
+        }
+        return groups
+    }
+}
+
+
+extension CoreSnapshot.Source {
+    nonisolated var transportName: String {
+        switch kind { case .torrent: "Torrent"; case .http: "HTTPS"; case .unsupported: "Unsupported" }
+    }
+    nonisolated var sizeLabel: String {
+        guard let sizeBytes, let bytes = Int64(exactly: sizeBytes) else { return "Size unknown" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }

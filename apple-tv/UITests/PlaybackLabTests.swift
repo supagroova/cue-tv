@@ -2,6 +2,42 @@ import XCTest
 
 nonisolated final class PlaybackLabTests: XCTestCase {
     @MainActor
+    func testDefaultEntryIsNativeGuestWithoutAndroidPairing() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Stremio · Guest"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Popular · movie"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Popular · series"].exists)
+        XCTAssertFalse(app.textFields["TV address"].exists)
+        XCTAssertFalse(app.secureTextFields["Six-digit connection code"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Native guest entry"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testSignInFormCancelsBackToGuest() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let signIn = app.buttons["Sign in to Stremio"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !signIn.hasFocus { XCUIRemote.shared.press(.up) }
+        XCTAssertTrue(signIn.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.secureTextFields["Password"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["Email"].exists)
+        XCTAssertFalse(app.buttons["Sign in"].isEnabled)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Stremio sign-in form"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.buttons["Popular · movie"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Stremio · Guest"].exists)
+    }
+
+    @MainActor
     func testTorrentFailureReturnsToSourceChoicePromptly() throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_PLAYBACK_LAB"] = "1"

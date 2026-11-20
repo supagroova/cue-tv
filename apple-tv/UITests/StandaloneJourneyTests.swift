@@ -1,0 +1,228 @@
+import XCTest
+import CoreGraphics
+
+/// Opt-in: scripts/fixtures/serve-addon.py supplies real Stremio protocol resources.
+nonisolated final class StandaloneJourneyTests: XCTestCase {
+    @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
+    @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true) }
+    @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
+    @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
+    @MainActor func testMovieWithoutEpisodesChoosesSourceAndRestoresFocus() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        app.launch()
+        let catalog = app.buttons["Owned films · movie"]
+        XCTAssertTrue(catalog.waitForExistence(timeout: 20))
+        for _ in 0..<20 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(catalog.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let title = app.buttons["Owned film"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(title.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let choose = app.buttons["Choose source"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Owned film without episode metadata"].exists)
+        XCTAssertFalse(app.buttons["Season 1"].exists)
+        for _ in 0..<8 where !choose.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(choose.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["Owned film peer fixture"].waitForExistence(timeout: 5))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(choose.waitForExistence(timeout: 5))
+        XCTAssertTrue(choose.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(title.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+        XCTAssertTrue(catalog.hasFocus)
+    }
+    @MainActor func testSearchOpensMatchingTitleAndPreservesQueryOnBack() throws { try searchJourney(empty: false) }
+    @MainActor func testEmptySearchExplainsResultAndReturnsToQuery() throws { try searchJourney(empty: true) }
+    @MainActor func testFailedSearchRetriesWithoutLosingQuery() throws { try searchJourney(empty: false, retry: true) }
+    @MainActor private func searchJourney(empty: Bool, retry: Bool = false) throws {
+        let query = retry ? "retry" : (empty ? "missing" : "needle")
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        app.launch()
+        let search = app.textFields["Search titles in a catalog"]
+        XCTAssertTrue(search.waitForExistence(timeout: 20))
+        for _ in 0..<8 where !search.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(search.hasFocus)
+        XCUIRemote.shared.press(.select)
+        search.typeText(query)
+        XCUIRemote.shared.press(.menu)
+        let catalog = app.buttons["Owned series · series"]
+        XCTAssertTrue(catalog.exists)
+        XCTAssertFalse(app.buttons["Owned films · movie"].isEnabled, "A catalog without search must not accept a query")
+        for _ in 0..<8 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(catalog.hasFocus)
+        XCUIRemote.shared.press(.select)
+        if retry {
+            let retryButton = app.buttons["Retry titles"]
+            XCTAssertTrue(retryButton.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Titles could not be loaded. Try again."].exists)
+            XCTAssertFalse(app.staticTexts["No titles found. Go back to change your search or choose another catalog."].exists)
+            for _ in 0..<8 where !retryButton.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(retryButton.hasFocus)
+            XCUIRemote.shared.press(.select)
+        }
+        if empty {
+            XCTAssertTrue(app.staticTexts["No titles found. Go back to change your search or choose another catalog."].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["Owned series 1"].exists)
+            XCUIRemote.shared.press(.menu)
+            XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+            XCTAssertTrue(catalog.hasFocus)
+            XCTAssertEqual(search.value as? String, query)
+            return
+        }
+        let result = app.buttons["Needle search result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Owned series 1"].exists, "Search must use the query endpoint, not the browse catalog")
+        for _ in 0..<8 where !result.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(result.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["S2 · E2 · Episode 2"].waitForExistence(timeout: 5))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.hasFocus)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+        XCTAssertTrue(catalog.hasFocus)
+        XCTAssertEqual(search.value as? String, query)
+    }
+    @MainActor private func journey(play: Bool, captions: Bool = false, filterSeason: Bool = false) throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
+        app.launch()
+        let catalog = app.buttons["Owned series · series"]
+        XCTAssertTrue(catalog.waitForExistence(timeout: 20))
+        for _ in 0..<20 where !catalog.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(catalog.hasFocus)
+        XCUIRemote.shared.press(.select)
+        let title = app.buttons["Owned series 2"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !title.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(title.hasFocus)
+        XCUIRemote.shared.press(.select)
+        if filterSeason {
+            let first = app.buttons["Season 1"]
+            let second = app.buttons["Season 2"]
+            XCTAssertTrue(second.waitForExistence(timeout: 5))
+            let firstEpisode = app.buttons["S1 · E1 · Episode 1"]
+            for _ in 0..<8 where !firstEpisode.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(firstEpisode.hasFocus)
+            XCUIRemote.shared.press(.up)
+            if first.hasFocus { XCUIRemote.shared.press(.right) }
+            XCTAssertTrue(second.hasFocus, "Season selection must be reachable with the remote")
+            XCUIRemote.shared.press(.select)
+            expectation(for: NSPredicate { _, _ in !app.buttons["S1 · E1 · Episode 1"].exists }, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(app.buttons["S2 · E1 · Episode 1"].exists)
+        }
+        let episode = app.buttons["S2 · E2 · Episode 2"]
+        XCTAssertTrue(episode.waitForExistence(timeout: 5))
+        for _ in 0..<12 where !episode.hasFocus { XCUIRemote.shared.press(.down) }
+        XCTAssertTrue(episode.hasFocus)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons["Owned peer fixture cue-owned-2:2:2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Cue journey fixture"].exists, "Sources identify their supplying add-on")
+        XCTAssertTrue(app.staticTexts["Torrent · Size unknown"].exists)
+        XCTAssertTrue(app.staticTexts["Owned synthetic H.264/AAC"].exists)
+        if play {
+            let source = app.buttons["Owned peer fixture cue-owned-2:2:2"]
+            for _ in 0..<8 where !source.hasFocus { XCUIRemote.shared.press(.down) }
+            XCTAssertTrue(source.hasFocus)
+            XCUIRemote.shared.press(.select)
+            let clock = app.staticTexts["source-playback-time"]
+            XCTAssertTrue(clock.waitForExistence(timeout: 25))
+            expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= 3 }, evaluatedWith: nil)
+            waitForExpectations(timeout: 20)
+            XCTAssertFalse(app.staticTexts["source-playback-error"].exists)
+            let screenshot = app.screenshot()
+            // Owned media encode episode one blue, episode two green, and the tail-index file red.
+            // Inspect decoded pixels, independently of source labels and the requested file index.
+            let image = try XCTUnwrap(screenshot.image.cgImage)
+            let pixel = try XCTUnwrap(image.cropping(to: CGRect(x: image.width / 2, y: image.height / 3, width: 1, height: 1)))
+            let context = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            let rgba = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+            XCTAssertLessThan(rgba[0], 40, "Episode two must not show the red tail-index file")
+            XCTAssertGreaterThan(rgba[1], 70, "Episode two must show its green decoded frame")
+            XCTAssertLessThan(rgba[2], 40, "Episode two must not show the blue first episode")
+            let frame = XCTAttachment(screenshot: screenshot)
+            frame.name = "Selected episode two peer playback"
+            frame.lifetime = .keepAlways
+            add(frame)
+            if captions {
+                XCUIRemote.shared.press(.up)
+                let english = app.buttons["Owned English"]
+                for _ in 0..<4 where !english.hasFocus { XCUIRemote.shared.press(.right) }
+                XCTAssertTrue(english.hasFocus)
+                XCUIRemote.shared.press(.select)
+                let hasCaption = NSPredicate { _, _ in ((try? self.brightVideoPixels(app)) ?? 0) > 20 }
+                expectation(for: hasCaption, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                let subtitleFrame = XCTAttachment(screenshot: app.screenshot())
+                subtitleFrame.name = "Rendered owned subtitle"
+                subtitleFrame.lifetime = .keepAlways
+                add(subtitleFrame)
+                XCUIRemote.shared.press(.left)
+                XCTAssertTrue(app.buttons["Subtitles off"].hasFocus)
+                XCUIRemote.shared.press(.select)
+                expectation(for: NSPredicate { _, _ in (try? self.brightVideoPixels(app)) == 0 }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                let positionBeforeReselect = Int(clock.label.dropLast()) ?? 0
+                XCUIRemote.shared.press(.right)
+                XCTAssertTrue(english.hasFocus)
+                XCUIRemote.shared.press(.select)
+                expectation(for: hasCaption, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertGreaterThanOrEqual(Int(clock.label.dropLast()) ?? 0, positionBeforeReselect - 1)
+                XCUIRemote.shared.press(.down)
+            }
+            XCTAssertTrue(app.buttons["Close"].hasFocus)
+            XCUIRemote.shared.press(captions ? .menu : .select)
+            XCTAssertTrue(source.waitForExistence(timeout: 5))
+            expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
+            XCTAssertTrue(source.hasFocus, "Closing playback restores the chosen source")
+        }
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(episode.waitForExistence(timeout: 5))
+        XCTAssertTrue(episode.hasFocus, "Back must restore the selected stable episode identity")
+        if filterSeason { XCTAssertFalse(app.buttons["S1 · E1 · Episode 1"].exists, "Back preserves the season filter") }
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(title.hasFocus, "Back must restore the selected title")
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(catalog.waitForExistence(timeout: 5))
+        XCTAssertTrue(catalog.hasFocus, "Back must restore the selected catalog")
+        let frame = XCTAttachment(screenshot: app.screenshot())
+        frame.name = "Restored catalog focus"
+        frame.lifetime = .keepAlways
+        add(frame)
+    }
+    @MainActor private func brightVideoPixels(_ app: XCUIApplication) throws -> Int {
+        let surface = app.descendants(matching: .any)["vlc-video-surface"].firstMatch
+        guard surface.exists else { return -1 }
+        let frame = surface.frame
+        let screenshot = XCUIScreen.main.screenshot().image
+        let image = try XCTUnwrap(screenshot.cgImage)
+        let scale = screenshot.scale
+        let rect = CGRect(x: frame.minX * scale, y: frame.minY * scale, width: frame.width * scale, height: frame.height * scale)
+        let video = try XCTUnwrap(image.cropping(to: rect))
+        let context = try XCTUnwrap(CGContext(data: nil, width: 480, height: 270, bitsPerComponent: 8, bytesPerRow: 1920,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(video, in: CGRect(x: 0, y: 0, width: 480, height: 270))
+        let rgba = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        return (0..<(480 * 270)).filter { pixel in
+            let base = pixel * 4
+            return rgba[base] > 180 && rgba[base + 1] > 180 && rgba[base + 2] > 180
+        }.count
+    }
+
+}

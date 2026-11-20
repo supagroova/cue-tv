@@ -14,6 +14,7 @@ pub mod details;
 pub mod sources;
 
 pub mod playback_source;
+pub mod subtitles;
 
 mod restore;
 

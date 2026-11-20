@@ -376,6 +376,34 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     );
     let revision = session.snapshot().revision;
     let playback = session.prepare_torrent(0, revision).await.unwrap();
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let subtitles = session
+        .discover_subtitles("film-0", "film-0", "movie", cancellation.clone())
+        .await
+        .unwrap();
+    assert!(
+        subtitles.tracks.is_empty(),
+        "No installed subtitle resource should produce an empty success"
+    );
+    assert!(matches!(
+        session
+            .discover_subtitles("film-0", "different-episode", "movie", cancellation.clone())
+            .await,
+        Err("stale_subtitle_identity")
+    ));
+    assert!(matches!(
+        session
+            .discover_subtitles("different-title", "film-0", "movie", cancellation.clone())
+            .await,
+        Err("stale_subtitle_identity")
+    ));
+    assert!(matches!(
+        session
+            .discover_subtitles("film-0", "film-0", "series", cancellation)
+            .await,
+        Err("stale_subtitle_identity")
+    ));
+
     assert_eq!(playback.torrent.file_index, Some(0));
     assert_eq!(playback.meta_id, "film-0");
     assert_eq!(playback.video_id, "film-0");

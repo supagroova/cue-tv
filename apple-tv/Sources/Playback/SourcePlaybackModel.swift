@@ -3,8 +3,9 @@ import Observation
 
 /// UI-facing source flow; decoder callbacks use the exposed generation token.
 @MainActor @Observable
-final class TorrentPlaybackModel {
+final class SourcePlaybackModel {
     let coordinator = PlaybackSessionCoordinator()
+    var stopDecoder: @MainActor () -> Void = {}
     private(set) var files: TorrentMetadataSnapshot?
     private(set) var playbackURL: URL?
     private(set) var generation: UUID?
@@ -13,13 +14,27 @@ final class TorrentPlaybackModel {
     private let cache: TorrentCacheStore
     init(cache: TorrentCacheStore = .shared) { self.cache = cache }
 
-    func start(_ request: CoreTorrentRequest) async {
+    func start(_ source: CorePlaybackRequest) async {
         let next = SourceOwner()
         guard let token = await coordinator.begin(teardown: { [weak self] in
+            self?.stopDecoder()
             do { try await next.stop() }
             catch { self?.cleanupFailed = true }
         }) else { return }
         owner = next; generation = token; files = nil; playbackURL = nil
+        guard case .torrent(let request) = source else {
+            guard case .https(let request) = source,
+                  request.url.utf8.count <= 16384,
+                  let url = URL(string: request.url), url.scheme == "https",
+                  let host = url.host, !host.isEmpty, url.port != 0,
+                  url.user == nil, url.password == nil, url.fragment == nil else {
+                coordinator.receive(.failed(.unsupportedFormat), generation: token)
+                return
+            }
+            playbackURL = url
+            coordinator.receive(.buffering, generation: token)
+            return
+        }
         let cache = cache
         next.creation = Task { try await TorrentPlaybackSession.create(request: request, cache: cache) }
         coordinator.receive(.discovering, generation: token)
@@ -47,9 +62,9 @@ final class TorrentPlaybackModel {
     }
 
     func showFiles(offset: Int) async {
-        guard let token = generation, let owner, !owner.closed else { return }
+        guard let token = generation, let owner, !owner.closed, let creation = owner.creation else { return }
         do {
-            let session = try await owner.creation!.value
+            let session = try await creation.value
             let snapshot = try await session.files(offset: offset)
             guard generation == token, !owner.closed else { return }
             files = snapshot
@@ -59,10 +74,10 @@ final class TorrentPlaybackModel {
     }
 
     func select(fileIndex: Int) async {
-        guard let token = generation, let owner, !owner.closed else { return }
+        guard let token = generation, let owner, !owner.closed, let creation = owner.creation else { return }
         coordinator.receive(.buffering, generation: token)
         do {
-            let session = try await owner.creation!.value
+            let session = try await creation.value
             try await session.select(fileIndex: fileIndex)
             while generation == token, !owner.closed {
                 let snapshot = try await session.snapshot()

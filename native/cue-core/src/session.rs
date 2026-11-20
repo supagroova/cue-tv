@@ -61,7 +61,15 @@ pub struct Snapshot {
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
+type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    SubtitlePlan {
+        meta_id: String,
+        video_id: String,
+        kind: String,
+        generation: Option<u64>,
+        reply: oneshot::Sender<Result<SubtitlePlan, &'static str>>,
+    },
     Logout(oneshot::Sender<Result<(), &'static str>>),
     Login(AuthRequest, oneshot::Sender<Result<(), &'static str>>),
     Language(String, oneshot::Sender<Result<(), &'static str>>),
@@ -77,6 +85,7 @@ enum Command {
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    DetailsSeason(Option<u32>, u64, oneshot::Sender<Result<(), &'static str>>),
     Sources(
         Option<usize>,
         u64,
@@ -87,6 +96,11 @@ enum Command {
         usize,
         u64,
         oneshot::Sender<Result<crate::playback_source::PreparedTorrent, &'static str>>,
+    ),
+    PrepareHttps(
+        usize,
+        u64,
+        oneshot::Sender<Result<crate::playback_source::PreparedHttps, &'static str>>,
     ),
     Effect(Msg, u64, u64, u64, u64),
 }
@@ -157,6 +171,7 @@ impl CoreSession {
             &crate::catalog::Catalog::default(),
             &MetaDetails::default(),
             0,
+            None,
             0,
             0,
             0,
@@ -339,6 +354,17 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn select_details_season(
+        &self,
+        season: Option<u32>,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsSeason(season, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn load_sources(
         &self,
         index: Option<usize>,
@@ -373,6 +399,61 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    pub async fn prepare_https(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<crate::playback_source::PreparedHttps, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::PrepareHttps(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    async fn subtitle_plan(
+        &self,
+        meta_id: &str,
+        video_id: &str,
+        kind: &str,
+        generation: Option<u64>,
+    ) -> Result<SubtitlePlan, &'static str> {
+        if [meta_id, video_id, kind].iter().any(|value| {
+            value.is_empty() || value.len() > 2048 || value.chars().any(char::is_control)
+        }) {
+            return Err("invalid_subtitle_identity");
+        }
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::SubtitlePlan {
+                meta_id: meta_id.to_owned(),
+                video_id: video_id.to_owned(),
+                kind: kind.to_owned(),
+                generation,
+                reply,
+            })
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Fetch outside the Core owner loop; verify the selection generation again
+    /// before releasing private results to the caller.
+    pub async fn discover_subtitles(
+        &self,
+        meta_id: &str,
+        video_id: &str,
+        kind: &str,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<crate::subtitles::Discovery, &'static str> {
+        let (generation, requests) = self.subtitle_plan(meta_id, video_id, kind, None).await?;
+        let result =
+            crate::subtitles::discover(self.environment.clone(), requests, cancellation.clone())
+                .await?;
+        self.subtitle_plan(meta_id, video_id, kind, Some(generation))
+            .await?;
+        if cancellation.is_cancelled() {
+            return Err("subtitle_discovery_cancelled");
+        }
+        Ok(result)
+    }
     pub async fn settled(&mut self) -> Result<Snapshot, &'static str> {
         loop {
             let state = self.snapshot();
@@ -404,6 +485,7 @@ fn snapshot(
     catalog: &crate::catalog::Catalog,
     details: &MetaDetails,
     video_offset: usize,
+    selected_season: Option<u32>,
     source_offset: usize,
     catalog_choices_offset: usize,
     catalog_item_offset: usize,
@@ -419,8 +501,8 @@ fn snapshot(
         catalog_choices_offset,
         catalog_total,
         catalog: crate::catalog::view(catalog, catalog_item_offset),
-        details: crate::details::view(details, video_offset),
-        sources: crate::sources::view(details, source_offset),
+        details: crate::details::view_filtered(details, video_offset, selected_season),
+        sources: crate::sources::view_with_addons(details, source_offset, &ctx.profile.addons),
         revision,
         stopped,
         interface_language: ctx.profile.settings.interface_language.clone(),
@@ -477,6 +559,7 @@ async fn run(
     let mut details_generation = 0u64;
     let mut source_generation = 0u64;
     let mut video_offset = 0usize;
+    let mut selected_season = None;
     let mut source_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
     let mut catalog_item_offset = 0usize;
@@ -508,6 +591,7 @@ async fn run(
                 catalog_choices_offset = 0;
                 catalog_item_offset = 0;
                 video_offset = 0;
+                selected_season = None;
                 source_offset = 0;
                 revision += 1;
                 (
@@ -659,6 +743,7 @@ async fn run(
                         &catalog,
                         &details,
                         video_offset,
+                        selected_season,
                         source_offset,
                         catalog_choices_offset,
                         catalog_item_offset,
@@ -694,6 +779,7 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -710,8 +796,12 @@ async fn run(
                     let _ = reply.send(Err("stale_details"));
                     continue;
                 }
-                let Some(selected) = crate::sources::selection(&details, video_offset, index)
-                else {
+                let Some(selected) = crate::sources::selection_filtered(
+                    &details,
+                    video_offset,
+                    index,
+                    selected_season,
+                ) else {
                     let _ = reply.send(Err("invalid_video"));
                     continue;
                 };
@@ -733,6 +823,30 @@ async fn run(
                     source_generation,
                 )
             }
+            Command::SubtitlePlan {
+                meta_id,
+                video_id,
+                kind,
+                generation,
+                reply,
+            } => {
+                let matches = details.selected.as_ref().is_some_and(|selected| {
+                    selected.meta_path.id == meta_id
+                        && selected.meta_path.r#type == kind
+                        && selected
+                            .stream_path
+                            .as_ref()
+                            .is_some_and(|path| path.id == video_id && path.r#type == kind)
+                }) && generation.is_none_or(|expected| expected == source_generation);
+                let result = if matches {
+                    crate::subtitles::plan(&ctx.profile.addons, &kind, &video_id)
+                        .map(|requests| (source_generation, requests))
+                } else {
+                    Err("stale_subtitle_identity")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
             Command::PrepareTorrent(index, expected, reply) => {
                 let result = if expected != revision {
                     Err("stale_sources")
@@ -742,6 +856,19 @@ async fn run(
                     Err("invalid_source")
                 } else {
                     crate::sources::prepare(&details, index)
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::PrepareHttps(index, expected, reply) => {
+                let result = if expected != revision {
+                    Err("stale_sources")
+                } else if !crate::sources::view(&details, source_offset)
+                    .is_some_and(|view| view.items.iter().any(|item| item.index == index))
+                {
+                    Err("invalid_source")
+                } else {
+                    crate::sources::prepare_https(&details, index)
                 };
                 let _ = reply.send(result);
                 continue;
@@ -765,6 +892,7 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -781,7 +909,7 @@ async fn run(
                     let _ = reply.send(Err("stale_details"));
                     continue;
                 }
-                let view = crate::details::view(&details, 0);
+                let view = crate::details::view_filtered(&details, 0, selected_season);
                 if !view.is_some_and(|view| {
                     view.status == "ready" && (offset == 0 || offset < view.video_total)
                 }) {
@@ -796,6 +924,40 @@ async fn run(
                     &catalog,
                     &details,
                     video_offset,
+                    selected_season,
+                    source_offset,
+                    catalog_choices_offset,
+                    catalog_item_offset,
+                    revision,
+                    pending,
+                    false,
+                    error,
+                ));
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::DetailsSeason(season, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let view = crate::details::view_filtered(&details, 0, season);
+                if !view.is_some_and(|view| {
+                    view.status == "ready" && (season.is_none() || view.video_total > 0)
+                }) {
+                    let _ = reply.send(Err("invalid_season"));
+                    continue;
+                }
+                video_offset = 0;
+                selected_season = season;
+                revision += 1;
+                publish.send_replace(snapshot(
+                    &ctx,
+                    &addon,
+                    &catalog,
+                    &details,
+                    video_offset,
+                    selected_season,
                     source_offset,
                     catalog_choices_offset,
                     catalog_item_offset,
@@ -831,6 +993,7 @@ async fn run(
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
                 video_offset = 0;
+                selected_season = None;
                 source_offset = 0;
                 error = None;
                 let selected = DetailsSelected {
@@ -988,6 +1151,7 @@ async fn run(
             &catalog,
             &details,
             video_offset,
+            selected_season,
             source_offset,
             catalog_choices_offset,
             catalog_item_offset,
@@ -1012,6 +1176,7 @@ async fn run(
         &catalog,
         &details,
         video_offset,
+        selected_season,
         source_offset,
         catalog_choices_offset,
         catalog_item_offset,

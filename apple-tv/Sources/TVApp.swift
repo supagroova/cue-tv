@@ -1,16 +1,20 @@
 import SwiftUI
 
 @main struct SittingRoomApp: App {
-    @State private var model = WatchModel()
     #if DEBUG
+    @State private var showingHTTPSFixture = ProcessInfo.processInfo.environment["CUE_HTTPS_TEST_FIXTURE"] == "1"
     @State private var showingPlaybackLab = ProcessInfo.processInfo.environment["CUE_PLAYBACK_LAB"] == "1"
     #endif
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             Group {
-                if model.connected { WatchHome(model: model) }
-                else { ConnectView(model: model) }
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
+                else { StandaloneHome() }
+                #else
+                StandaloneHome()
+                #endif
             }
             #if DEBUG
             .overlay(alignment: .topTrailing) {
@@ -19,17 +23,13 @@ import SwiftUI
                     .accessibilityIdentifier("playback-lab-open")
             }
             .fullScreenCover(isPresented: $showingPlaybackLab) { PlaybackLabView() }
+            .fullScreenCover(isPresented: $showingHTTPSFixture) {
+                let port = ProcessInfo.processInfo.environment["CUE_HTTPS_TEST_UNTRUSTED"] == "1" ? 42426 : 42425
+                SourcePlaybackView(request: .https(CoreHTTPSRequest(metaId: "owned-fixture", videoId: "owned-fixture", kind: "movie", url: "https://127.0.0.1:\(port)/episode01.mp4")))
+            }
             #endif
             .preferredColorScheme(.dark)
-            .tint(.white)
-            .task { await model.refresh() }
-            .task(id: scenePhase == .active && model.connected) {
-                if scenePhase == .active && model.connected { await model.observeRemote() }
-            }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await model.refresh() } }
-            }
-            .onOpenURL { url in Task { await model.accept(url) } }
+
         }
     }
 }

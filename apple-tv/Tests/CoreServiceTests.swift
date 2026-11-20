@@ -5,6 +5,15 @@ import Security
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
+@Test func sourceGroupsUseProviderIdentityWithoutRenumberingSelections() throws {
+    let data = Data(#"{"status":"ready","loading":false,"video_id":"owned","offset":0,"total":4,"items":[{"index":0,"kind":"http","addon_index":4,"addon_name":"Twin"},{"index":1,"kind":"http","addon_index":5,"addon_name":"Twin"},{"index":2,"kind":"torrent","addon_index":4,"addon_name":"Twin"},{"index":3,"kind":"unsupported"}]}"#.utf8)
+    let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let sources = try decoder.decode(CoreSnapshot.Sources.self, from: data)
+    #expect(sources.groups.map(\.id) == [4, 5, nil])
+    #expect(sources.groups.map(\.name) == ["Twin", "Twin", "Unknown add-on"])
+    #expect(sources.groups.map { $0.items.map(\.index) } == [[0, 2], [1], [3]])
+}
+
 @Test func swiftCoreServiceRunsRealModelAndJoinsStop() async throws {
     let service = NativeCoreService()
     try await service.start()
@@ -98,6 +107,24 @@ import Security
     #expect(state.model?.details?.description == "Owned title details")
     #expect(state.model?.details?.videoTotal == 30)
     #expect(state.model?.details?.videos.count == 24)
+    #expect(state.model?.details?.seasons == [1, 2])
+    try await service.selectDetailsSeason(2, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.selectedSeason == 2 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.selectedSeason == 2)
+    #expect(state.model?.details?.videoTotal == 15)
+    #expect(state.model?.details?.videos.first?.id == "cue-fixture:16")
+    #expect(state.model?.details?.videos.last?.id == "cue-fixture:30")
+    try await service.selectDetailsSeason(nil, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.selectedSeason == nil { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.videoTotal == 30)
     try await service.showDetailsVideos(offset: 24, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {
         state = try await service.snapshot()
@@ -113,7 +140,7 @@ import Security
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(state.model?.sources?.videoId == "cue-fixture:30")
-    #expect(state.model?.sources?.total == 30)
+    #expect(state.model?.sources?.total == 31)
     #expect(state.model?.sources?.items.count == 24)
     #expect(state.model?.sources?.items.first?.kind == .torrent)
     #expect(state.model?.sources?.items.first?.sizeBytes == nil)
@@ -123,8 +150,8 @@ import Security
         if state.model?.sources?.offset == 24 { break }
         try await Task.sleep(for: .milliseconds(10))
     }
-    #expect(state.model?.sources?.items.count == 6)
-    #expect(state.model?.sources?.items.last?.name == "Source 29")
+    #expect(state.model?.sources?.items.count == 7)
+    #expect(state.model?.sources?.items.last?.name == "Direct HTTPS")
     let handoff = try await service.prepareTorrent(index: 29, expectedRevision: try #require(state.model?.revision))
     #expect(handoff.magnet.contains("0123456789abcdef0123456789abcdef01234567"))
     #expect(handoff.metaId == "cue-fixture")
@@ -132,6 +159,44 @@ import Security
     #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
+    let discovered = try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind)
+    #expect(discovered.tracks.map(\.id) == ["owned-resource"])
+    #expect(discovered.failedProviders == 0)
+    let stalled = Task { try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind) }
+    let reachedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while await fixture.subtitles.requests < 2, ContinuousClock.now < reachedDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    try #require(await fixture.subtitles.requests == 2)
+    let cancelStarted = ContinuousClock.now
+    stalled.cancel()
+    await #expect(throws: CancellationError.self) { try await stalled.value }
+    let closedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !(await fixture.subtitles.closed), ContinuousClock.now < closedDeadline { try await Task.sleep(for: .milliseconds(5)) }
+    #expect(await fixture.subtitles.closed)
+    #expect(cancelStarted.duration(to: .now) < .seconds(2))
+    // A canceled HTTP query must release the serial C command owner promptly.
+    try await service.setInterfaceLanguage("fra")
+    var afterCancel = try await service.snapshot()
+    for _ in 0..<100 where afterCancel.model?.interfaceLanguage != "fra" {
+        try await Task.sleep(for: .milliseconds(10)); afterCancel = try await service.snapshot()
+    }
+    #expect(afterCancel.model?.interfaceLanguage == "fra")
+    state = afterCancel
+
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_subtitle_identity")) {
+        try await service.discoverSubtitles(metaId: handoff.metaId, videoId: "wrong-episode", kind: handoff.kind)
+    }
+
+    let https = try await service.prepareHTTPS(index: 30, expectedRevision: try #require(state.model?.revision))
+    #expect(https.url == "https://media.example.test/video.mkv?signature=synthetic%2Bvalue")
+    #expect(https.metaId == "cue-fixture")
+    #expect(https.videoId == "cue-fixture:30")
+    #expect(https.kind == "movie")
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {
+        try await service.prepareHTTPS(index: 30, expectedRevision: 0)
+    }
+    await #expect(throws: NativeCoreService.Failure.requestFailed("unsupported_source")) {
+        try await service.prepareHTTPS(index: 29, expectedRevision: try #require(state.model?.revision))
+    }
     await #expect(throws: NativeCoreService.Failure.requestFailed("stale_sources")) {
         try await service.prepareTorrent(index: 29, expectedRevision: 0)
     }
@@ -215,29 +280,53 @@ import Security
 }
 
 
+private actor SubtitleResourceProbe {
+    var requests = 0
+    var closed = false
+    func arrived() -> Int { requests += 1; return requests }
+    func disconnected() { closed = true }
+}
+
 nonisolated private final class CoreHTTPFixture: Sendable {
     let listener: NWListener
     let port: UInt16
-    init(listener: NWListener, port: UInt16) { self.listener = listener; self.port = port }
+    let subtitles: SubtitleResourceProbe
+    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe) { self.listener = listener; self.port = port; self.subtitles = subtitles }
     static func start() async throws -> CoreHTTPFixture {
         let listener = try NWListener(using: .tcp, on: .any)
+        let subtitles = SubtitleResourceProbe()
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
                 let requestText = request.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                if requestText.contains("/subtitles/movie/cue-fixture") {
+                    Task {
+                        if await subtitles.arrived() == 1 {
+                            let body = #"{"subtitles":[{"id":"owned-resource","lang":"eng","url":"https://fixture.test/captions.vtt"}]}"#
+                            let response = "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                            connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+                        } else {
+                            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, complete, error in
+                                if complete || error != nil { Task { await subtitles.disconnected() } }
+                                connection.cancel()
+                            }
+                        }
+                    }
+                    return
+                }
                 let isMetadata = requestText.contains("/meta/movie/cue-fixture.json")
                 let isCatalog = requestText.contains("/catalog/movie/fixture")
                 let range = requestText.contains("skip=30") ? 30..<30 : requestText.contains("skip=27") ? 27..<30 : 0..<27
                 let metas = range.map { index in ["id": index == 0 ? "cue-fixture" : "cue-fixture-\(index)", "name": index == 0 ? (requestText.contains("search=needle") ? "Search result" : "Simulator film") : "Film \(index)", "type": "movie"] }
                 let catalogBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["metas": metas]), as: UTF8.self)
-                let videos = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)"] }
+                let videos: [[String: Any]] = (1...30).map { ["id": "cue-fixture:\($0)", "title": "Edition \($0)", "season": $0 <= 15 ? 1 : 2, "episode": ($0 - 1) % 15 + 1] }
                 let metadataBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["meta": ["id": "cue-fixture", "type": "movie", "name": "Detailed simulator film", "description": "Owned title details", "videos": videos]]), as: UTF8.self)
-                let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] }
+                let streams = (0..<30).map { ["infoHash": "0123456789abcdef0123456789abcdef01234567", "name": "Source \($0)"] } + [["url": "https://media.example.test/video.mkv?signature=synthetic%2Bvalue", "name": "Direct HTTPS"]]
                 let sourceBody = String(decoding: try! JSONSerialization.data(withJSONObject: ["streams": streams]), as: UTF8.self)
                 let body = requestText.contains("/stream/movie/") ? sourceBody : isCatalog
                     ? catalogBody
                     : isMetadata ? metadataBody
-                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"stream","types":["movie"],"idPrefixes":["cue-"]},{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"},{"name":"search"}]}]}"#
+                    : #"{"id":"org.cue.simulator","name":"Simulator fixture","version":"1.0.0","description":"Owned fixture","resources":["catalog",{"name":"subtitles","types":["movie"],"idPrefixes":["cue-"]},{"name":"stream","types":["movie"],"idPrefixes":["cue-"]},{"name":"meta","types":["movie"],"idPrefixes":["cue-"]}],"types":["movie"],"catalogs":[{"id":"fixture","type":"movie","name":"Fixture catalogue","extra":[{"name":"skip"},{"name":"search"}]}]}"#
                 let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
             }
@@ -257,7 +346,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
             }
             listener.start(queue: .global())
         }
-        return CoreHTTPFixture(listener: listener, port: port)
+        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles)
     }
 }
 
