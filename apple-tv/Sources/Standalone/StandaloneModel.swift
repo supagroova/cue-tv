@@ -10,6 +10,7 @@ final class StandaloneModel {
     private var active: Task<Void, Never>?
     private var retirement: Task<Void, any Error>?
     private var generation = UUID()
+    private(set) var retryingSync = false
     private(set) var signingOut = false
     var needsSignOutRetry: Bool { pendingSignOut != nil }
     private var pendingSignOut: (owner: NativeCoreService?, account: CoreAccountSelection.Account)?
@@ -30,6 +31,7 @@ final class StandaloneModel {
         }
         let token = UUID()
         generation = token
+        retryingSync = false
         let previous = active
         let pendingRetirement = retirement
         previous?.cancel()
@@ -88,6 +90,7 @@ final class StandaloneModel {
         guard await closePlayback() else { throw NativeCoreService.Failure.requestFailed("playback_save_failed") }
         let token = UUID()
         generation = token
+        retryingSync = false
         snapshot = nil
         let previous = active
         let oldService = service
@@ -156,6 +159,20 @@ final class StandaloneModel {
             guard generation == token, !Task.isCancelled else { return false }
             self.error = "That selection is no longer available. Please try again."
             return false
+        }
+    }
+
+    func retrySync() async {
+        guard let service, !signingOut, pendingSignOut == nil, !retryingSync,
+              snapshot?.model?.authenticated == true,
+              snapshot?.model?.sync?.state == .waiting else { return }
+        let token = generation
+        retryingSync = true
+        defer { if generation == token { retryingSync = false } }
+        do { try await service.retrySync() }
+        catch {
+            guard generation == token, !Task.isCancelled else { return }
+            self.error = "Sync could not restart. Your pending changes have not been discarded."
         }
     }
 

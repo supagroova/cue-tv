@@ -70,7 +70,25 @@ struct StandaloneHome: View {
             if let accountError { Text(accountError).foregroundStyle(.orange) }
             if let error = model.error { Text(error).foregroundStyle(.orange) }
             if let state = model.snapshot?.model {
-                if state.error != nil { Text("The request could not be completed. Please retry.").foregroundStyle(.orange) }
+                if let sync = state.sync {
+                    switch sync.state {
+                    case .idle: EmptyView()
+                    case .syncing:
+                        Text("Syncing \(sync.pendingTitles) pending titles…").foregroundStyle(.secondary)
+                    case .waiting:
+                        HStack {
+                            Text("\(sync.pendingTitles) titles are waiting to sync.").foregroundStyle(.orange)
+                            Button("Retry sync") { Task { await model.retrySync() } }
+                                .disabled(model.retryingSync || model.signingOut)
+                        }.focusSection()
+                    case .reauthenticationRequired:
+                        Text("Stremio rejected this account session. Sync is paused; pending changes are retained.")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if let error = state.error, state.sync == nil || !error.hasPrefix("account_sync_") {
+                    Text("The request could not be completed. Please retry.").foregroundStyle(.orange)
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         switch screen {

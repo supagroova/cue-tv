@@ -22,7 +22,16 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
     }
     struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
+    struct Sync: Decodable, Sendable {
+        enum State: String, Decodable, Sendable {
+            case idle, syncing, waiting
+            case reauthenticationRequired = "reauthentication_required"
+        }
+        let pendingTitles: Int
+        let state: State
+    }
     struct Model: Decodable, Sendable {
+        let sync: Sync?
         let authenticated: Bool
         let revision: UInt64
         let stopped: Bool
@@ -133,6 +142,7 @@ nonisolated protocol CoreService: Sendable {
     func start() async throws
     func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
+    func retrySync() async throws
     func logout() async throws
     func snapshot() async throws -> CoreSnapshot
     func setInterfaceLanguage(_ language: String) async throws
@@ -252,6 +262,8 @@ actor NativeCoreService: CoreService {
         }
     }
 
+    /// Queue admission only; sync state and command rejection arrive in snapshots.
+    func retrySync() throws { try dispatch(["version": 1, "action": "retry_sync"]) }
     func logout() throws { try dispatch(["version": 1, "action": "logout"]) }
 
     func snapshot() throws -> CoreSnapshot {

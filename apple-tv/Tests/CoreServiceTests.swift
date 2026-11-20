@@ -5,6 +5,15 @@ import Security
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
+@Test func accountSyncStatusDecodesNativeWireStates() throws {
+    let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required"}"#.utf8))
+    #expect(rejected.state == .reauthenticationRequired)
+    #expect(rejected.pendingTitles == 2)
+    let waiting = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":1,"state":"waiting"}"#.utf8))
+    #expect(waiting.state == .waiting)
+}
+
 @Test func sourceGroupsUseProviderIdentityWithoutRenumberingSelections() throws {
     let data = Data(#"{"status":"ready","loading":false,"video_id":"owned","offset":0,"total":4,"items":[{"index":0,"kind":"http","addon_index":4,"addon_name":"Twin"},{"index":1,"kind":"http","addon_index":5,"addon_name":"Twin"},{"index":2,"kind":"torrent","addon_index":4,"addon_name":"Twin"},{"index":3,"kind":"unsupported"}]}"#.utf8)
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -25,6 +34,13 @@ import Security
     #expect(state.status == .ready)
     #expect(try await service.accountIdentity() == nil)
     #expect(state.model?.interfaceLanguage == "eng")
+    #expect(state.model?.sync == nil)
+    try await service.retrySync()
+    for _ in 0..<100 where state.error != "account_sync_unavailable" {
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await service.snapshot()
+    }
+    #expect(state.error == "account_sync_unavailable")
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.loadAddon("file:///private/manifest.json") }
     try await service.setInterfaceLanguage("fra")
     for _ in 0..<100 {
