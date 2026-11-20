@@ -660,3 +660,5 @@ unwired to account-session mutations and uploads; their passing tests do not est
 account sync. Next implement restore and admission routing, conflict merge and network
 revision acknowledgments/backoff. No additional simulator qualification rerun is
 claimed for the dormant journal module. Root unrelated dirty documents remain intact.
+
+- 2026-11-20: Phase 5 now contains the validated component-cache branch (PR14 merged into Phase5, not main), ten graceful encrypted resume cycles and atomic journal foundation at remote9b55c73. Added startup validation of any persisted journal against the restored library; guest/foreign journal regression fails before fix (551e46f870e74ec6b55364779cd0982d) and preserves stored data after rejection. Full native suite35f14af14d6b4f2fa887095ebccf5605 and unsigned device buildc708b8990698441294b561350f706364 pass. This validates stored intent; session ownership, account mutation admission and network scheduler remain unfinished. PRs3–8/13 have no review threads; GitHub now marks7/8/13 non-draft, which does not establish release readiness.
