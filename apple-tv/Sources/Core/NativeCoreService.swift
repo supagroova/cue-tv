@@ -12,16 +12,28 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
     }
     struct CatalogChoice: Decodable, Sendable { let searchable: Bool; let index: Int; let name: String; let kind: String }
     struct CatalogItem: Decodable, Sendable { let id: String; let name: String; let kind: String }
+    struct Library: Decodable, Sendable { let items: [CatalogItem]; let offset: Int; let total: Int }
     struct Catalog: Decodable, Sendable { let status: Addon.Status; let items: [CatalogItem]; let hasMore: Bool; let offset: Int }
-    struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32? }
-    struct Details: Decodable, Sendable { let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
+    struct Video: Decodable, Sendable { let id: String; let title: String; let season: UInt32?; let episode: UInt32?; let watched: Bool? }
+    struct Details: Decodable, Sendable { let watched: Bool?; let status: Addon.Status; let id: String; let kind: String; let name: String?; let description: String?; let videos: [Video]; let videoTotal: Int; let videoOffset: Int; let seasons: [UInt32]; let selectedSeason: UInt32? }
     struct Source: Decodable, Sendable {
         enum Kind: String, Decodable, Sendable { case torrent, http, unsupported }
         let addonIndex: Int?; let addonName: String?
         let index: Int; let kind: Kind; let name: String?; let description: String?; let sizeBytes: UInt64?
     }
     struct Sources: Decodable, Sendable { let status: Addon.Status; let loading: Bool; let videoId: String; let items: [Source]; let offset: Int; let total: Int }
+    struct Sync: Decodable, Sendable {
+        enum State: String, Decodable, Sendable {
+            case idle, syncing, waiting
+            case reauthenticationRequired = "reauthentication_required"
+        }
+        let pendingTitles: Int
+        let reauthenticating: Bool?
+        let reauthSequence: UInt64?
+        let state: State
+    }
     struct Model: Decodable, Sendable {
+        let sync: Sync?
         let authenticated: Bool
         let revision: UInt64
         let stopped: Bool
@@ -31,6 +43,8 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         let catalogTotal: Int
         let sources: Sources?
         let details: Details?
+        let detailsInLibrary: Bool?
+        let library: Library?
         let catalog: Catalog?
         let addonCount: Int
         let addon: Addon?
@@ -57,6 +71,7 @@ nonisolated struct CoreSubtitleDiscovery: Decodable, Sendable {
 }
 
 nonisolated struct CoreTorrentRequest: Decodable, Sendable {
+    var playbackToken: UInt64 = 0
     var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
@@ -67,6 +82,7 @@ nonisolated struct CoreTorrentRequest: Decodable, Sendable {
 }
 
 nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
+    var playbackToken: UInt64 = 0
     var subtitles: [CoreSubtitle] = []
     let metaId: String
     let videoId: String
@@ -75,9 +91,10 @@ nonisolated struct CoreHTTPSRequest: Decodable, Sendable {
 }
 
 extension CoreTorrentRequest {
-    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
+    nonisolated enum CodingKeys: String, CodingKey { case playbackToken, subtitles, metaId, videoId, kind, magnet, fileIndex, fileMustInclude }
     nonisolated init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        playbackToken = try values.decode(UInt64.self, forKey: .playbackToken)
         subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
         metaId = try values.decode(String.self, forKey: .metaId)
         videoId = try values.decode(String.self, forKey: .videoId)
@@ -88,9 +105,10 @@ extension CoreTorrentRequest {
     }
 }
 extension CoreHTTPSRequest {
-    nonisolated enum CodingKeys: String, CodingKey { case subtitles, metaId, videoId, kind, url }
+    nonisolated enum CodingKeys: String, CodingKey { case playbackToken, subtitles, metaId, videoId, kind, url }
     nonisolated init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        playbackToken = try values.decode(UInt64.self, forKey: .playbackToken)
         subtitles = try values.decodeIfPresent([CoreSubtitle].self, forKey: .subtitles) ?? []
         metaId = try values.decode(String.self, forKey: .metaId)
         videoId = try values.decode(String.self, forKey: .videoId)
@@ -107,10 +125,28 @@ nonisolated private struct CoreSourceReply<Request: Decodable & Sendable>: Decod
     let error: String?
 }
 
+nonisolated enum CorePlaybackAction: UInt8, Sendable {
+    case start = 0, seek, played, pause, unpause, checkpoint, close, retire
+    var returnsProgress: Bool { [.seek, .played, .pause, .unpause].contains(self) }
+}
+nonisolated struct CorePlaybackProgress: Decodable, Sendable {
+    let time: UInt64
+    let duration: UInt64
+    let timeWatched: UInt64
+    let watched: Bool
+}
+
 nonisolated protocol CoreService: Sendable {
+    func playback(token: UInt64, action: CorePlaybackAction, time: UInt64, duration: UInt64) async throws -> CorePlaybackProgress?
+    func startPlayback(token: UInt64) async throws
+    func checkpointPlayback(token: UInt64) async throws
+    func closePlayback(token: UInt64) async throws
     func start() async throws
     func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
+    func reauthenticate(email: String, password: String) async throws -> UInt64
+    func cancelReauthentication(sequence: UInt64) async throws
+    func retrySync() async throws
     func logout() async throws
     func snapshot() async throws -> CoreSnapshot
     func setInterfaceLanguage(_ language: String) async throws
@@ -120,6 +156,10 @@ nonisolated protocol CoreService: Sendable {
     func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws
     func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws
     func showSources(offset: Int, expectedRevision: UInt64) async throws
+    func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws
+    func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws
+    func showLibrary(offset: Int, expectedRevision: UInt64) async throws
+    func loadLibraryDetails(index: Int, expectedRevision: UInt64) async throws
     func loadDetails(index: Int, expectedRevision: UInt64) async throws
     func loadCatalog(index: Int, expectedRevision: UInt64) async throws
     func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws
@@ -134,10 +174,25 @@ nonisolated protocol CoreService: Sendable {
 /// Serializes native admission off the UI actor; snapshots exclude account secrets.
 actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
-        case requestFailed(String) }
+        case requestFailed(String), refreshCleanupRequired(UInt64) }
     private let persistence: CorePersistenceConfiguration?
-    enum Startup: Sendable { case guest, newAccount, restoreAccount(String) }
+    enum Startup: Sendable {
+        case guest, newAccount, restoreAccount(String)
+        #if DEBUG && targetEnvironment(simulator)
+        case fixtureAccount(UInt16)
+        #endif
+        var allowsLogin: Bool {
+            switch self {
+            case .newAccount: true
+            #if DEBUG && targetEnvironment(simulator)
+            case .fixtureAccount: true
+            #endif
+            default: false
+            }
+        }
+    }
     private let startup: Startup
+    private var refreshAdmissionInProgress = false
     /// Account restoration requires an identity from protected app storage.
     /// A missing/mismatched account fails rather than falling back to guest.
     init(persistence: CorePersistenceConfiguration? = nil, startup: Startup = .guest) {
@@ -161,7 +216,7 @@ actor NativeCoreService: CoreService {
         guard !retiringAccount else { throw Failure.stopped }
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
-        if case .newAccount = startup, persistence == nil { throw Failure.invalidRequest }
+        if startup.allowsLogin, persistence == nil { throw Failure.invalidRequest }
         if case .restoreAccount(let expectedUser) = startup {
             guard persistence != nil, !expectedUser.isEmpty, expectedUser.utf8.count <= 512,
                   !expectedUser.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
@@ -173,6 +228,12 @@ actor NativeCoreService: CoreService {
             let path = Data(persistence.directory.path.utf8)
             created = path.withUnsafeBytes { pathBytes in
                 persistence.key.withUnsafeBytes { keyBytes in
+                    #if DEBUG && targetEnvironment(simulator)
+                    if case .fixtureAccount(let port) = startup {
+                        return cue_core_create_account_fixture(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                            keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count, port)
+                    }
+                    #endif
                     if case .newAccount = startup {
                         return cue_core_create_account(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
                             keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count)
@@ -208,14 +269,75 @@ actor NativeCoreService: CoreService {
 
     /// Returns after queue admission; callers observe authenticated state/error separately.
     func login(email: String, password: String) throws {
-        guard case .newAccount = startup else { throw Failure.invalidRequest }
+        guard startup.allowsLogin else { throw Failure.invalidRequest }
+        try admitCredentials(email: email, password: password, refresh: false)
+    }
+
+    /// Wait for native admission identity, not authentication completion. One caller
+    /// owns admission at a time; cancellation targets only the expected next attempt.
+    func reauthenticate(email: String, password: String) async throws -> UInt64 {
+        try Task.checkCancellation()
+        if case .guest = startup { throw Failure.invalidRequest }
+        guard !refreshAdmissionInProgress else { throw Failure.busy }
+        let initial = try snapshot()
+        guard initial.model?.authenticated == true, let sync = initial.model?.sync,
+              sync.state == .reauthenticationRequired, sync.reauthenticating != true,
+              let previous = sync.reauthSequence, previous < UInt64.max else { throw Failure.invalidRequest }
+        let expected = previous + 1
+        refreshAdmissionInProgress = true
+        defer { refreshAdmissionInProgress = false }
+        try admitCredentials(email: email, password: password, refresh: true)
+        do {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while true {
+                try Task.checkCancellation()
+                let state = try snapshot()
+                guard state.session == initial.session, state.status != .stopped,
+                      state.model?.authenticated == true else { throw Failure.stopped }
+                if let sequence = state.model?.sync?.reauthSequence, sequence > previous {
+                    guard sequence == expected else { throw Failure.requestFailed("reauthentication_replaced") }
+                    return sequence
+                }
+                guard ContinuousClock.now < deadline else { throw Failure.requestTimeout }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        } catch {
+            let original = error
+            let cancellation = Task { try await self.cancelReauthentication(sequence: expected) }
+            do { try await cancellation.value }
+            catch { throw Failure.refreshCleanupRequired(expected) }
+            throw original
+        }
+    }
+
+    func cancelReauthentication(sequence: UInt64) async throws {
+        guard sequence > 0 else { throw Failure.invalidRequest }
+        // A released session has no remaining refresh work. Failed or in-flight
+        // retirement retains its handle and must still report cleanup failure.
+        guard handle != nil else { return }
+        try dispatch(["version": 1, "action": "cancel_reauthentication", "sequence": sequence])
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while true {
+            let state = try snapshot()
+            guard state.status != .stopped, let handle else { throw Failure.stopped }
+            if cue_core_reauthentication_cancelled(handle) == sequence { return }
+            guard ContinuousClock.now < deadline else { throw Failure.requestTimeout }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private func admitCredentials(email: String, password: String, refresh: Bool) throws {
         guard let handle, retirement == nil else { throw Failure.stopped }
         let emailBytes = Data(email.utf8)
         let passwordBytes = Data(password.utf8)
         let result = emailBytes.withUnsafeBytes { email in
             passwordBytes.withUnsafeBytes { password in
-                cue_core_login(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
-                               password.bindMemory(to: UInt8.self).baseAddress, password.count)
+                if refresh {
+                    return cue_core_reauthenticate(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
+                                                   password.bindMemory(to: UInt8.self).baseAddress, password.count)
+                }
+                return cue_core_login(handle, email.bindMemory(to: UInt8.self).baseAddress, email.count,
+                                      password.bindMemory(to: UInt8.self).baseAddress, password.count)
             }
         }
         switch result {
@@ -226,6 +348,8 @@ actor NativeCoreService: CoreService {
         }
     }
 
+    /// Queue admission only; sync state and command rejection arrive in snapshots.
+    func retrySync() throws { try dispatch(["version": 1, "action": "retry_sync"]) }
     func logout() throws { try dispatch(["version": 1, "action": "logout"]) }
 
     func snapshot() throws -> CoreSnapshot {
@@ -297,6 +421,68 @@ actor NativeCoreService: CoreService {
         try dispatch(["version": 1, "action": "catalog_items", "offset": offset, "revision": expectedRevision])
     }
 
+    func showLibrary(offset: Int, expectedRevision: UInt64) throws {
+        guard offset >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "library_window", "offset": offset, "revision": expectedRevision])
+    }
+    func loadLibraryDetails(index: Int, expectedRevision: UInt64) throws {
+        guard index >= 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "library_details", "index": index, "revision": expectedRevision])
+    }
+    private struct PlaybackReceipt: Decodable, Sendable {
+        let token: UInt64
+        let action: UInt8
+        let progress: CorePlaybackProgress?
+    }
+    func playback(token: UInt64, action: CorePlaybackAction, time: UInt64 = 0, duration: UInt64 = 0) async throws -> CorePlaybackProgress? {
+        try Task.checkCancellation()
+        guard token > 0, time <= UInt64(Int64.max), duration <= UInt64(Int64.max),
+              action == .seek || action == .played || (time == 0 && duration == 0) else { throw Failure.invalidRequest }
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        var ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        let admissionDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        // A zero ticket admits nothing. Subtitle discovery may own this slot;
+        // wait cancellably rather than treating contention as a failed save.
+        // Never replay after a nonzero ticket, including timeout/unknown outcome.
+        while ticket == 0 {
+            guard ContinuousClock.now < admissionDeadline else { throw Failure.busy }
+            try await Task.sleep(for: .milliseconds(20))
+            try Task.checkCancellation()
+            guard self.handle == handle, retirement == nil else { throw Failure.stopped }
+            ticket = cue_core_request_playback(handle, token, action.rawValue, time, duration)
+        }
+        let receipt: PlaybackReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.token == token, receipt.action == action.rawValue,
+              (receipt.progress != nil) == action.returnsProgress else { throw Failure.malformedSnapshot }
+        return receipt.progress
+    }
+    func startPlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .start) }
+    func checkpointPlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .checkpoint) }
+    func closePlayback(token: UInt64) async throws { _ = try await playback(token: token, action: .close) }
+
+    private struct WatchedReceipt: Decodable, Sendable { let watched: Bool; let videoId: String? }
+    func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws {
+        try Task.checkCancellation()
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        if let videoID {
+            guard !videoID.isEmpty, videoID.utf8.count <= 512,
+                  videoID.rangeOfCharacter(from: .controlCharacters) == nil else { throw Failure.invalidRequest }
+        }
+        let bytes = Array((videoID ?? "").utf8)
+        let ticket = bytes.withUnsafeBufferPointer {
+            cue_core_request_watched(handle, $0.baseAddress, $0.count, watched ? 1 : 0, expectedRevision)
+        }
+        let receipt: WatchedReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.watched == watched, receipt.videoId == videoID else { throw Failure.malformedSnapshot }
+    }
+    private struct LibraryReceipt: Decodable, Sendable { let member: Bool }
+    func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws {
+        try Task.checkCancellation()
+        guard let handle, retirement == nil else { throw Failure.stopped }
+        let ticket = cue_core_request_library(handle, member ? 1 : 0, expectedRevision)
+        let receipt: LibraryReceipt = try await readPrivateReply(handle: handle, ticket: ticket)
+        guard receipt.member == member else { throw Failure.malformedSnapshot }
+    }
     func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest {
         try await prepareSource(index: index, expectedRevision: expectedRevision, https: false)
     }

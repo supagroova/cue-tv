@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 import Testing
 @testable import SittingRoomTV
 
@@ -175,7 +176,10 @@ private actor ActionGate {
     let service = NativeCoreService(persistence: configuration, startup: .newAccount)
     let model = StandaloneModel(service: service)
     let run = Task { await model.run() }
-    for _ in 0..<100 where model.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let startupDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while model.snapshot?.status != .ready, ContinuousClock.now < startupDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
     #expect(model.snapshot?.status == .ready)
     try await model.signOut(selection: selection, root: root)
     await run.value
@@ -317,4 +321,63 @@ private actor ActionGate {
     #expect(source == nil)
     run.cancel()
     await run.value
+}
+
+@Test @MainActor func refreshFormCannotReplaceGuestAndCanCancelWithoutRetiringIt() async throws {
+    let service = NativeCoreService()
+    let home = StandaloneModel(service: service)
+    let run = Task { await home.run() }
+    for _ in 0..<100 where home.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let session = try #require(home.snapshot?.session)
+    let refresh = AccountReauthenticationModel(home: home, session: session)
+    refresh.submit(email: "fixture@example.test", password: "synthetic-password") {
+        Issue.record("Guest cannot be adopted as a refreshed account")
+    }
+    for _ in 0..<100 where refresh.busy { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(refresh.error != nil)
+    #expect(await refresh.cancel())
+    #expect(home.snapshot?.session == session)
+    #expect(home.snapshot?.model?.authenticated == false)
+    #expect(try await service.snapshot().status == .ready)
+    run.cancel()
+    await run.value
+}
+
+@Test @MainActor func malformedAccountSelectionCanRecoverWithoutDeletingAccountData() async throws {
+    let label = "invalid-selection-" + UUID().uuidString
+    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: CoreStorage.keyService, kSecAttrAccount as String: label]
+    defer { SecItemDelete(query as CFDictionary) }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    defer {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: CoreStorage.keyService,
+            kSecAttrAccount as String: "account-v1:" + namespace.uuidString.lowercased()] as CFDictionary)
+    }
+    let sentinel = configuration.directory.appendingPathComponent("state.bin")
+    try Data("encrypted-account-sentinel".utf8).write(to: sentinel)
+    #expect(SecItemAdd(query.merging([kSecValueData as String: Data("invalid-json".utf8)]) { _, new in new } as CFDictionary, nil) == errSecSuccess)
+    let selection = CoreAccountSelection(keyAccount: label)
+    let model = StandaloneModel(accountSelection: selection, accountRoot: root)
+    await model.run()
+    #expect(model.snapshot == nil)
+    #expect(model.canResetAccountSelection)
+    try await model.resetInvalidAccountSelection()
+    #expect(try await selection.load() == nil)
+    #expect(!model.canResetAccountSelection)
+    #expect(model.error == nil)
+    #expect(try Data(contentsOf: sentinel) == Data("encrypted-account-sentinel".utf8))
+    #expect(try await storage.prepareExistingAccount().key == configuration.key)
+    // A valid selection installed after the error must never be removed by recovery.
+    #expect(SecItemAdd(query.merging([kSecValueData as String: Data("invalid-json".utf8)]) { _, new in new } as CFDictionary, nil) == errSecSuccess)
+    await model.run()
+    let replacement = CoreAccountSelection.Account(namespace: UUID(), userID: "replacement-user")
+    try await selection.save(replacement)
+    await #expect(throws: CoreAccountSelection.Failure.alreadySelected) { try await model.resetInvalidAccountSelection() }
+    #expect(try await selection.load() == replacement)
+    #expect(try Data(contentsOf: sentinel) == Data("encrypted-account-sentinel".utf8))
 }

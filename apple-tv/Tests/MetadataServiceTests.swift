@@ -80,33 +80,8 @@ import Network
 import CryptoKit
 
 @Test func magnetDiscoverySelectionAndVerifiedBytesThroughSwift() async throws {
-    let tracker = try NWListener(using: .tcp, on: .any)
+    let (tracker, port) = try await startFixtureTracker()
     defer { tracker.cancel() }
-    tracker.newConnectionHandler = { connection in
-        connection.start(queue: .global())
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { _, _, _, _ in
-            var body = Data("d8:intervali60e5:peers6:".utf8)
-            body.append(contentsOf: [127, 0, 0, 1, 0xa5, 0xb8]) // Controlled fixture peer, port 42424.
-            body.append(Data("e".utf8))
-            var response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
-            response.append(body)
-            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
-        }
-    }
-    let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
-        tracker.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                tracker.stateUpdateHandler = nil
-                continuation.resume(returning: tracker.port!.rawValue)
-            case .failed(let error):
-                tracker.stateUpdateHandler = nil
-                continuation.resume(throwing: error)
-            default: break
-            }
-        }
-        tracker.start(queue: .global())
-    }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let directory = root.appendingPathComponent("session")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -127,6 +102,11 @@ import CryptoKit
         try await Task.sleep(for: .milliseconds(50))
         state = try await playback.snapshot()
     }
+    let diagnostic = try #require(state.diagnostics)
+    #expect(diagnostic.engineState == .live)
+    #expect(diagnostic.totalBytes == 175917)
+    #expect(diagnostic.livePeers != nil)
+    #expect(diagnostic.downloadBytesPerSecond != nil)
     let url = try #require(state.url.flatMap(URL.init(string:)))
     let (bytes, response) = try await URLSession.shared.data(from: url)
     #expect((response as? HTTPURLResponse)?.statusCode == 200)
@@ -189,4 +169,69 @@ import CryptoKit
         #expect(model.coordinator.state == .failed(.unsupportedFormat))
         await model.stop()
     }
+}
+
+func startFixtureTracker() async throws -> (NWListener, UInt16) {
+    let tracker = try NWListener(using: .tcp, on: .any)
+    tracker.newConnectionHandler = { connection in
+        connection.start(queue: .global())
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { _, _, _, _ in
+            var body = Data("d8:intervali60e5:peers6:".utf8)
+            body.append(contentsOf: [127, 0, 0, 1, 0xa5, 0xb8]) // Controlled fixture peer, port 42424.
+            body.append(Data("e".utf8))
+            var response = Data("HTTP/1.1 200 OK\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+    let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+        tracker.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                tracker.stateUpdateHandler = nil
+                continuation.resume(returning: tracker.port!.rawValue)
+            case .failed(let error):
+                tracker.stateUpdateHandler = nil
+                continuation.resume(throwing: error)
+            default: break
+            }
+        }
+        tracker.start(queue: .global())
+    }
+    return (tracker, port)
+}
+
+@Test @MainActor func torrentDiagnosticsRefreshAndCannotLeakIntoReplacementSource() async throws {
+    let (tracker, port) = try await startFixtureTracker()
+    defer { tracker.cancel() }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = TorrentCacheStore(root: root)
+    let model = SourcePlaybackModel(cache: cache)
+    let request = CoreTorrentRequest(metaId: "fixture", videoId: "fixture", kind: "movie",
+        magnet: "magnet:?xt=urn:btih:1be994f3f99cc80c9c2830b113432065d1551e9d&tr=http://127.0.0.1:\(port)/announce",
+        fileIndex: 0, fileMustInclude: [])
+    await model.start(.torrent(request))
+    let torrentGeneration = try #require(model.generation)
+    let url = try #require(model.playbackURL)
+    #expect(model.diagnostics?.totalBytes == 175917)
+    let (bytes, _) = try await URLSession.shared.data(from: url)
+    #expect(bytes.count == 175917)
+    for _ in 0..<40 where model.diagnostics?.verifiedBytes != 175917 {
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    #expect(model.diagnostics?.verifiedBytes == 175917)
+    let replacement = CoreHTTPSRequest(metaId: "other", videoId: "other", kind: "movie", url: "https://fixture.invalid/video.mp4")
+    await model.start(.https(replacement))
+    #expect(model.generation != torrentGeneration)
+    #expect(model.diagnostics == nil)
+    try await Task.sleep(for: .milliseconds(1100))
+    #expect(model.diagnostics == nil)
+    #expect(model.playbackURL?.absoluteString == replacement.url)
+    #expect(model.coordinator.state == .buffering)
+    await model.stop()
+    #expect(model.diagnostics == nil)
+    #expect(!model.cleanupFailed)
+    let next = try await cache.acquire()
+    try await cache.release(next)
 }

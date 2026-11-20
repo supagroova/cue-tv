@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+default = []
+account-fixture = []
+
 [dependencies]
 stremio-core = { path = "../stremio-core", default-features = false, features = ["env-future-send"] }
 chrono = "=0.4.45"

@@ -376,6 +376,296 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
     );
     let revision = session.snapshot().revision;
     let playback = session.prepare_torrent(0, revision).await.unwrap();
+    assert_ne!(playback.playback_token, 0);
+    let replacement = session.prepare_torrent(0, revision).await.unwrap();
+    assert_ne!(playback.playback_token, replacement.playback_token);
+    assert_eq!(
+        session.claim_playback(playback.playback_token).await,
+        Err("stale_playback")
+    );
+    let chosen = session
+        .claim_playback(replacement.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(chosen.meta_request.unwrap().path.id, "film-0");
+    assert_eq!(chosen.stream_request.unwrap().path.id, "film-0");
+    assert_eq!(
+        cue_core::playback_source::torrent(&chosen.stream)
+            .unwrap()
+            .file_index,
+        Some(0)
+    );
+    assert_eq!(
+        session.claim_playback(replacement.playback_token).await,
+        Err("stale_playback")
+    );
+
+    use cue_core::player::{PlaybackEvent, Progress};
+    let playing = session.prepare_torrent(0, revision).await.unwrap();
+    session
+        .start_playback(playing.playback_token)
+        .await
+        .unwrap();
+    let seek = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::Seek {
+                time: 800,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        seek,
+        Progress {
+            time: 800,
+            duration: 1000,
+            time_watched: 0,
+            watched: false
+        }
+    );
+    let played = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 900,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(played.time_watched, 100);
+    // Queue retry after an unknown receipt repeats the exact absolute sample.
+    // Neither repetition nor repeated pause/seek may add viewed time.
+    for event in [
+        PlaybackEvent::TimeChanged {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::TimeChanged {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::Paused(true),
+        PlaybackEvent::Paused(true),
+        PlaybackEvent::Paused(false),
+        PlaybackEvent::Paused(false),
+        PlaybackEvent::Seek {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::Seek {
+            time: 900,
+            duration: 1000,
+        },
+    ] {
+        assert_eq!(
+            session
+                .playback_event(playing.playback_token, event)
+                .await
+                .unwrap(),
+            Progress {
+                time: 900,
+                duration: 1000,
+                time_watched: 100,
+                watched: false
+            }
+        );
+    }
+
+    assert!(
+        !played.watched,
+        "Seeking to credits must not count skipped content"
+    );
+    session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::Seek {
+                time: 100,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    let threshold = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 700,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(threshold.time_watched, 700);
+    assert!(
+        !threshold.watched,
+        "Core threshold is strictly greater than 70 percent"
+    );
+    assert!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::TimeChanged {
+                    time: 701,
+                    duration: 1000
+                }
+            )
+            .await
+            .unwrap()
+            .watched
+    );
+    session
+        .playback_event(playing.playback_token, PlaybackEvent::Paused(true))
+        .await
+        .unwrap();
+    let paused = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 999,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(paused.time, 701);
+    assert_eq!(paused.time_watched, 701);
+    session
+        .set_details_watched(None, false, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    session
+        .playback_event(playing.playback_token, PlaybackEvent::Paused(false))
+        .await
+        .unwrap();
+    let overridden = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 800,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        !overridden.watched,
+        "Manual unwatched must win over later threshold progress"
+    );
+    assert_eq!(overridden.time_watched, 800);
+    session
+        .set_details_watched(None, true, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    let marked = session
+        .playback_event(
+            playing.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 900,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(marked.watched);
+    assert_eq!(
+        marked.time_watched, 900,
+        "Manual watched must not reset the decoder position and count it again"
+    );
+    session
+        .set_details_watched(None, false, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert!(session.settled().await.unwrap().error.is_none());
+    let revision = session.snapshot().revision;
+    let next_owner = session.prepare_torrent(0, revision).await.unwrap();
+    assert_eq!(
+        session.start_playback(next_owner.playback_token).await,
+        Err("playback_busy")
+    );
+    assert_eq!(
+        session.retire_playback(next_owner.playback_token).await,
+        Err("stale_playback")
+    );
+    session
+        .retire_playback(playing.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::Seek {
+                    time: 0,
+                    duration: 1000
+                }
+            )
+            .await,
+        Err("stale_playback")
+    );
+    session
+        .start_playback(next_owner.playback_token)
+        .await
+        .unwrap();
+    assert_eq!(
+        session
+            .playback_event(
+                playing.playback_token,
+                PlaybackEvent::Seek {
+                    time: 0,
+                    duration: 1000
+                }
+            )
+            .await,
+        Err("stale_playback")
+    );
+    let unknown = session
+        .playback_event(
+            next_owner.playback_token,
+            PlaybackEvent::TimeChanged {
+                time: 1000,
+                duration: 0,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown.time, 1000);
+    assert!(
+        !unknown.watched,
+        "Unknown duration must not automatically complete"
+    );
+    assert_eq!(
+        session
+            .playback_event(
+                next_owner.playback_token,
+                PlaybackEvent::TimeChanged {
+                    time: 500,
+                    duration: 0
+                }
+            )
+            .await,
+        Err("playback_requires_seek")
+    );
+    let clamped = session
+        .playback_event(
+            next_owner.playback_token,
+            PlaybackEvent::Seek {
+                time: 2000,
+                duration: 1000,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(clamped.time, 1000);
+    assert!(!clamped.watched);
+    session
+        .retire_playback(next_owner.playback_token)
+        .await
+        .unwrap();
     let cancellation = tokio_util::sync::CancellationToken::new();
     let subtitles = session
         .discover_subtitles("film-0", "film-0", "movie", cancellation.clone())
@@ -423,6 +713,22 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
             .prepare_torrent(0, session.snapshot().revision)
             .await
             .is_err()
+    );
+    session
+        .show_sources(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    let retiring = session
+        .prepare_torrent(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    session
+        .load_details(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        session.claim_playback(retiring.playback_token).await,
+        Err("stale_playback")
     );
     server.await.unwrap();
     session.stop().await;
@@ -506,4 +812,99 @@ async fn search_uses_declared_catalog_extra_and_rejects_unbounded_queries() {
     .unwrap();
     server.await.unwrap();
     session.stop().await;
+}
+
+#[tokio::test]
+async fn replacing_search_disconnects_old_http_and_retries_identical_query() {
+    use cue_core::{
+        environment::{Environment, NativeEnv},
+        session::CoreSession,
+    };
+    use stremio_core::{
+        constants::{PROFILE_STORAGE_KEY, SCHEMA_VERSION, SCHEMA_VERSION_STORAGE_KEY},
+        runtime::Env,
+        types::profile::Profile,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (received, waiting) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut old, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 8192];
+        let count = old.read(&mut buffer).await.unwrap();
+        assert!(String::from_utf8_lossy(&buffer[..count]).contains("search=blue%20sky"));
+        received.send(()).unwrap();
+        let closed =
+            tokio::time::timeout(std::time::Duration::from_secs(3), old.read(&mut buffer)).await;
+        assert!(
+            matches!(closed, Ok(Ok(0))),
+            "obsolete HTTP request remained open: {closed:?}"
+        );
+        let (mut fresh, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+        let count = fresh.read(&mut buffer).await.unwrap();
+        assert!(String::from_utf8_lossy(&buffer[..count]).contains("search=blue%20sky"));
+        let body =
+            r#"{"metas":[{"id":"replacement-result","type":"movie","name":"Fresh result"}]}"#;
+        fresh
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let env = Environment::new().unwrap();
+    let mut profile = Profile::default();
+    profile.addons = vec![serde_json::from_value(serde_json::json!({"transportUrl":format!("http://{address}/manifest.json"),"manifest":{"id":"search.fixture","name":"Search","version":"1.0.0","description":"Owned fixture","resources":["catalog"],"types":["movie"],"catalogs":[{"id":"search","type":"movie","extra":[{"name":"search","isRequired":true}]}]}})).unwrap()];
+    env.scope(async {
+        NativeEnv::set_storage(SCHEMA_VERSION_STORAGE_KEY, Some(&SCHEMA_VERSION))
+            .await
+            .unwrap();
+        NativeEnv::set_storage(PROFILE_STORAGE_KEY, Some(&profile))
+            .await
+            .unwrap();
+    })
+    .await;
+    let mut session = CoreSession::guest(env).await.unwrap();
+
+    session
+        .search_catalog(0, "blue sky", session.snapshot().revision)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    session
+        .search_catalog(0, "blue sky", session.snapshot().revision)
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(8), server).await;
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            let state = session.snapshot();
+            if state.pending_effects == 0
+                && state.catalog.as_ref().is_some_and(|v| {
+                    v.items
+                        .first()
+                        .is_some_and(|i| i.id == "replacement-result")
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    session.stop().await;
+    result.unwrap().unwrap();
+    ready.unwrap();
 }

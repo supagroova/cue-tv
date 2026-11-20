@@ -26,6 +26,7 @@ impl Drop for Handoff {
     }
 }
 struct Entry {
+    reauth_cancelled: AtomicU64,
     identity: Mutex<Option<String>>,
     handoff: Mutex<Handoff>,
     commands: mpsc::Sender<Command>,
@@ -66,6 +67,29 @@ fn publish(
         *snapshot = bytes;
     }
 }
+/// Explicit application opt-in: replaces the process-wide Rust panic hook.
+/// Call at startup before creating native sessions. Does not change unwinding.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_configure_private_diagnostics() -> i32 {
+    if std::thread::panicking() {
+        return -1;
+    }
+    catch_unwind(|| {
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        INSTALLED.call_once(|| {
+            std::panic::set_hook(Box::new(|_| {
+                use std::io::Write;
+                // Never format PanicHookInfo: payload and location may be private.
+                let _ = std::io::stderr()
+                    .lock()
+                    .write_all(b"Cue TV: native panic.\n");
+            }));
+        });
+        0
+    })
+    .unwrap_or(-1)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn cue_core_abi_version() -> u32 {
     1
@@ -78,6 +102,8 @@ pub extern "C" fn cue_core_create() -> u64 {
 enum Startup {
     Guest,
     NewAccount,
+    #[cfg(feature = "account-fixture")]
+    FixtureNewAccount(u16),
     Restore(String),
 }
 struct Persistence {
@@ -107,6 +133,17 @@ pub unsafe extern "C" fn cue_core_create_account(
     key_length: usize,
 ) -> u64 {
     unsafe { persistent(path, path_length, key, key_length, Startup::NewAccount) }
+}
+/// Synthetic-account test entry point; absent from normal/device builds.
+/// # Safety
+/// Same copied directory/key contract as cue_core_create_account.
+#[cfg(feature = "account-fixture")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_create_account_fixture(
+    path: *const u8, path_length: usize, key: *const u8, key_length: usize, port: u16,
+) -> u64 {
+    if port == 0 { return 0; }
+    unsafe { persistent(path, path_length, key, key_length, Startup::FixtureNewAccount(port)) }
 }
 /// Restore an identity selected by protected app storage. All inputs are copied.
 /// # Safety
@@ -204,6 +241,7 @@ fn create(persistence: Option<Persistence>) -> u64 {
         };
         let (commands, inbox) = mpsc::channel(64);
         let entry = Arc::new(Entry {
+            reauth_cancelled: AtomicU64::new(0),
             identity: Mutex::new(None),
             commands,
             handoff: Mutex::new(Handoff::default()),
@@ -231,7 +269,16 @@ async fn own(
         .map(|config| config.startup.clone())
         .unwrap_or(Startup::Guest);
     let environment = match persistence {
-        Some(config) => Environment::persistent(&config.directory, &config.key),
+        Some(config) => {
+            #[cfg(feature = "account-fixture")]
+            if let Startup::FixtureNewAccount(port) = &config.startup {
+                Environment::persistent_account_fixture(&config.directory, &config.key, *port)
+            } else {
+                Environment::persistent(&config.directory, &config.key)
+            }
+            #[cfg(not(feature = "account-fixture"))]
+            Environment::persistent(&config.directory, &config.key)
+        },
         None => Environment::new(),
     };
     let env = match environment {
@@ -246,6 +293,8 @@ async fn own(
         match startup {
             Startup::Restore(user) => CoreSession::restore_account(env.clone(), &user).await,
             Startup::NewAccount => CoreSession::new_account(env.clone()).await,
+            #[cfg(feature = "account-fixture")]
+            Startup::FixtureNewAccount(_) => CoreSession::new_account(env.clone()).await,
             Startup::Guest => CoreSession::guest(env.clone()).await,
         }
     })
@@ -275,7 +324,19 @@ async fn own(
                         _ = entry.stop.cancelled() => break,
                         result = async { match command {
                             Command::Login { email, password } => session.login(&email, &password).await,
+                            Command::Reauthenticate { email, password } => session.reauthenticate(&email, &password).await,
                             Command::Logout { .. } => session.logout().await,
+                            Command::RetrySync { .. } => session.retry_sync().await,
+                            Command::CancelReauthentication { sequence, .. } => {
+                                let result = session.cancel_reauthentication(sequence).await;
+                                if result.is_ok() {
+                                    // Receipt permits an immediate retry. Publish the settled
+                                    // state first so admission cannot read the old active flag.
+                                    publish(&entry, handle, "ready", Some(session.snapshot()), None);
+                                    entry.reauth_cancelled.store(sequence, Ordering::Release);
+                                }
+                                result
+                            },
                             Command::PrepareTorrent { ticket, index, revision } => {
                                 let result = session.prepare_torrent(index, revision).await;
                                 let value = match result {
@@ -319,6 +380,87 @@ async fn own(
                                 }
                                 Ok(())
                             },
+                            Command::PlaybackControl { ticket, token, action, time, duration, cancellation } => {
+                                let operation = async {
+                                    use crate::player::PlaybackEvent;
+                                    match action {
+                                        0 => session.start_playback(token).await.map(|_| None),
+                                        1 => session.playback_event(token, PlaybackEvent::Seek { time, duration }).await.map(Some),
+                                        2 => session.playback_event(token, PlaybackEvent::TimeChanged { time, duration }).await.map(Some),
+                                        3 | 4 => session.playback_event(token, PlaybackEvent::Paused(action == 3)).await.map(Some),
+                                        5 => session.checkpoint_playback(token).await.map(|_| None),
+                                        6 => session.close_playback(token).await.map(|_| None),
+                                        7 => session.retire_playback(token).await.map(|_| None),
+                                        _ => Err("invalid_playback_action"),
+                                    }
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("playback_operation_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), operation) => result.unwrap_or(Err("playback_operation_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(progress) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"token":token,"action":action,"progress":progress},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            Command::SaveWatched { ticket, video_id, watched, revision, cancellation } => {
+                                let save = async {
+                                    let identity = session.snapshot().details.map(|details| (details.kind, details.id));
+                                    session.set_details_watched(video_id.clone(), watched, revision).await?;
+                                    let state = session.settled().await?;
+                                    if let Some(error) = state.error { return Err(error); }
+                                    if state.details.map(|details| (details.kind, details.id)) != identity {
+                                        return Err("watched_selection_changed");
+                                    }
+                                    Ok(())
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("watched_save_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), save) => result.unwrap_or(Err("watched_save_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(()) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"watched":watched,"video_id":video_id},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
+                            Command::SaveLibrary { ticket, member, revision, cancellation } => {
+                                let save = async {
+                                    session.set_details_library(member, revision).await?;
+                                    let state = session.settled().await?;
+                                    if let Some(error) = state.error { return Err(error); }
+                                    if state.details_in_library != Some(member) { return Err("library_selection_changed"); }
+                                    Ok(())
+                                };
+                                let result = tokio::select! {
+                                    biased;
+                                    _ = cancellation.cancelled() => Err("library_save_cancelled"),
+                                    result = tokio::time::timeout(std::time::Duration::from_secs(4), save) => result.unwrap_or(Err("library_save_timeout")),
+                                };
+                                let value = match result {
+                                    Ok(()) => json!({"version":1,"session":handle,"ticket":ticket,"request":{"member":member},"error":null}),
+                                    Err(error) => json!({"version":1,"session":handle,"ticket":ticket,"request":null,"error":error}),
+                                };
+                                if let (Ok(bytes), Ok(mut handoff)) = (serde_json::to_vec(&value), entry.handoff.lock()) {
+                                    if handoff.ticket == ticket && !entry.stop.is_cancelled() && !cancellation.is_cancelled() {
+                                        handoff.reply = Some(bytes);
+                                    }
+                                }
+                                Ok(())
+                            },
                             Command::SetLanguage { language, .. } => session.set_interface_language(&language).await,
                             Command::LoadAddon { url, .. } => session.load_addon(&url).await,
                             Command::InstallAddon { revision, .. } => session.install_addon(revision).await,
@@ -326,6 +468,8 @@ async fn own(
                             Command::DetailsSeason { season, revision, .. } => session.select_details_season(season, revision).await,
                             Command::LoadSources { index, revision, .. } => session.load_sources(index, revision).await,
                             Command::SourceWindow { offset, revision, .. } => session.show_sources(offset, revision).await,
+                            Command::LibraryWindow { offset, revision, .. } => session.show_library(offset, revision).await,
+                            Command::LibraryDetails { index, revision, .. } => session.load_library_details(index, revision).await,
                             Command::LoadDetails { index, revision, .. } => session.load_details(index, revision).await,
                             Command::LoadCatalog { index, revision, query, .. } => match query { Some(query) => session.search_catalog(index, &query, revision).await, None => session.load_catalog(index, revision).await },
                             Command::CatalogChoices { offset, revision, .. } => session.show_catalog_choices(offset, revision).await,
@@ -370,12 +514,48 @@ async fn own(
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
     #[serde(skip)]
+    PlaybackControl {
+        ticket: u64,
+        token: u64,
+        action: u8,
+        time: u64,
+        duration: u64,
+        cancellation: CancellationToken,
+    },
+    #[serde(skip)]
+    SaveWatched {
+        ticket: u64,
+        video_id: Option<String>,
+        watched: bool,
+        revision: u64,
+        cancellation: CancellationToken,
+    },
+    #[serde(skip)]
+    SaveLibrary {
+        ticket: u64,
+        member: bool,
+        revision: u64,
+        cancellation: CancellationToken,
+    },
+    #[serde(skip)]
     Login {
+        email: String,
+        password: String,
+    },
+    #[serde(skip)]
+    Reauthenticate {
         email: String,
         password: String,
     },
     Logout {
         version: u32,
+    },
+    RetrySync {
+        version: u32,
+    },
+    CancelReauthentication {
+        version: u32,
+        sequence: u64,
     },
     #[serde(skip)]
     PrepareTorrent {
@@ -427,6 +607,16 @@ enum Command {
         offset: usize,
         revision: u64,
     },
+    LibraryWindow {
+        version: u32,
+        offset: usize,
+        revision: u64,
+    },
+    LibraryDetails {
+        version: u32,
+        index: usize,
+        revision: u64,
+    },
     LoadDetails {
         version: u32,
         index: usize,
@@ -452,16 +642,23 @@ enum Command {
 impl Command {
     fn valid(&self) -> bool {
         match self {
-            Self::DiscoverSubtitles { .. }
+            Self::PlaybackControl { .. }
+            | Self::SaveWatched { .. }
+            | Self::SaveLibrary { .. }
+            | Self::DiscoverSubtitles { .. }
             | Self::PrepareTorrent { .. }
             | Self::PrepareHttps { .. }
-            | Self::Login { .. } => false,
-            Self::Logout { version } => *version == 1,
+            | Self::Login { .. }
+            | Self::Reauthenticate { .. } => false,
+            Self::Logout { version } | Self::RetrySync { version } => *version == 1,
+            Self::CancelReauthentication { version, sequence } => *version == 1 && *sequence != 0,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
             | Self::DetailsVideos { version, .. }
             | Self::LoadSources { version, .. }
             | Self::SourceWindow { version, .. }
+            | Self::LibraryWindow { version, .. }
+            | Self::LibraryDetails { version, .. }
             | Self::LoadDetails { version, .. }
             | Self::LoadCatalog { version, .. }
             | Self::CatalogChoices { version, .. }
@@ -488,6 +685,38 @@ pub unsafe extern "C" fn cue_core_login(
     password: *const u8,
     password_length: usize,
 ) -> i32 {
+    unsafe {
+        admit_credentials(
+            handle,
+            email,
+            email_length,
+            password,
+            password_length,
+            false,
+        )
+    }
+}
+/// Refresh an existing paused account. Completion is reported through snapshots.
+/// # Safety
+/// Non-null input pointers must be readable for their supplied lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_reauthenticate(
+    handle: u64,
+    email: *const u8,
+    email_length: usize,
+    password: *const u8,
+    password_length: usize,
+) -> i32 {
+    unsafe { admit_credentials(handle, email, email_length, password, password_length, true) }
+}
+unsafe fn admit_credentials(
+    handle: u64,
+    email: *const u8,
+    email_length: usize,
+    password: *const u8,
+    password_length: usize,
+    refresh: bool,
+) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         if email.is_null()
             || password.is_null()
@@ -508,7 +737,10 @@ pub unsafe extern "C" fn cue_core_login(
         else {
             return -2;
         };
-        if email.chars().any(char::is_control) || password.contains('\0') {
+        if email.chars().any(char::is_control)
+            || password.contains('\0')
+            || (refresh && password.chars().any(char::is_control))
+        {
             return -2;
         }
         let Some(entry) = lookup(handle) else {
@@ -517,10 +749,18 @@ pub unsafe extern "C" fn cue_core_login(
         if entry.stop.is_cancelled() {
             return -1;
         }
-        match entry.commands.try_send(Command::Login {
-            email: email.to_owned(),
-            password: password.to_owned(),
-        }) {
+        let command = if refresh {
+            Command::Reauthenticate {
+                email: email.to_owned(),
+                password: password.to_owned(),
+            }
+        } else {
+            Command::Login {
+                email: email.to_owned(),
+                password: password.to_owned(),
+            }
+        };
+        match entry.commands.try_send(command) {
             Ok(()) => 0,
             Err(mpsc::error::TrySendError::Full(_)) => -3,
             Err(_) => -1,
@@ -829,4 +1069,221 @@ pub unsafe extern "C" fn cue_core_request_subtitles(
         ticket
     }))
     .unwrap_or(0)
+}
+
+/// Playback actions share the private receipt slot; admission is not completion.
+/// Cancel/timeout discards observation, not an operation already admitted by Core.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_playback(
+    handle: u64,
+    token: u64,
+    action: u8,
+    time: u64,
+    duration: u64,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if token == 0
+            || action > 7
+            || time > i64::MAX as u64
+            || duration > i64::MAX as u64
+            || (!matches!(action, 1 | 2) && (time != 0 || duration != 0))
+        {
+            return 0;
+        }
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::PlaybackControl {
+                ticket,
+                token,
+                action,
+                time,
+                duration,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Saves selected-title membership using the exclusive reply slot. Member is 0 or 1.
+/// A successful receipt requires settled Core effects. Discard is not a rollback.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_request_library(handle: u64, member: u8, revision: u64) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if member > 1 {
+            return 0;
+        }
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::SaveLibrary {
+                ticket,
+                member: member == 1,
+                revision,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Requests a watched-state save, sharing the exclusive take/discard slot.
+/// # Safety
+/// For nonzero length, video must point to length readable bytes. Input is copied.
+/// A zero length denotes a film; episode IDs are UTF-8 and at most 512 bytes.
+/// Cancellation does not roll back an admitted mutation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_request_watched(
+    handle: u64,
+    video: *const u8,
+    length: usize,
+    watched: u8,
+    revision: u64,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        if watched > 1 || length > 512 || (length != 0 && video.is_null()) {
+            return 0;
+        }
+        let video_id = if length == 0 {
+            None
+        } else {
+            let Ok(value) =
+                std::str::from_utf8(unsafe { std::slice::from_raw_parts(video, length) })
+            else {
+                return 0;
+            };
+            if value.chars().any(char::is_control) {
+                return 0;
+            }
+            Some(value.to_owned())
+        };
+        let Some(entry) = lookup(handle) else {
+            return 0;
+        };
+        let Ok(mut handoff) = entry.handoff.lock() else {
+            return 0;
+        };
+        if entry.stop.is_cancelled() || entry.stopped.load(Ordering::Acquire) || handoff.ticket != 0
+        {
+            return 0;
+        }
+        let Ok(ticket) =
+            NEXT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        else {
+            return 0;
+        };
+        handoff.ticket = ticket;
+        let cancellation = handoff.cancellation.clone();
+        if entry
+            .commands
+            .try_send(Command::SaveWatched {
+                ticket,
+                video_id,
+                watched: watched == 1,
+                revision,
+                cancellation,
+            })
+            .is_err()
+        {
+            *handoff = Handoff::default();
+            return 0;
+        }
+        ticket
+    }))
+    .unwrap_or(0)
+}
+
+/// Last cancellation command acknowledged by the native session; zero if absent.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_reauthentication_cancelled(handle: u64) -> u64 {
+    lookup(handle).map_or(0, |entry| entry.reauth_cancelled.load(Ordering::Acquire))
+}
+
+#[cfg(test)]
+mod cancellation_admission_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_or_only_queued_cancellation_is_not_acknowledged() {
+        // Hold the actual command consumer so queue pressure is deterministic.
+        let (commands, mut inbox) = mpsc::channel(1);
+        let handle = NEXT.fetch_add(1, Ordering::Relaxed);
+        let entry = Arc::new(Entry {
+            reauth_cancelled: AtomicU64::new(0),
+            identity: Mutex::new(None),
+            handoff: Mutex::new(Handoff::default()),
+            commands,
+            snapshot: Mutex::new(Vec::new()),
+            stop: CancellationToken::new(),
+            stopped: AtomicBool::new(false),
+        });
+        entries().lock().unwrap().insert(handle, entry.clone());
+        entry
+            .commands
+            .try_send(Command::RetrySync { version: 1 })
+            .unwrap();
+        let cancel = br#"{"version":1,"action":"cancel_reauthentication","sequence":7}"#;
+        assert_eq!(
+            unsafe { cue_core_dispatch(handle, cancel.as_ptr(), cancel.len()) },
+            -3
+        );
+        assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Command::RetrySync { .. }
+        ));
+        assert_eq!(
+            unsafe { cue_core_dispatch(handle, cancel.as_ptr(), cancel.len()) },
+            0
+        );
+        assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Command::CancelReauthentication { sequence: 7, .. }
+        ));
+        entries().lock().unwrap().remove(&handle);
+    }
 }

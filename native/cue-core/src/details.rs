@@ -7,10 +7,12 @@ pub struct Video {
     pub title: String,
     pub season: Option<u32>,
     pub episode: Option<u32>,
+    pub watched: Option<bool>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct View {
     pub status: &'static str,
+    pub watched: Option<bool>,
     pub id: String,
     pub kind: String,
     pub name: Option<String>,
@@ -34,6 +36,16 @@ pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) ->
             item.preview.id == selected.meta_path.id
                 && item.preview.r#type == selected.meta_path.r#type
         });
+    // Only matching, ready metadata may expose the retained Core library state.
+    let library_item = ready.and_then(|meta| {
+        model
+            .library_item
+            .as_ref()
+            .filter(|item| item.id == meta.preview.id && item.r#type == meta.preview.r#type)
+    });
+    let episode_watched = ready
+        .zip(library_item)
+        .map(|(meta, item)| item.state.watched_bitfield(&meta.videos));
     let loading = model
         .meta_items
         .iter()
@@ -61,6 +73,9 @@ pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) ->
         })
     };
     Some(View {
+        watched: library_item
+            .filter(|item| item.r#type == "movie")
+            .map(|item| item.watched()),
         seasons,
         selected_season: season,
         video_total: matching().count(),
@@ -69,6 +84,9 @@ pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) ->
             .skip(offset)
             .take(24)
             .map(|video| Video {
+                watched: episode_watched
+                    .as_ref()
+                    .map(|watched| watched.get_video(&video.id)),
                 id: video.id.clone(),
                 title: video.title.chars().take(128).collect(),
                 season: video.series_info.as_ref().map(|info| info.season),
@@ -89,4 +107,23 @@ pub fn view_filtered(model: &MetaDetails, offset: usize, season: Option<u32>) ->
             .and_then(|item| item.preview.description.as_ref())
             .map(|text| text.chars().take(4096).collect()),
     })
+}
+
+/// Only the selected, successfully loaded metadata can authorize library changes.
+pub fn selected_preview(
+    model: &MetaDetails,
+) -> Option<&stremio_core::types::resource::MetaItemPreview> {
+    let selected = model.selected.as_ref()?;
+    model
+        .meta_items
+        .iter()
+        .filter_map(|page| page.content.as_ref()?.ready())
+        .map(|item| &item.preview)
+        .find(|item| {
+            item.id == selected.meta_path.id
+                && item.r#type == selected.meta_path.r#type
+                && !item.id.is_empty()
+                && item.id.len() <= 512
+                && item.r#type.len() <= 64
+        })
 }

@@ -5,6 +5,17 @@ import Security
 @testable import SittingRoomTV
 
 @Suite struct CoreServiceTests {
+@Test func accountSyncStatusDecodesNativeWireStates() throws {
+    let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required","reauthenticating":true,"reauth_sequence":7}"#.utf8))
+    #expect(rejected.state == .reauthenticationRequired)
+    #expect(rejected.pendingTitles == 2)
+    #expect(rejected.reauthenticating == true)
+    #expect(rejected.reauthSequence == 7)
+    let waiting = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":1,"state":"waiting"}"#.utf8))
+    #expect(waiting.state == .waiting)
+}
+
 @Test func sourceGroupsUseProviderIdentityWithoutRenumberingSelections() throws {
     let data = Data(#"{"status":"ready","loading":false,"video_id":"owned","offset":0,"total":4,"items":[{"index":0,"kind":"http","addon_index":4,"addon_name":"Twin"},{"index":1,"kind":"http","addon_index":5,"addon_name":"Twin"},{"index":2,"kind":"torrent","addon_index":4,"addon_name":"Twin"},{"index":3,"kind":"unsupported"}]}"#.utf8)
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -25,6 +36,13 @@ import Security
     #expect(state.status == .ready)
     #expect(try await service.accountIdentity() == nil)
     #expect(state.model?.interfaceLanguage == "eng")
+    #expect(state.model?.sync == nil)
+    try await service.retrySync()
+    for _ in 0..<100 where state.error != "account_sync_unavailable" {
+        try await Task.sleep(for: .milliseconds(10))
+        state = try await service.snapshot()
+    }
+    #expect(state.error == "account_sync_unavailable")
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.loadAddon("file:///private/manifest.json") }
     try await service.setInterfaceLanguage("fra")
     for _ in 0..<100 {
@@ -108,6 +126,45 @@ import Security
     #expect(state.model?.details?.videoTotal == 30)
     #expect(state.model?.details?.videos.count == 24)
     #expect(state.model?.details?.seasons == [1, 2])
+    let beforeLibrary = try #require(state.model?.revision)
+    try await service.setDetailsLibrary(true, expectedRevision: beforeLibrary)
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.detailsInLibrary == true { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.detailsInLibrary == true)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_details")) {
+        try await service.setDetailsLibrary(false, expectedRevision: beforeLibrary)
+    }
+    try await service.setDetailsLibrary(false, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.detailsInLibrary == false { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.detailsInLibrary == false)
+
+    let beforeWatched = try #require(state.model?.revision)
+    try await service.setDetailsWatched(true, videoID: nil, expectedRevision: beforeWatched)
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.watched == true { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.watched == true)
+    #expect(state.model?.detailsInLibrary == false)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_details")) {
+        try await service.setDetailsWatched(false, videoID: nil, expectedRevision: beforeWatched)
+    }
+    try await service.setDetailsWatched(false, videoID: nil, expectedRevision: try #require(state.model?.revision))
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        if state.model?.details?.watched == false { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.details?.watched == false)
+
     try await service.selectDetailsSeason(2, expectedRevision: try #require(state.model?.revision))
     for _ in 0..<200 {
         state = try await service.snapshot()
@@ -159,6 +216,24 @@ import Security
     #expect(handoff.kind == "movie")
     #expect(handoff.fileIndex == nil)
     #expect(handoff.fileMustInclude.isEmpty)
+    #expect(handoff.playbackToken > 0)
+    try await service.startPlayback(token: handoff.playbackToken)
+    try await service.startPlayback(token: handoff.playbackToken)
+    let seek = try await service.playback(token: handoff.playbackToken, action: .seek, time: 800, duration: 1000)
+    #expect(seek?.timeWatched == 0)
+    let played = try await service.playback(token: handoff.playbackToken, action: .played, time: 900, duration: 1000)
+    #expect(played?.timeWatched == 100)
+    #expect(played?.watched == false)
+    try await service.checkpointPlayback(token: handoff.playbackToken)
+    try await service.closePlayback(token: handoff.playbackToken)
+    // Reconcile a potentially lost close receipt through the real Swift/C bridge.
+    try await service.closePlayback(token: handoff.playbackToken)
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_playback")) {
+        try await service.playback(token: handoff.playbackToken, action: .played, time: 950, duration: 1000)
+    }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) {
+        try await service.playback(token: handoff.playbackToken, action: .seek, time: .max, duration: 1000)
+    }
     let discovered = try await service.discoverSubtitles(metaId: handoff.metaId, videoId: handoff.videoId, kind: handoff.kind)
     #expect(discovered.tracks.map(\.id) == ["owned-resource"])
     #expect(discovered.failedProviders == 0)
@@ -166,9 +241,18 @@ import Security
     let reachedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
     while await fixture.subtitles.requests < 2, ContinuousClock.now < reachedDeadline { try await Task.sleep(for: .milliseconds(5)) }
     try #require(await fixture.subtitles.requests == 2)
+    // Playback must wait for an unadmitted ticket instead of failing a save just
+    // because subtitle HTTP currently owns the private reply slot.
+    let waitingPlayback = Task { try await service.playback(token: handoff.playbackToken, action: .pause) }
+    let cancelledPlayback = Task { try await service.playback(token: handoff.playbackToken, action: .pause) }
+    try await Task.sleep(for: .milliseconds(50))
+    cancelledPlayback.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelledPlayback.value }
     let cancelStarted = ContinuousClock.now
     stalled.cancel()
     await #expect(throws: CancellationError.self) { try await stalled.value }
+    // This token was closed above: after admission, preserve its native error.
+    await #expect(throws: NativeCoreService.Failure.requestFailed("stale_playback")) { try await waitingPlayback.value }
     let closedDeadline = ContinuousClock.now.advanced(by: .seconds(2))
     while !(await fixture.subtitles.closed), ContinuousClock.now < closedDeadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(await fixture.subtitles.closed)
@@ -212,7 +296,56 @@ import Security
     #expect(state.model?.catalog?.hasMore == false)
     #expect(state.error == nil)
     #expect(state.model?.error == nil)
+
+    // A held network effect keeps the save receipt pending after mutation admission.
+    try await service.loadAddon("http://127.0.0.1:\(fixture.port)/held/manifest.json")
+    for _ in 0..<200 {
+        state = try await service.snapshot()
+        let requests = await fixture.heldManifest.requests
+        if state.model?.addon?.status == .loading && requests == 1 { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(await fixture.heldManifest.requests == 1)
+    try #require(state.model?.addon?.status == .loading)
+    let libraryRevision = try #require(state.model?.revision)
+    let saving = Task { try await service.setDetailsLibrary(true, expectedRevision: libraryRevision) }
+    try await Task.sleep(for: .milliseconds(100))
+    await #expect(throws: NativeCoreService.Failure.busy) {
+        try await service.prepareTorrent(index: 29, expectedRevision: libraryRevision)
+    }
+    let libraryCancelStarted = ContinuousClock.now
+    saving.cancel()
+    await #expect(throws: CancellationError.self) { try await saving.value }
+    try await service.setInterfaceLanguage("deu")
+    for _ in 0..<100 {
+        state = try await service.snapshot()
+        if state.model?.interfaceLanguage == "deu" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.interfaceLanguage == "deu")
+    #expect(state.model?.detailsInLibrary == true, "Cancellation must not pretend to roll back an admitted save")
+    #expect(libraryCancelStarted.duration(to: .now) < .seconds(2))
+    let watchedRevision = try #require(state.model?.revision)
+    let watchedSave = Task { try await service.setDetailsWatched(true, videoID: nil, expectedRevision: watchedRevision) }
+    try await Task.sleep(for: .milliseconds(100))
+    await #expect(throws: NativeCoreService.Failure.busy) {
+        try await service.setDetailsLibrary(false, expectedRevision: watchedRevision)
+    }
+    let watchedCancelStarted = ContinuousClock.now
+    watchedSave.cancel()
+    await #expect(throws: CancellationError.self) { try await watchedSave.value }
+    try await service.setInterfaceLanguage("eng")
+    for _ in 0..<100 {
+        state = try await service.snapshot()
+        if state.model?.interfaceLanguage == "eng" { break }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(state.model?.interfaceLanguage == "eng")
+    #expect(state.model?.details?.watched == true)
+    #expect(watchedCancelStarted.duration(to: .now) < .seconds(2))
     try await service.stop()
+    for _ in 0..<100 where !(await fixture.heldManifest.closed) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.heldManifest.closed)
 }
 
 @Test func accountRestoreDoesNotFallBackToGuestWhenStorageIsEmpty() async throws {
@@ -291,14 +424,26 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     let listener: NWListener
     let port: UInt16
     let subtitles: SubtitleResourceProbe
-    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe) { self.listener = listener; self.port = port; self.subtitles = subtitles }
+    let heldManifest: SubtitleResourceProbe
+    init(listener: NWListener, port: UInt16, subtitles: SubtitleResourceProbe, heldManifest: SubtitleResourceProbe) {
+        self.listener = listener; self.port = port; self.subtitles = subtitles; self.heldManifest = heldManifest
+    }
     static func start() async throws -> CoreHTTPFixture {
         let listener = try NWListener(using: .tcp, on: .any)
         let subtitles = SubtitleResourceProbe()
+        let heldManifest = SubtitleResourceProbe()
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global())
             connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { request, _, _, _ in
                 let requestText = request.map { String(decoding: $0, as: UTF8.self) } ?? ""
+                if requestText.contains("/held/manifest.json") {
+                    Task { _ = await heldManifest.arrived() }
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, complete, error in
+                        if complete || error != nil { Task { await heldManifest.disconnected() } }
+                        connection.cancel()
+                    }
+                    return
+                }
                 if requestText.contains("/subtitles/movie/cue-fixture") {
                     Task {
                         if await subtitles.arrived() == 1 {
@@ -346,7 +491,7 @@ nonisolated private final class CoreHTTPFixture: Sendable {
             }
             listener.start(queue: .global())
         }
-        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles)
+        return CoreHTTPFixture(listener: listener, port: port, subtitles: subtitles, heldManifest: heldManifest)
     }
 }
 
@@ -411,6 +556,10 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     }
     #expect(state.status == .ready)
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.login(email: "", password: "synthetic-password") }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.reauthenticate(email: "", password: "synthetic-password") }
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { _ = try await service.reauthenticate(email: "fixture@example.test", password: "synthetic-password") }
+    try await service.cancelReauthentication(sequence: 1)
+    #expect(state.model?.authenticated == false)
     let revision = try #require(state.model?.revision)
     try await service.logout()
     for _ in 0..<200 where state.model?.revision == revision {

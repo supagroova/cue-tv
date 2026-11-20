@@ -1,6 +1,10 @@
 import SwiftUI
+import CueCore
 
 @main struct SittingRoomApp: App {
+    init() {
+        precondition(cue_core_configure_private_diagnostics() == 0, "Native diagnostics policy unavailable")
+    }
     #if DEBUG
     @State private var showingHTTPSFixture = ProcessInfo.processInfo.environment["CUE_HTTPS_TEST_FIXTURE"] == "1"
     @State private var showingPlaybackLab = ProcessInfo.processInfo.environment["CUE_PLAYBACK_LAB"] == "1"
@@ -10,8 +14,14 @@ import SwiftUI
         WindowGroup {
             Group {
                 #if DEBUG
+                #if targetEnvironment(simulator)
+                if ProcessInfo.processInfo.environment["CUE_ACCOUNT_JOURNEY_FIXTURE"] == "1" { AccountJourneyFixtureView() }
+                else if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
+                else { StandaloneHome() }
+                #else
                 if ProcessInfo.processInfo.environment["CUE_JOURNEY_FIXTURE"] == "1" { JourneyFixtureView() }
                 else { StandaloneHome() }
+                #endif
                 #else
                 StandaloneHome()
                 #endif

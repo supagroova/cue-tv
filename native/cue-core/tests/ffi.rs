@@ -24,6 +24,74 @@ fn native_boundary_owns_commands_snapshots_and_shutdown() {
     assert_eq!(cue_core_release(handle), 0);
     until(|| state(handle)["status"] == "ready");
     let revision = state(handle)["model"]["revision"].as_u64().unwrap();
+    assert_eq!(cue_core_request_library(handle, 2, revision), 0);
+    assert_eq!(cue_core_request_playback(handle, 0, 0, 0, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 8, 0, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 0, 1, 0), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 1, u64::MAX, 1000), 0);
+    assert_eq!(cue_core_request_playback(handle, 1, 2, 0, u64::MAX), 0);
+    for action in 0..8 {
+        let ticket = cue_core_request_playback(handle, u64::MAX, action, 0, 0);
+        assert_ne!(ticket, 0);
+        assert_eq!(cue_core_request_playback(handle, 1, 0, 0, 0), 0);
+        until(|| unsafe { cue_core_take_torrent(handle, ticket, std::ptr::null_mut(), 0) } > 0);
+        let mut bytes = vec![0; 4096];
+        let len = unsafe { cue_core_take_torrent(handle, ticket, bytes.as_mut_ptr(), bytes.len()) };
+        let receipt: serde_json::Value = serde_json::from_slice(&bytes[..len as usize]).unwrap();
+        assert_eq!(receipt["session"], handle);
+        assert_eq!(receipt["ticket"], ticket);
+        assert_eq!(receipt["error"], "stale_playback");
+        assert!(receipt["request"].is_null());
+    }
+
+    unsafe {
+        assert_eq!(
+            cue_core_request_watched(handle, std::ptr::null(), 1, 1, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, std::ptr::null(), 0, 2, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, [b'x'; 513].as_ptr(), 513, 1, revision),
+            0
+        );
+        assert_eq!(
+            cue_core_request_watched(handle, [255u8].as_ptr(), 1, 1, revision),
+            0
+        );
+        let watched = cue_core_request_watched(handle, std::ptr::null(), 0, 1, revision);
+        assert_ne!(watched, 0);
+        assert_eq!(cue_core_request_library(handle, 1, revision), 0);
+        until(|| cue_core_take_torrent(handle, watched, std::ptr::null_mut(), 0) > 0);
+        let mut bytes = vec![0; 4096];
+        let len = cue_core_take_torrent(handle, watched, bytes.as_mut_ptr(), bytes.len());
+        let receipt: serde_json::Value = serde_json::from_slice(&bytes[..len as usize]).unwrap();
+        assert_eq!(receipt["session"], handle);
+        assert_eq!(receipt["ticket"], watched);
+        assert_eq!(receipt["error"], "details_not_ready");
+        assert!(receipt["request"].is_null());
+    }
+    let library = cue_core_request_library(handle, 1, revision);
+    assert_ne!(library, 0);
+    assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
+    until(|| unsafe { cue_core_take_torrent(handle, library, std::ptr::null_mut(), 0) } > 0);
+    let mut library_bytes = vec![0; 4096];
+    let library_len = unsafe {
+        cue_core_take_torrent(
+            handle,
+            library,
+            library_bytes.as_mut_ptr(),
+            library_bytes.len(),
+        )
+    };
+    let library_reply: serde_json::Value =
+        serde_json::from_slice(&library_bytes[..library_len as usize]).unwrap();
+    assert_eq!(library_reply["ticket"], library);
+    assert_eq!(library_reply["session"], handle);
+    assert_eq!(library_reply["error"], "details_not_ready");
+    assert!(library_reply["request"].is_null());
     let ticket = cue_core_request_torrent(handle, 0, revision);
     assert_ne!(ticket, 0);
     assert_eq!(cue_core_request_torrent(handle, 0, revision), 0);
@@ -300,4 +368,101 @@ fn subtitle_handoff_validates_input_and_shares_the_private_ticket_slot() {
     cue_core_stop(handle);
     until(|| cue_core_stop_status(handle) == 1);
     assert_eq!(cue_core_release(handle), 1);
+}
+
+#[test]
+fn refresh_credentials_are_bounded_private_and_rejected_for_guests() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    let email = b"fixture@example.test";
+    let password = b"synthetic-password";
+    for invalid in [
+        vec![],
+        vec![0xff],
+        b"bad\npassword".to_vec(),
+        vec![b'x'; 4097],
+    ] {
+        assert_eq!(
+            unsafe {
+                cue_core_reauthenticate(
+                    handle,
+                    email.as_ptr(),
+                    email.len(),
+                    invalid.as_ptr(),
+                    invalid.len(),
+                )
+            },
+            -2
+        );
+    }
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                std::ptr::null(),
+                1,
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        -2
+    );
+    let json = br#"{"version":1,"action":"reauthenticate","email":"fixture@example.test","password":"synthetic-password"}"#;
+    assert_eq!(
+        unsafe { cue_core_dispatch(handle, json.as_ptr(), json.len()) },
+        -2
+    );
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                email.as_ptr(),
+                email.len(),
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        0
+    );
+    until(|| state(handle)["error"] == "account_sync_unavailable");
+    let snapshot = state(handle).to_string();
+    assert!(!snapshot.contains("synthetic-password"));
+    assert!(!snapshot.contains("fixture@example.test"));
+    assert_eq!(state(handle)["model"]["authenticated"], false);
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+    assert_eq!(
+        unsafe {
+            cue_core_reauthenticate(
+                handle,
+                email.as_ptr(),
+                email.len(),
+                password.as_ptr(),
+                password.len(),
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+fn refresh_cancellation_has_an_explicit_native_acknowledgment() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+    // An idle snapshot is not evidence that native has consumed this command.
+    let command = br#"{"version":1,"action":"cancel_reauthentication","sequence":7}"#;
+    assert_eq!(
+        unsafe { cue_core_dispatch(handle, command.as_ptr(), command.len()) },
+        0
+    );
+    until(|| cue_core_reauthentication_cancelled(handle) == 7);
+    assert_eq!(state(handle)["model"]["authenticated"], false);
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+    assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
 }

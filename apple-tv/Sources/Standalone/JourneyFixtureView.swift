@@ -1,20 +1,54 @@
 #if DEBUG
 import SwiftUI
+#if targetEnvironment(simulator)
+import Darwin
+import CoreFoundation
+#endif
 
 /// Installs an owned HTTP add-on through the real Core; never substitutes a UI snapshot.
 struct JourneyFixtureView: View {
     @State private var model: StandaloneModel?
     @State private var failed = false
+    @State private var cleared = false
+    #if targetEnvironment(simulator)
+    @State private var interruptionRegistered = false
+    #endif
     var body: some View {
         Group {
-            if let model { StandaloneHome(model: model) }
+            if cleared { Text("Journey storage cleared") }
+            else if let model { StandaloneHome(model: model) }
             else if failed { Text("Journey fixture could not start") }
             else { ProgressView("Installing owned fixture…") }
         }
         .task {
-            guard model == nil else { return }
-            let service = NativeCoreService()
+            guard model == nil, !cleared else { return }
+            var owner: NativeCoreService?
             do {
+                let environment = ProcessInfo.processInfo.environment
+                let service: NativeCoreService
+                if let rawID = environment["CUE_JOURNEY_STORAGE"] {
+                    guard let id = UUID(uuidString: rawID) else { throw CoreStorage.Failure.unsafeDirectory }
+                    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("CueJourneyTests", isDirectory: true)
+                    let storage = CoreStorage.account(id: id, root: root)
+                    if environment["CUE_JOURNEY_CLEAR_STORAGE"] == "1" {
+                        try await storage.removeUnopenedAccount()
+                        cleared = true
+                        return
+                    }
+                    #if targetEnvironment(simulator)
+                    if environment["CUE_JOURNEY_ABRUPT_EXIT"] == "1", !interruptionRegistered {
+                        // Test-only process boundary: SIGKILL cannot run lifecycle saves.
+                        // The random storage namespace prevents another journey triggering it.
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+                            kill(getpid(), SIGKILL)
+                        }, "cue.journey.kill.\(id.uuidString)" as CFString, nil, .deliverImmediately)
+                        interruptionRegistered = true
+                    }
+                    #endif
+                    service = NativeCoreService(persistence: try await storage.prepare())
+                } else { service = NativeCoreService() }
+                owner = service
                 try await service.start()
                 try await service.loadAddon("http://127.0.0.1:42427/manifest.json")
                 var installed = false
@@ -35,7 +69,7 @@ struct JourneyFixtureView: View {
                 }
                 throw NativeCoreService.Failure.requestTimeout
             } catch {
-                try? await service.stop()
+                try? await owner?.stop()
                 failed = true
             }
         }

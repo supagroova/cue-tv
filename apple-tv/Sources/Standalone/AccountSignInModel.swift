@@ -7,13 +7,14 @@ final class AccountSignInModel {
     private(set) var error: String?
     private let root: URL?
     private let selection: CoreAccountSelection
+    private let transport: AccountLoginTransport
     private var attempt: CoreAccountLogin?
     private var candidate: NativeCoreService?
     private var operation: Task<Void, Never>?
     private var closing = false
     private var adopted = false
-    init(root: URL? = nil, selection: CoreAccountSelection = .shared) {
-        self.root = root; self.selection = selection
+    init(root: URL? = nil, selection: CoreAccountSelection = .shared, transport: AccountLoginTransport = .stremio) {
+        self.root = root; self.selection = selection; self.transport = transport
     }
 
     func submit(email: String, password: String, home: StandaloneModel, onSuccess: @escaping @MainActor () -> Void) {
@@ -25,7 +26,7 @@ final class AccountSignInModel {
             do {
                 try await cleanup()
                 try Task.checkCancellation()
-                let next = CoreAccountLogin(root: root, selection: selection)
+                let next = CoreAccountLogin(root: root, selection: selection, transport: transport)
                 attempt = next
                 let service = try await next.signIn(email: email, password: password)
                 candidate = service

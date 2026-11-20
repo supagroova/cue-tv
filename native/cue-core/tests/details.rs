@@ -174,3 +174,91 @@ fn source_provider_labels_preserve_private_configuration_and_selection_indexes()
     assert!(!public.contains("provider.test"));
     assert!(!public.contains("media.test"));
 }
+
+#[test]
+fn watched_projection_keeps_episode_identity_and_rejects_stale_title_state() {
+    let mut model = series();
+    let Some(Loadable::Ready(meta)) = model.meta_items[0].content.as_ref() else {
+        panic!("fixture")
+    };
+    let mut item = stremio_core::types::library::LibraryItem::from((
+        &meta.preview,
+        std::marker::PhantomData::<cue_core::environment::NativeEnv>,
+    ));
+    let mut watched = item.state.watched_bitfield(&meta.videos);
+    watched.set_video("owned-series:1:30", true);
+    item.state.watched = Some(watched.clone().into());
+    model.library_item = Some(item);
+    model.watched = Some(watched);
+    let first = view(&model, 0).unwrap();
+    assert_eq!(first.watched, None);
+    assert_eq!(first.videos[0].watched, Some(false));
+    assert_eq!(view(&model, 24).unwrap().videos[5].watched, Some(true));
+    model.library_item.as_mut().unwrap().id = "different-title".into();
+    assert_eq!(view(&model, 24).unwrap().videos[5].watched, None);
+}
+
+#[test]
+fn film_watched_projection_uses_core_completion_not_resume_position() {
+    let mut model = series();
+    model.selected.as_mut().unwrap().meta_path.r#type = "movie".into();
+    let Some(Loadable::Ready(meta)) = model.meta_items[0].content.as_mut() else {
+        panic!("fixture")
+    };
+    meta.preview.r#type = "movie".into();
+    meta.videos.clear();
+    let mut item = stremio_core::types::library::LibraryItem::from((
+        &meta.preview,
+        std::marker::PhantomData::<cue_core::environment::NativeEnv>,
+    ));
+    item.state.time_offset = 900;
+    model.library_item = Some(item);
+    assert_eq!(view(&model, 0).unwrap().watched, Some(false));
+    model.library_item.as_mut().unwrap().state.times_watched = 1;
+    assert_eq!(view(&model, 0).unwrap().watched, Some(true));
+    model.selected.as_mut().unwrap().meta_path.id = "different-film".into();
+    assert_eq!(view(&model, 0).unwrap().watched, None);
+}
+
+#[test]
+fn player_selection_retains_the_chosen_provider_and_rejects_stale_resources() {
+    use stremio_core::types::addon::ResourcePath;
+    let mut model = series();
+    let path = ResourcePath::without_extra("stream", "series", "owned-series:1:30");
+    model.selected.as_mut().unwrap().stream_path = Some(path.clone());
+    for (provider, file) in [("first", 0), ("second", 7)] {
+        model.streams.push(ResourceLoadable {
+            request: serde_json::from_value(serde_json::json!({
+                "base":format!("https://{provider}.test/private/manifest.json"), "path":path
+            }))
+            .unwrap(),
+            content: Some(Loadable::Ready(vec![
+                serde_json::from_value(serde_json::json!({
+                    "infoHash":"0123456789abcdef0123456789abcdef01234567", "fileIdx":file
+                }))
+                .unwrap(),
+            ])),
+        });
+    }
+    model.meta_streams.push(model.streams.remove(0));
+    let selected = cue_core::sources::player_selection(&model, 1).unwrap();
+    let request = selected.stream_request.unwrap();
+    assert_eq!(
+        request.base.as_str(),
+        "https://second.test/private/manifest.json"
+    );
+    assert_eq!(request.path.id, "owned-series:1:30");
+    assert_eq!(selected.meta_request.unwrap().path.id, "owned-series");
+    assert_eq!(
+        cue_core::playback_source::torrent(&selected.stream)
+            .unwrap()
+            .file_index,
+        Some(7)
+    );
+    assert!(cue_core::sources::player_selection(&model, 2).is_err());
+    model.streams[0].request.path.id = "owned-series:1:1".into();
+    assert!(cue_core::sources::player_selection(&model, 1).is_err());
+    model.streams[0].request.path.id = "owned-series:1:30".into();
+    model.meta_items[0].request.path.id = "different-title".into();
+    assert!(cue_core::sources::player_selection(&model, 1).is_err());
+}

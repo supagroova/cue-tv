@@ -49,6 +49,16 @@ pub(crate) async fn context(profile: Profile) -> Result<Ctx, EnvError> {
         return Err(EnvError::StorageUnavailable);
     }
     library.merge_bucket(recent);
+    // A pending revision is meaningful only alongside the same owner's full library.
+    // Never discard a malformed or foreign journal and continue as if sync succeeded.
+    if let Some(journal) =
+        NativeEnv::get_storage::<crate::sync_journal::Journal>(crate::sync_journal::STORAGE_KEY)
+            .await?
+    {
+        journal
+            .validate_library(&library)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+    }
     Ok(Ctx::new(
         profile,
         library,
@@ -73,6 +83,30 @@ mod tests {
         serde_json::from_value(serde_json::json!({"_id":"fixture", "name":"Owned fixture", "type":"movie", "removed":false,"temp":false,
             "_mtime":format!("{year}-01-01T00:00:00Z"), "state":state})).unwrap()
     }
+    #[tokio::test]
+    async fn guest_restore_rejects_account_journal_without_erasing_it() {
+        let env = Environment::new().unwrap();
+        env.scope(async {
+            let journal = crate::sync_journal::Journal::new("other-account").unwrap();
+            NativeEnv::set_storage(crate::sync_journal::STORAGE_KEY, Some(&journal))
+                .await
+                .unwrap();
+            assert!(
+                context(Profile::default()).await.is_err(),
+                "An account journal must not be silently ignored by guest restoration"
+            );
+            let retained = NativeEnv::get_storage::<crate::sync_journal::Journal>(
+                crate::sync_journal::STORAGE_KEY,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(retained, journal);
+        })
+        .await;
+        env.shutdown().await;
+    }
+
     #[tokio::test]
     async fn merges_recent_progress_and_restores_history_without_changing_storage() {
         let env = Environment::new().unwrap();

@@ -12,16 +12,16 @@ struct AccountSignInView: View {
         VStack(alignment: .leading, spacing: 28) {
             Text("Sign in to Stremio").font(.largeTitle)
             TextField("Email", text: $email).textContentType(.username).autocorrectionDisabled()
-                .disabled(model.busy)
+                .disabled(model.busy).accessibilityIdentifier("account-signin-email")
             SecureField("Password", text: $password).textContentType(.password)
-                .disabled(model.busy)
+                .disabled(model.busy).accessibilityIdentifier("account-signin-password")
             if model.busy { ProgressView("Signing in…") }
-            if let error = model.error { Text(error).foregroundStyle(.orange) }
+            if let error = model.error { Text(error).foregroundStyle(.orange).accessibilityIdentifier("account-signin-error") }
             Button("Sign in") {
                 model.submit(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password,
                              home: home, onSuccess: onSuccess)
                 password = ""
-            }.disabled(model.busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+            }.disabled(model.busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty).accessibilityIdentifier("account-signin-submit")
             Button("Cancel") { close() }
         }
         .frame(maxWidth: 1000).padding(60)

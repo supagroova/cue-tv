@@ -98,8 +98,24 @@ pub struct BudgetFactory {
     lock: Arc<Mutex<bool>>,
     failed: Arc<AtomicBool>,
     limit: Arc<Mutex<Option<FailureCode>>>,
+    cache_sample: Arc<Mutex<Option<(std::time::Instant, Option<u64>)>>>,
 }
 impl BudgetFactory {
+    /// Filesystem allocation (data and directory metadata), sampled at most once
+    /// per second. Unknown on probe failure; never follows symbolic links.
+    pub fn cache_allocated_bytes(&self) -> Option<u64> {
+        let mut sample = self.cache_sample.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, bytes)) = *sample {
+            if at.elapsed() < std::time::Duration::from_secs(1) {
+                return bytes;
+            }
+        }
+        let bytes = disk_usage(&self.root)
+            .ok()
+            .and_then(|usage| usage.allocated.checked_add(usage.metadata_allocated));
+        *sample = Some((std::time::Instant::now(), bytes));
+        bytes
+    }
     pub fn limit_failure(&self) -> Option<FailureCode> {
         *self.limit.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -134,6 +150,7 @@ impl BudgetFactory {
             lock: Arc::new(Mutex::new(false)),
             failed: Arc::new(AtomicBool::new(false)),
             limit: Arc::new(Mutex::new(None)),
+            cache_sample: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -312,5 +329,44 @@ impl TorrentStorage for BudgetStorage {
             initial_allocated: self.initial_allocated,
             lengths: self.lengths.clone(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn diagnostic_cache_counts_allocated_blocks_not_logical_length() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("sparse.bin");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.set_len(8 * 1024 * 1024).unwrap();
+        file.write_all(&[1]).unwrap();
+        file.sync_all().unwrap();
+        // Some filesystems allocate extended files eagerly. A separate one-byte
+        // file makes logical total non-sector-aligned regardless of sparsity.
+        let tiny = root.path().join("one-byte.bin");
+        std::fs::write(&tiny, [1]).unwrap();
+        let expected = (std::fs::metadata(&path).unwrap().blocks()
+            + std::fs::metadata(&tiny).unwrap().blocks()
+            + std::fs::metadata(root.path()).unwrap().blocks())
+            * 512;
+        let policy = BudgetFactory::new(root.path().to_owned(), StorageBudget::default(), None);
+        assert_eq!(policy.cache_allocated_bytes(), Some(expected));
+        let logical =
+            std::fs::metadata(&path).unwrap().len() + std::fs::metadata(&tiny).unwrap().len();
+        assert_eq!(logical, 8 * 1024 * 1024 + 1);
+        assert_ne!(policy.cache_allocated_bytes(), Some(logical));
+    }
+
+    #[test]
+    fn diagnostic_cache_never_follows_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("link")).unwrap();
+        let policy = BudgetFactory::new(root.path().to_owned(), StorageBudget::default(), None);
+        assert_eq!(policy.cache_allocated_bytes(), None);
     }
 }

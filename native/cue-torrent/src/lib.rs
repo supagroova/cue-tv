@@ -398,8 +398,19 @@ impl PlaybackSession {
         let files = self.torrent.with_metadata(|m| m.file_infos.iter().enumerate().map(|(index, file)| {
             serde_json::json!({"index": index, "path": file.relative_filename.to_string_lossy(), "bytes": file.len})
         }).collect::<Vec<_>>()).unwrap_or_default();
+        // This projection is safe for presentation; never expose upstream errors,
+        // per-peer addresses, filenames or source URLs through diagnostics.
+        let diagnostics = serde_json::json!({
+            "cache_allocated_bytes": self.storage.0.cache_allocated_bytes(),
+            "engine_state": stats.state.to_string(),
+            "live_peers": stats.live.as_ref().map(|live| live.snapshot.peer_stats.live),
+            "download_bytes_per_second": stats.live.as_ref().map(|live| live.download_speed.as_bytes()),
+            "verified_bytes": stats.progress_bytes,
+            "total_bytes": stats.total_bytes,
+        });
         serde_json::json!({"state": "ready", "url": self.url,
-            "verified_bytes": stats.progress_bytes, "total_bytes": stats.total_bytes, "files": files})
+            "verified_bytes": stats.progress_bytes, "total_bytes": stats.total_bytes,
+            "files": files, "diagnostics": diagnostics})
     }
 
     pub fn downloaded_bytes(&self) -> u64 {

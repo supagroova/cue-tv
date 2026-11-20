@@ -12,8 +12,11 @@ use stremio_core::{
         meta_details::{MetaDetails, Selected as DetailsSelected},
     },
     runtime::{
-        Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
-        msg::{Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, Event, Internal, Msg},
+        Effect, EffectFuture, Effects, Env, EnvError, UpdateWithCtx,
+        msg::{
+            Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, ActionMetaDetails, Event,
+            Internal, Msg,
+        },
     },
     types::{api::AuthRequest, profile::Profile},
 };
@@ -44,8 +47,16 @@ pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static st
     }
     Ok(selected)
 }
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SyncSnapshot {
+    pub reauth_sequence: u64,
+    pub reauthenticating: bool,
+    pub pending_titles: usize,
+    pub state: &'static str,
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
+    pub sync: Option<SyncSnapshot>,
     pub authenticated: bool,
     pub revision: u64,
     pub stopped: bool,
@@ -58,11 +69,58 @@ pub struct Snapshot {
     pub addon: Option<AddonSnapshot>,
     pub details: Option<crate::details::View>,
     pub sources: Option<crate::sources::View>,
+    pub details_in_library: Option<bool>,
+    pub library: crate::library::View,
     pub pending_effects: usize,
     pub error: Option<&'static str>,
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    CancelReauthentication(u64, oneshot::Sender<Result<(), &'static str>>),
+    Reauthenticate(String, String, oneshot::Sender<Result<(), &'static str>>),
+    Reauthenticated(
+        u64,
+        Result<stremio_core::types::profile::Auth, crate::reauth::Error>,
+    ),
+    RetrySync(oneshot::Sender<Result<(), &'static str>>),
+    #[cfg(test)]
+    TestLibraryItem(
+        stremio_core::types::library::LibraryItem,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
+    SyncPrepared(
+        u64,
+        stremio_core::types::profile::Auth,
+        Result<Option<crate::sync_journal::Upload>, ()>,
+    ),
+    SyncUploaded(
+        u64,
+        crate::sync_journal::Upload,
+        Result<(), crate::sync_upload::Error>,
+    ),
+    Checkpoint(u64, bool, oneshot::Sender<Result<(), &'static str>>),
+    CheckpointDone(
+        Result<(), &'static str>,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
+    StartPlayback(u64, oneshot::Sender<Result<(), &'static str>>),
+    PlaybackEvent(
+        u64,
+        crate::player::PlaybackEvent,
+        oneshot::Sender<Result<crate::player::Progress, &'static str>>,
+    ),
+    RetirePlayback(u64, oneshot::Sender<Result<(), &'static str>>),
+    ClaimPlayback(
+        u64,
+        oneshot::Sender<Result<stremio_core::models::player::Selected, &'static str>>,
+    ),
+    DetailsWatched(
+        Option<String>,
+        bool,
+        u64,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
+    DetailsLibrary(bool, u64, oneshot::Sender<Result<(), &'static str>>),
     SubtitlePlan {
         meta_id: String,
         video_id: String,
@@ -83,7 +141,8 @@ enum Command {
     ),
     CatalogChoices(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     CatalogItems(usize, u64, oneshot::Sender<Result<(), &'static str>>),
-    Details(usize, u64, oneshot::Sender<Result<(), &'static str>>),
+    Details(usize, u64, bool, oneshot::Sender<Result<(), &'static str>>),
+    LibraryWindow(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsVideos(usize, u64, oneshot::Sender<Result<(), &'static str>>),
     DetailsSeason(Option<u32>, u64, oneshot::Sender<Result<(), &'static str>>),
     Sources(
@@ -112,6 +171,18 @@ pub struct CoreSession {
     owner: Option<tokio::task::JoinHandle<()>>,
 }
 impl CoreSession {
+    #[cfg(test)]
+    pub(crate) async fn test_library_item(
+        &self,
+        item: stremio_core::types::library::LibraryItem,
+    ) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .send(Command::TestLibraryItem(item, send))
+            .await
+            .map_err(|_| "stopped")?;
+        receive.await.map_err(|_| "stopped")?
+    }
     /// Guest startup never accepts account credentials.
     pub async fn guest(environment: Arc<Environment>) -> Result<Self, EnvError> {
         Self::restore(environment, None, false).await
@@ -154,10 +225,15 @@ impl CoreSession {
                             && auth.key.0.len() <= 4096 => {}
                     _ => return Err(EnvError::StorageUnavailable),
                 }
-                crate::restore::context(profile).await
+                let ctx = crate::restore::context(profile).await?;
+                let journal = NativeEnv::get_storage::<crate::sync_journal::Journal>(
+                    crate::sync_journal::STORAGE_KEY,
+                )
+                .await?;
+                Ok((ctx, journal))
             })
             .await;
-        let ctx = match setup {
+        let (ctx, journal) = match setup {
             Ok(ctx) => ctx,
             Err(error) => {
                 environment.shutdown().await;
@@ -165,7 +241,7 @@ impl CoreSession {
             }
         };
         let (commands, inbox) = mpsc::channel(64);
-        let initial = snapshot(
+        let mut initial = snapshot(
             &ctx,
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
@@ -177,8 +253,16 @@ impl CoreSession {
             0,
             0,
             0,
+            0,
             false,
             None,
+        );
+        initial.sync = sync_view(
+            &ctx,
+            journal.as_ref(),
+            &crate::sync_scheduler::Scheduler::default(),
+            false,
+            0,
         );
         let (identity_publish, identity) = watch::channel(account_identity(&ctx));
         let (publish, state) = watch::channel(initial);
@@ -187,6 +271,7 @@ impl CoreSession {
         let owner = tokio::spawn(async move {
             let result = std::panic::AssertUnwindSafe(env.scope(run(
                 ctx,
+                journal,
                 inbox,
                 outgoing,
                 publish.clone(),
@@ -201,6 +286,7 @@ impl CoreSession {
                 env.fail();
                 let mut state = publish.borrow().clone();
                 state.stopped = true;
+                state.sync = None;
                 state.pending_effects = 0;
                 state.error = env.failure();
                 publish.send_replace(state);
@@ -220,6 +306,41 @@ impl CoreSession {
     /// Explicit private identity copy for protected account selection, never UI snapshots.
     pub fn account_identity(&self) -> Option<String> {
         self.identity.borrow().clone()
+    }
+    /// Admit a same-account refresh. Completion/error is published in snapshots.
+    pub async fn reauthenticate(&self, email: &str, password: &str) -> Result<(), &'static str> {
+        if email.is_empty()
+            || email.len() > 512
+            || email.chars().any(char::is_control)
+            || password.is_empty()
+            || password.len() > 4096
+            || password.chars().any(char::is_control)
+        {
+            return Err("invalid_credentials");
+        }
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::Reauthenticate(
+                email.to_owned(),
+                password.to_owned(),
+                send,
+            ))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
+    }
+    pub async fn cancel_reauthentication(&self, sequence: u64) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::CancelReauthentication(sequence, send))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
+    }
+    pub async fn retry_sync(&self) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::RetrySync(send))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
     }
     pub async fn logout(&self) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
@@ -332,6 +453,58 @@ impl CoreSession {
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
+    /// Acknowledges admission; settled state reports asynchronous persistence errors.
+    pub async fn set_details_library(
+        &self,
+        member: bool,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsLibrary(member, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Acknowledges admission; callers must await settled persistence before success.
+    pub async fn set_details_watched(
+        &self,
+        video_id: Option<String>,
+        watched: bool,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::DetailsWatched(
+                video_id,
+                watched,
+                expected_revision,
+                reply,
+            ))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn show_library(
+        &self,
+        offset: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::LibraryWindow(offset, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn load_library_details(
+        &self,
+        index: usize,
+        expected_revision: u64,
+    ) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Details(index, expected_revision, true, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
     pub async fn load_details(
         &self,
         index: usize,
@@ -339,7 +512,7 @@ impl CoreSession {
     ) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
-            .try_send(Command::Details(index, expected_revision, reply))
+            .try_send(Command::Details(index, expected_revision, false, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -396,6 +569,66 @@ impl CoreSession {
         let (reply, ack) = oneshot::channel();
         self.commands
             .try_send(Command::PrepareTorrent(index, expected_revision, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Consumes one prepared selection for the native Player owner. This does not
+    /// start transfer or acknowledge playback/checkpoint success.
+    pub async fn claim_playback(
+        &self,
+        token: u64,
+    ) -> Result<stremio_core::models::player::Selected, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::ClaimPlayback(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Repeating Start for the same active, non-closing owner preserves its clock.
+    pub async fn start_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::StartPlayback(token, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    pub async fn playback_event(
+        &self,
+        token: u64,
+        event: crate::player::PlaybackEvent,
+    ) -> Result<crate::player::Progress, &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::PlaybackEvent(token, event, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Acknowledges one local durable checkpoint. Concurrent requests return busy.
+    /// Periodic coalescing and lifecycle barriers are separate integration work.
+    pub async fn checkpoint_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Checkpoint(token, false, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Freezes progress and retires the owner only after its final local save.
+    /// A failed write leaves the owner available for explicit retry. The most
+    /// recent successful close remains acknowledged until another close or logout,
+    /// so a caller that lost its receipt can reconcile without repeating the save.
+    pub async fn close_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::Checkpoint(token, true, reply))
+            .map_err(|_| "session_unavailable")?;
+        ack.await.map_err(|_| "session_stopped")?
+    }
+    /// Retires accounting without saving. Its most recent successful token remains
+    /// acknowledged until another retirement or logout, independently of Close.
+    pub async fn retire_playback(&self, token: u64) -> Result<(), &'static str> {
+        let (reply, ack) = oneshot::channel();
+        self.commands
+            .try_send(Command::RetirePlayback(token, reply))
             .map_err(|_| "session_unavailable")?;
         ack.await.map_err(|_| "session_stopped")?
     }
@@ -488,6 +721,7 @@ fn snapshot(
     selected_season: Option<u32>,
     source_offset: usize,
     catalog_choices_offset: usize,
+    library_offset: usize,
     catalog_item_offset: usize,
     revision: u64,
     pending_effects: usize,
@@ -496,6 +730,14 @@ fn snapshot(
 ) -> Snapshot {
     let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
+        sync: None,
+        library: crate::library::view(&ctx.library, library_offset),
+        details_in_library: crate::details::selected_preview(details).map(|meta| {
+            ctx.library
+                .items
+                .get(&meta.id)
+                .is_some_and(|item| item.r#type == meta.r#type && !item.removed && !item.temp)
+        }),
         authenticated: ctx.profile.auth.is_some(),
         catalogs,
         catalog_choices_offset,
@@ -543,8 +785,76 @@ fn account_identity(ctx: &Ctx) -> Option<String> {
     Some(id.to_owned())
 }
 
+struct PendingPlayback {
+    token: u64,
+    source_generation: u64,
+    selection: stremio_core::models::player::Selected,
+}
+fn retain_playback(
+    pending: &mut Option<PendingPlayback>,
+    details: &MetaDetails,
+    index: usize,
+    source_generation: u64,
+) -> Result<u64, &'static str> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_PLAYBACK: AtomicU64 = AtomicU64::new(1);
+    let selection = crate::sources::player_selection(details, index)?;
+    let token = NEXT_PLAYBACK
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+        .map_err(|_| "playback_limit")?;
+    *pending = Some(PendingPlayback {
+        token,
+        source_generation,
+        selection,
+    });
+    Ok(token)
+}
+
+fn sync_view(
+    ctx: &Ctx,
+    journal: Option<&crate::sync_journal::Journal>,
+    scheduler: &crate::sync_scheduler::Scheduler,
+    reauthenticating: bool,
+    reauth_sequence: u64,
+) -> Option<SyncSnapshot> {
+    ctx.profile.auth.as_ref()?;
+    let pending_titles = journal.map_or(0, |journal| journal.pending_count());
+    let state = if scheduler.is_paused() {
+        "reauthentication_required"
+    } else if scheduler.has_in_flight() {
+        "syncing"
+    } else if pending_titles > 0 {
+        "waiting"
+    } else {
+        "idle"
+    };
+    Some(SyncSnapshot {
+        reauth_sequence,
+        reauthenticating,
+        pending_titles,
+        state,
+    })
+}
+fn publish_state(
+    publish: &watch::Sender<Snapshot>,
+    ctx: &Ctx,
+    journal: Option<&crate::sync_journal::Journal>,
+    scheduler: &crate::sync_scheduler::Scheduler,
+    reauthenticating: bool,
+    reauth_sequence: u64,
+    mut state: Snapshot,
+) {
+    state.sync = if state.stopped {
+        None
+    } else {
+        sync_view(ctx, journal, scheduler, reauthenticating, reauth_sequence)
+    };
+    publish.send_replace(state);
+}
+
 async fn run(
     mut ctx: Ctx,
+    mut journal: Option<crate::sync_journal::Journal>,
     mut inbox: mpsc::Receiver<Command>,
     outgoing: mpsc::Sender<Command>,
     publish: watch::Sender<Snapshot>,
@@ -558,37 +868,512 @@ async fn run(
     let mut details = MetaDetails::default();
     let mut details_generation = 0u64;
     let mut source_generation = 0u64;
+    let mut pending_playback: Option<PendingPlayback> = None;
+    let mut playback: Option<crate::player::Playback> = None;
+    let mut checkpoint_pending = false;
+    let mut playback_closing = false;
+    let mut last_closed_playback: Option<u64> = None;
+    let mut last_retired_playback: Option<u64> = None;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
     let mut catalog_choices_offset = 0usize;
+    let mut library_offset = 0usize;
     let mut catalog_item_offset = 0usize;
     let mut addon_generation = 0u64;
     let mut revision = 0;
     let mut pending = 0usize;
     let mut error = None;
+    let mut sync_allowed = true;
+    let sync_started = std::time::Instant::now();
+    let mut sync_scheduler = crate::sync_scheduler::Scheduler::default();
+    let mut sync_cancel = tokio_util::sync::CancellationToken::new();
+    let mut reauth_sequence = 0u64;
+    let mut reauth_active: Option<(u64, String)> = None;
+    let mut reauth_ready = None;
+    let mut reauth_cancel = tokio_util::sync::CancellationToken::new();
+    let mut sync_ack: Option<(u64, crate::sync_journal::Upload)> = None;
+    let mut sync_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+    sync_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        // Only enter the ACK barrier after all Core effects have delivered their
+        // completions. No actor command mutates the captured library while this
+        // short sequential write runs; the receipt uses a separate oneshot.
+        if pending == 0 {
+            if let Some(auth) = reauth_ready.take() {
+                let prepared = crate::checkpoint::refresh_account(
+                    &ctx.profile,
+                    &auth,
+                    &ctx.library,
+                    journal.as_ref(),
+                );
+                let committed = match prepared {
+                    Ok((profile, write)) => {
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let _ = send.send(write.await.map(|_| profile));
+                        });
+                        tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => match result {
+                                Ok(Ok(profile)) => Ok(profile),
+                                _ => Err(()),
+                            },
+                        }
+                    }
+                    Err(_) => Err(()),
+                };
+                reauth_active = None;
+                match committed {
+                    Ok(profile) => {
+                        ctx.profile = profile;
+                        sync_scheduler.invalidate(sync_started.elapsed());
+                        error = None;
+                    }
+                    Err(()) => error = Some("reauthentication_save_failed"),
+                }
+                publish.send_modify(|state| state.error = error);
+            }
+            if let Some((ticket, upload)) = sync_ack.take() {
+                if sync_scheduler.is_current(ticket) {
+                    if let Some(current) = journal.clone() {
+                        let library = ctx.library.clone();
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let result =
+                                crate::checkpoint::acknowledge(&library, &current, &upload).await;
+                            let _ = send.send(result);
+                        });
+                        let result = tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => result,
+                        };
+                        let outcome = match result {
+                            Ok(Ok(next)) => {
+                                journal = Some(next);
+                                error = None;
+                                crate::sync_scheduler::Outcome::Success
+                            }
+                            _ => {
+                                error = Some("account_sync_save_failed");
+                                crate::sync_scheduler::Outcome::Retry
+                            }
+                        };
+                        sync_scheduler.finish(ticket, sync_started.elapsed(), outcome);
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+            }
+        }
+        if sync_allowed
+            && reauth_active.is_none()
+            && journal
+                .as_ref()
+                .is_some_and(|journal| journal.has_pending())
+        {
+            if let Some(auth) = ctx.profile.auth.clone() {
+                if let Some(ticket) = sync_scheduler.begin(sync_started.elapsed()) {
+                    sync_cancel.cancel();
+                    sync_cancel = tokio_util::sync::CancellationToken::new();
+                    let cancel = sync_cancel.clone();
+                    let sender = outgoing.clone();
+                    NativeEnv::exec_sequential(async move {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        let result = crate::checkpoint::committed_upload(&auth.user.id.0)
+                            .await
+                            .map_err(|_| ());
+                        tokio::select! { biased;
+                            _ = cancel.cancelled() => {},
+                            _ = sender.send(Command::SyncPrepared(ticket, auth, result)) => {},
+                        }
+                    });
+                }
+            }
+        }
+        let sync = sync_view(
+            &ctx,
+            journal.as_ref(),
+            &sync_scheduler,
+            reauth_active.is_some(),
+            reauth_sequence,
+        );
+        publish.send_if_modified(|state| {
+            if state.sync != sync {
+                state.sync = sync;
+                true
+            } else {
+                false
+            }
+        });
         let command = tokio::select! { biased;
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
+            _ = sync_tick.tick() => continue,
         };
+        let mut manual_library_title = None;
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
-            Command::Logout(reply) => {
-                if matches!(ctx.status, CtxStatus::Loading(_)) {
+            #[cfg(test)]
+            Command::TestLibraryItem(item, reply) => (
+                Msg::Internal(Internal::UpdateLibraryItem(item)),
+                Some(reply),
+                addon_generation,
+                catalog_generation,
+                details_generation,
+                source_generation,
+            ),
+            Command::CancelReauthentication(sequence, reply) => {
+                if reauth_active
+                    .as_ref()
+                    .is_some_and(|(active, _)| *active == sequence)
+                {
+                    reauth_cancel.cancel();
+                    reauth_active = None;
+                    reauth_ready = None;
+                    error = None;
+                    publish.send_modify(|state| {
+                        state.error = None;
+                        if let Some(sync) = &mut state.sync {
+                            sync.reauthenticating = false;
+                        }
+                    });
+                }
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::Reauthenticate(email, password, reply) => {
+                let Some(uid) = ctx.profile.uid().filter(|_| sync_allowed) else {
+                    let _ = reply.send(Err("account_sync_unavailable"));
+                    continue;
+                };
+                if reauth_active.is_some() || !sync_scheduler.is_paused() {
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
+                let Some(ticket) = reauth_sequence.checked_add(1) else {
+                    let _ = reply.send(Err("account_unavailable"));
+                    continue;
+                };
+                reauth_sequence = ticket;
+                reauth_active = Some((ticket, uid.0.clone()));
+                reauth_cancel.cancel();
+                reauth_cancel = tokio_util::sync::CancellationToken::new();
+                let cancel = reauth_cancel.clone();
+                let sender = outgoing.clone();
+                error = None;
+                publish.send_modify(|state| state.error = None);
+                NativeEnv::exec_concurrent(async move {
+                    let result = tokio::select! { biased;
+                        _ = cancel.cancelled() => return,
+                        result = crate::reauth::authenticate(&uid.0, &email, &password) => result,
+                    };
+                    tokio::select! { biased;
+                        _ = cancel.cancelled() => {},
+                        _ = sender.send(Command::Reauthenticated(ticket, result)) => {},
+                    }
+                });
+                let _ = reply.send(Ok(()));
+                continue;
+            }
+            Command::Reauthenticated(ticket, result) => {
+                if !sync_allowed
+                    || !reauth_active.as_ref().is_some_and(|(active, uid)| {
+                        *active == ticket
+                            && ctx.profile.uid().is_some_and(|current| current.0 == *uid)
+                    })
+                {
+                    continue;
+                }
+                match result {
+                    Ok(auth) => reauth_ready = Some(auth),
+                    Err(failure) => {
+                        reauth_active = None;
+                        error = Some(match failure {
+                            crate::reauth::Error::Identity => "reauthentication_identity_mismatch",
+                            crate::reauth::Error::InvalidRequest => "invalid_credentials",
+                            crate::reauth::Error::Rejected => "reauthentication_rejected",
+                            crate::reauth::Error::Transport => "reauthentication_failed",
+                        });
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
+            Command::RetrySync(reply) => {
+                let result = if !sync_allowed || ctx.profile.auth.is_none() {
+                    Err("account_sync_unavailable")
+                } else if sync_scheduler.is_paused() {
+                    Err("reauthentication_required")
+                } else if pending != 0 || sync_scheduler.has_in_flight() {
+                    Err("account_busy")
+                } else {
+                    // A failed Core write leaves admitted intent in memory. Repair
+                    // that atomic library/journal snapshot before reading uploads
+                    // from storage. With no pending effects or upload, this actor
+                    // barrier cannot race a newer admission or queued ACK.
+                    let result = if let Some(current) = journal.as_ref().filter(|j| j.has_pending())
+                    {
+                        let write = crate::checkpoint::write_with_journal(&ctx.library, current);
+                        let (send, receive) = oneshot::channel();
+                        NativeEnv::exec_sequential(async move {
+                            let result = match write {
+                                Ok(write) => write.await,
+                                Err(error) => Err(error),
+                            };
+                            let _ = send.send(result);
+                        });
+                        tokio::select! { biased;
+                            _ = env.cancelled() => break,
+                            result = receive => match result {
+                                Ok(Ok(())) => Ok(()),
+                                _ => Err("account_sync_save_failed"),
+                            },
+                        }
+                    } else {
+                        Ok(())
+                    };
+                    if result.is_ok() {
+                        sync_scheduler.retry_now(sync_started.elapsed());
+                        error = None;
+                    } else {
+                        error = Some("account_sync_save_failed");
+                    }
+                    publish.send_modify(|state| state.error = error);
+                    result
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::SyncPrepared(ticket, auth, result) => {
+                if !sync_scheduler.is_current(ticket) {
+                    continue;
+                }
+                match result {
+                    Ok(Some(upload)) => {
+                        let sender = outgoing.clone();
+                        let cancel = sync_cancel.clone();
+                        NativeEnv::exec_concurrent(async move {
+                            let result = tokio::select! { biased;
+                                _ = cancel.cancelled() => return,
+                                result = crate::sync_upload::send(&upload, &auth) => result,
+                            };
+                            tokio::select! { biased;
+                                _ = cancel.cancelled() => {},
+                                _ = sender.send(Command::SyncUploaded(ticket, upload, result)) => {},
+                            }
+                        });
+                    }
+                    _ => {
+                        sync_scheduler.finish(
+                            ticket,
+                            sync_started.elapsed(),
+                            crate::sync_scheduler::Outcome::Retry,
+                        );
+                        error = Some("account_sync_read_failed");
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
+            Command::SyncUploaded(ticket, upload, result) => {
+                if !sync_scheduler.is_current(ticket) {
+                    continue;
+                }
+                match result {
+                    Ok(()) => sync_ack = Some((ticket, upload)),
+                    Err(failure) => {
+                        let outcome = match failure {
+                            crate::sync_upload::Error::Transport => {
+                                crate::sync_scheduler::Outcome::Retry
+                            }
+                            _ => crate::sync_scheduler::Outcome::Rejected,
+                        };
+                        sync_scheduler.finish(ticket, sync_started.elapsed(), outcome);
+                        error = Some("account_sync_failed");
+                        publish.send_modify(|state| state.error = error);
+                    }
+                }
+                continue;
+            }
+            Command::DetailsWatched(video_id, watched, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let Some(meta) = crate::details::selected_preview(&details) else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.r#type != meta.r#type)
+                {
+                    let _ = reply.send(Err("library_identity_conflict"));
+                    continue;
+                }
+                let Some(item) = details
+                    .library_item
+                    .as_ref()
+                    .filter(|item| item.id == meta.id && item.r#type == meta.r#type)
+                else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                let playback_video = video_id.clone();
+                let (action, unchanged) = match video_id {
+                    None if meta.r#type == "movie" => (
+                        ActionMetaDetails::MarkAsWatched(watched),
+                        item.watched() == watched,
+                    ),
+                    Some(id) if meta.r#type == "series" => {
+                        let video = details
+                            .meta_items
+                            .iter()
+                            .filter_map(|page| page.content.as_ref()?.ready())
+                            .find(|ready| {
+                                ready.preview.id == meta.id && ready.preview.r#type == meta.r#type
+                            })
+                            .and_then(|ready| {
+                                ready.videos.iter().find(|video| {
+                                    video.id == id && !id.is_empty() && id.len() <= 512
+                                })
+                            });
+                        let (Some(video), Some(bits)) = (video, details.watched.as_ref()) else {
+                            let _ = reply.send(Err("invalid_video"));
+                            continue;
+                        };
+                        (
+                            ActionMetaDetails::MarkVideoAsWatched(video.clone(), watched),
+                            bits.get_video(&id) == watched,
+                        )
+                    }
+                    _ => {
+                        let _ = reply.send(Err("invalid_video"));
+                        continue;
+                    }
+                };
+                // Reject before changing the playback override or Core details. The
+                // synchronous message drain below admits no intervening commands;
+                // library_update commits this same title's intent before its write.
+                if crate::sync_journal::Journal::plan_intent(
+                    &journal,
+                    &ctx.library,
+                    &meta.r#type,
+                    &meta.id,
+                )
+                .is_err()
+                {
+                    let _ = reply.send(Err("library_write_failed"));
+                    continue;
+                }
+                if let Some(owner) = &mut playback {
+                    owner.override_watched(
+                        &meta.r#type,
+                        &meta.id,
+                        playback_video.as_deref(),
+                        watched,
+                    );
+                }
+                manual_library_title = Some(meta.id.clone());
+                // Repeated intent retries disk persistence without increasing play count.
+                let message = if unchanged {
+                    Msg::Internal(Internal::LibraryChanged(false))
+                } else {
+                    Msg::Action(Action::MetaDetails(action))
+                };
+                error = None;
+                (
+                    message,
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::DetailsLibrary(member, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_details"));
+                    continue;
+                }
+                let Some(meta) = crate::details::selected_preview(&details) else {
+                    let _ = reply.send(Err("details_not_ready"));
+                    continue;
+                };
+                // Core keys library records by ID. Never mutate a conflicting type.
+                if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.r#type != meta.r#type)
+                {
+                    let _ = reply.send(Err("library_identity_conflict"));
+                    continue;
+                }
+                if !member && !ctx.library.items.contains_key(&meta.id) {
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
+                manual_library_title = Some(meta.id.clone());
+                // Core suppresses unchanged updates, including after a failed disk write.
+                // Reasserting membership must still persist the current library.
+                let message = if ctx
+                    .library
+                    .items
+                    .get(&meta.id)
+                    .is_some_and(|item| item.removed == !member && !item.temp)
+                {
+                    Msg::Internal(Internal::LibraryChanged(false))
+                } else {
+                    let action = if member {
+                        ActionCtx::AddToLibrary(meta.clone())
+                    } else {
+                        ActionCtx::RemoveFromLibrary(meta.id.clone())
+                    };
+                    Msg::Action(Action::Ctx(action))
+                };
+                error = None;
+                (
+                    message,
+                    Some(reply),
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::Logout(reply) => {
+                if checkpoint_pending || matches!(ctx.status, CtxStatus::Loading(_)) {
+                    let _ = reply.send(Err("account_busy"));
+                    continue;
+                }
+                sync_allowed = false;
+                reauth_cancel.cancel();
+                reauth_active = None;
+                reauth_ready = None;
+                sync_cancel.cancel();
+                sync_scheduler.invalidate(sync_started.elapsed());
+                sync_ack = None;
                 allow_login = false;
                 error = None;
                 addon_generation += 1;
                 catalog_generation += 1;
+                env.replace_catalog_requests();
                 details_generation += 1;
                 source_generation += 1;
+                pending_playback = None;
+                playback = None;
+                last_closed_playback = None;
+                last_retired_playback = None;
                 addon = AddonDetails::default();
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
                 catalog_choices_offset = 0;
+                library_offset = 0;
                 catalog_item_offset = 0;
                 video_offset = 0;
                 selected_season = None;
@@ -608,7 +1393,10 @@ async fn run(
                     let _ = reply.send(Err("account_login_unavailable"));
                     continue;
                 }
-                if ctx.profile.auth.is_some() || matches!(ctx.status, CtxStatus::Loading(_)) {
+                if checkpoint_pending
+                    || ctx.profile.auth.is_some()
+                    || matches!(ctx.status, CtxStatus::Loading(_))
+                {
                     let _ = reply.send(Err("account_busy"));
                     continue;
                 }
@@ -698,6 +1486,9 @@ async fn run(
                     break;
                 };
                 catalog_generation = next;
+                env.replace_catalog_requests();
+                // Explicit reselection must issue a fresh request even for an identical query.
+                catalog = crate::catalog::Catalog::default();
                 catalog_item_offset = 0;
                 error = None;
                 (
@@ -737,7 +1528,55 @@ async fn run(
                     )
                 } else {
                     revision += 1;
-                    publish.send_replace(snapshot(
+                    publish_state(
+                        &publish,
+                        &ctx,
+                        journal.as_ref(),
+                        &sync_scheduler,
+                        reauth_active.is_some(),
+                        reauth_sequence,
+                        snapshot(
+                            &ctx,
+                            &addon,
+                            &catalog,
+                            &details,
+                            video_offset,
+                            selected_season,
+                            source_offset,
+                            catalog_choices_offset,
+                            library_offset,
+                            catalog_item_offset,
+                            revision,
+                            pending,
+                            false,
+                            error,
+                        ),
+                    );
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
+            }
+            Command::LibraryWindow(offset, expected, reply) => {
+                if expected != revision {
+                    let _ = reply.send(Err("stale_library"));
+                    continue;
+                }
+                let total = crate::library::view(&ctx.library, 0).total;
+                if offset != 0 && offset >= total {
+                    let _ = reply.send(Err("invalid_library_offset"));
+                    continue;
+                }
+                library_offset = offset;
+                error = None;
+                revision += 1;
+                publish_state(
+                    &publish,
+                    &ctx,
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    reauth_active.is_some(),
+                    reauth_sequence,
+                    snapshot(
                         &ctx,
                         &addon,
                         &catalog,
@@ -746,15 +1585,16 @@ async fn run(
                         selected_season,
                         source_offset,
                         catalog_choices_offset,
+                        library_offset,
                         catalog_item_offset,
                         revision,
                         pending,
                         false,
                         error,
-                    ));
-                    let _ = reply.send(Ok(()));
-                    continue;
-                }
+                    ),
+                );
+                let _ = reply.send(Ok(()));
+                continue;
             }
             Command::CatalogChoices(offset, expected, reply) => {
                 if expected != revision {
@@ -773,21 +1613,30 @@ async fn run(
                 }
                 catalog_choices_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    reauth_active.is_some(),
+                    reauth_sequence,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -810,6 +1659,7 @@ async fn run(
                     break;
                 };
                 source_generation = next;
+                pending_playback = None;
                 details.streams.clear();
                 details.meta_streams.clear();
                 source_offset = 0;
@@ -847,6 +1697,157 @@ async fn run(
                 let _ = reply.send(result);
                 continue;
             }
+            Command::Checkpoint(token, close, reply) => {
+                if close && last_closed_playback == Some(token) {
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
+                let Some(owner) = playback.as_ref().filter(|owner| owner.token == token) else {
+                    let _ = reply.send(Err("stale_playback"));
+                    continue;
+                };
+                if checkpoint_pending {
+                    let _ = reply.send(Err("checkpoint_busy"));
+                    continue;
+                }
+                let item = match owner.checkpoint_item(&ctx) {
+                    Ok(item) => item,
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        continue;
+                    }
+                };
+                let next_journal = match crate::sync_journal::Journal::plan_intent(
+                    &journal,
+                    &ctx.library,
+                    &item.r#type,
+                    &item.id,
+                ) {
+                    Ok(next) => next,
+                    Err(_) => {
+                        let _ = reply.send(Err("checkpoint_write_failed"));
+                        continue;
+                    }
+                };
+                let mut library = ctx.library.clone();
+                let checkpoint_title = item.id.clone();
+                library.merge_items(vec![item]);
+                let planned_write = match next_journal.as_ref() {
+                    Some(next) => crate::checkpoint::write_with_journal(&library, next),
+                    None => crate::checkpoint::write(&library, &checkpoint_title),
+                };
+                let write = match planned_write {
+                    Ok(write) => write,
+                    Err(_) => {
+                        let _ = reply.send(Err("checkpoint_write_failed"));
+                        continue;
+                    }
+                };
+                // Later library actions snapshot this admitted progress. Writes
+                // share Core's sequential queue, preserving admission order.
+                ctx.library = library;
+                journal = next_journal;
+                checkpoint_pending = true;
+                playback_closing = close;
+                pending += 1;
+                revision += 1;
+                error = None;
+                let sender = outgoing.clone();
+                NativeEnv::exec_sequential(async move {
+                    let result = write.await.map_err(|_| "checkpoint_write_failed");
+                    let _ = sender.send(Command::CheckpointDone(result, reply)).await;
+                });
+                (
+                    Msg::Internal(Internal::LibraryChanged(true)),
+                    None,
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::CheckpointDone(result, reply) => {
+                if playback_closing && result.is_ok() {
+                    last_closed_playback = playback.take().map(|owner| owner.token);
+                }
+                playback_closing = false;
+                checkpoint_pending = false;
+                pending = pending.saturating_sub(1);
+                if let Err(failure) = result {
+                    error = Some(failure);
+                }
+                let _ = reply.send(result);
+                (
+                    Msg::Internal(Internal::LibraryChanged(true)),
+                    None,
+                    addon_generation,
+                    catalog_generation,
+                    details_generation,
+                    source_generation,
+                )
+            }
+            Command::StartPlayback(token, reply) => {
+                let result = if playback.as_ref().is_some_and(|owner| owner.token == token) {
+                    if playback_closing {
+                        Err("playback_closing")
+                    } else {
+                        Ok(())
+                    }
+                } else if playback.is_some() {
+                    Err("playback_busy")
+                } else if pending_playback.as_ref().is_some_and(|pending| {
+                    pending.token == token && pending.source_generation == source_generation
+                }) {
+                    let pending = pending_playback.take().expect("checked pending selection");
+                    crate::player::Playback::new(token, pending.selection, &details, &ctx).map(
+                        |owner| {
+                            playback = Some(owner);
+                        },
+                    )
+                } else {
+                    Err("stale_playback")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::PlaybackEvent(token, event, reply) => {
+                let result = match playback.as_mut().filter(|owner| owner.token == token) {
+                    Some(_) if playback_closing => Err("playback_closing"),
+                    Some(owner) => owner.event(event, &ctx),
+                    None => Err("stale_playback"),
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::RetirePlayback(token, reply) => {
+                let result = if last_retired_playback == Some(token) {
+                    Ok(())
+                } else if checkpoint_pending {
+                    Err("checkpoint_busy")
+                } else if playback.as_ref().is_some_and(|owner| owner.token == token) {
+                    playback = None;
+                    last_retired_playback = Some(token);
+                    Ok(())
+                } else {
+                    Err("stale_playback")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
+            Command::ClaimPlayback(token, reply) => {
+                let result = if pending_playback.as_ref().is_some_and(|pending| {
+                    pending.token == token && pending.source_generation == source_generation
+                }) {
+                    Ok(pending_playback
+                        .take()
+                        .expect("checked pending selection")
+                        .selection)
+                } else {
+                    Err("stale_playback")
+                };
+                let _ = reply.send(result);
+                continue;
+            }
             Command::PrepareTorrent(index, expected, reply) => {
                 let result = if expected != revision {
                     Err("stale_sources")
@@ -855,7 +1856,15 @@ async fn run(
                 {
                     Err("invalid_source")
                 } else {
-                    crate::sources::prepare(&details, index)
+                    crate::sources::prepare(&details, index).and_then(|mut request| {
+                        request.playback_token = retain_playback(
+                            &mut pending_playback,
+                            &details,
+                            index,
+                            source_generation,
+                        )?;
+                        Ok(request)
+                    })
                 };
                 let _ = reply.send(result);
                 continue;
@@ -868,7 +1877,15 @@ async fn run(
                 {
                     Err("invalid_source")
                 } else {
-                    crate::sources::prepare_https(&details, index)
+                    crate::sources::prepare_https(&details, index).and_then(|mut request| {
+                        request.playback_token = retain_playback(
+                            &mut pending_playback,
+                            &details,
+                            index,
+                            source_generation,
+                        )?;
+                        Ok(request)
+                    })
                 };
                 let _ = reply.send(result);
                 continue;
@@ -886,21 +1903,30 @@ async fn run(
                 }
                 source_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    reauth_active.is_some(),
+                    reauth_sequence,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -918,21 +1944,30 @@ async fn run(
                 }
                 video_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    reauth_active.is_some(),
+                    reauth_sequence,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -951,33 +1986,61 @@ async fn run(
                 video_offset = 0;
                 selected_season = season;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    reauth_active.is_some(),
+                    reauth_sequence,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
-            Command::Details(index, expected, reply) => {
+            Command::Details(index, expected, from_library, reply) => {
                 if expected != revision {
-                    let _ = reply.send(Err("stale_catalog"));
+                    let _ = reply.send(Err(if from_library {
+                        "stale_library"
+                    } else {
+                        "stale_catalog"
+                    }));
                     continue;
                 }
-                let item = crate::catalog::view(&catalog, catalog_item_offset)
-                    .and_then(|view| view.items.into_iter().nth(index));
-                let Some(item) = item else {
-                    let _ = reply.send(Err("invalid_catalog_item"));
+                let selected = if from_library {
+                    crate::library::selection(&ctx.library, library_offset, index)
+                } else {
+                    crate::catalog::view(&catalog, catalog_item_offset)
+                        .and_then(|view| view.items.into_iter().nth(index))
+                        .map(|item| DetailsSelected {
+                            meta_path: stremio_core::types::addon::ResourcePath::without_extra(
+                                "meta", &item.kind, &item.id,
+                            ),
+                            stream_path: None,
+                            guess_stream: false,
+                        })
+                };
+                let Some(selected) = selected else {
+                    let _ = reply.send(Err(if from_library {
+                        "invalid_library_item"
+                    } else {
+                        "invalid_catalog_item"
+                    }));
                     continue;
                 };
                 let Some(next) = details_generation.checked_add(1) else {
@@ -990,19 +2053,13 @@ async fn run(
                     break;
                 };
                 source_generation = next_source;
+                pending_playback = None;
                 // A fresh model also permits explicit retry of a cached failed result.
                 details = MetaDetails::default();
                 video_offset = 0;
                 selected_season = None;
                 source_offset = 0;
                 error = None;
-                let selected = DetailsSelected {
-                    meta_path: stremio_core::types::addon::ResourcePath::without_extra(
-                        "meta", &item.kind, &item.id,
-                    ),
-                    stream_path: None,
-                    guess_stream: false,
-                };
                 (
                     Msg::Action(Action::Load(ActionLoad::MetaDetails(selected))),
                     Some(reply),
@@ -1070,7 +2127,12 @@ async fn run(
                     stremio_core::types::server_urls::ServerUrlsBucket::new::<NativeEnv>(None);
                 messages.push_back(Msg::Internal(Internal::StreamingServerUrlsBucketChanged));
             }
-            let context_effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message);
+            let context_effects = crate::library_update::update(
+                &mut ctx,
+                &message,
+                manual_library_title.as_deref(),
+                &mut journal,
+            );
             let stale_manifest = origin != addon_generation
                 && matches!(&message, Msg::Internal(Internal::ManifestRequestResult(..)));
             let addon_effects = if stale_manifest {
@@ -1145,21 +2207,30 @@ async fn run(
             }
         }
         identity.send_replace(account_identity(&ctx));
-        publish.send_replace(snapshot(
+        publish_state(
+            &publish,
             &ctx,
-            &addon,
-            &catalog,
-            &details,
-            video_offset,
-            selected_season,
-            source_offset,
-            catalog_choices_offset,
-            catalog_item_offset,
-            revision,
-            pending,
-            false,
-            error,
-        ));
+            journal.as_ref(),
+            &sync_scheduler,
+            reauth_active.is_some(),
+            reauth_sequence,
+            snapshot(
+                &ctx,
+                &addon,
+                &catalog,
+                &details,
+                video_offset,
+                selected_season,
+                source_offset,
+                catalog_choices_offset,
+                library_offset,
+                catalog_item_offset,
+                revision,
+                pending,
+                false,
+                error,
+            ),
+        );
         if let Some(reply) = reply {
             let _ = reply.send(if error.is_none() {
                 Ok(())
@@ -1168,21 +2239,32 @@ async fn run(
             });
         }
     }
+    reauth_cancel.cancel();
+    sync_cancel.cancel();
     inbox.close();
     identity.send_replace(None);
-    publish.send_replace(snapshot(
+    publish_state(
+        &publish,
         &ctx,
-        &addon,
-        &catalog,
-        &details,
-        video_offset,
-        selected_season,
-        source_offset,
-        catalog_choices_offset,
-        catalog_item_offset,
-        revision,
-        0,
-        true,
-        env.failure().or(error),
-    ));
+        journal.as_ref(),
+        &sync_scheduler,
+        reauth_active.is_some(),
+        reauth_sequence,
+        snapshot(
+            &ctx,
+            &addon,
+            &catalog,
+            &details,
+            video_offset,
+            selected_season,
+            source_offset,
+            catalog_choices_offset,
+            library_offset,
+            catalog_item_offset,
+            revision,
+            0,
+            true,
+            env.failure().or(error),
+        ),
+    );
 }

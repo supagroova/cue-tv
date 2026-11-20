@@ -16,6 +16,8 @@ use stremio_core::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub(crate) const AUTH_REJECTED: &str = "HTTP authentication rejected";
+
 const RESPONSE_LIMIT: usize = 4 * 1024 * 1024;
 const STORAGE_LIMIT: usize = 16 * 1024 * 1024;
 tokio::task_local! { static CONTEXT: Arc<Environment>; }
@@ -25,58 +27,107 @@ tokio::task_local! { static CONTEXT: Arc<Environment>; }
 #[cfg(test)]
 type TestHttp =
     Arc<dyn Fn(&http::request::Parts, &[u8]) -> Result<Vec<u8>, EnvError> + Send + Sync>;
+#[cfg(test)]
+type TestHttpAsync = Arc<
+    dyn Fn(
+            http::request::Parts,
+            Vec<u8>,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, EnvError>>
+        + Send
+        + Sync,
+>;
 pub struct Environment {
     #[cfg(test)]
     pub(crate) test_http: Mutex<Option<TestHttp>>,
+    #[cfg(test)]
+    pub(crate) test_http_async: Mutex<Option<TestHttpAsync>>,
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     persistence: Option<crate::persistence::EncryptedStore>,
     canceled: CancellationToken,
+    catalog_requests: Mutex<CancellationToken>,
     failed: AtomicBool,
     tasks: tokio_util::task::TaskTracker,
     runtime: tokio::runtime::Handle,
     sequential: tokio::sync::mpsc::Sender<futures::future::BoxFuture<'static, ()>>,
     client: reqwest::Client,
+    #[cfg(feature = "account-fixture")]
+    fixture_port: Option<u16>,
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
 }
 impl Environment {
+    pub(crate) fn replace_catalog_requests(&self) {
+        let mut token = self.catalog_requests.lock().unwrap();
+        token.cancel();
+        *token = CancellationToken::new();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_writes(&self) -> usize {
+        self.sequential.max_capacity() - self.sequential.capacity()
+    }
+
     pub fn new() -> Result<Arc<Self>, EnvError> {
         Self::with_clock(Arc::new(Utc::now))
     }
     pub fn with_clock(
         clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
     ) -> Result<Arc<Self>, EnvError> {
-        Self::configured(clock, BTreeMap::new(), None)
+        Self::configured(clock, BTreeMap::new(), None, None)
     }
     /// Blocking initialization for an app-owned encrypted directory, off the UI actor.
     pub fn persistent(directory: &std::path::Path, key: &[u8; 32]) -> Result<Arc<Self>, EnvError> {
         let (store, values) = crate::persistence::EncryptedStore::open(directory, key)
             .map_err(|_| EnvError::StorageUnavailable)?;
-        Self::configured(Arc::new(Utc::now), values, Some(store))
+        Self::configured(Arc::new(Utc::now), values, Some(store), None)
     }
+    /// Explicit isolated network boundary for synthetic-account qualification.
+    /// No environment variables or process-wide routing are consulted.
+    #[cfg(feature = "account-fixture")]
+    pub fn account_fixture(port: u16) -> Result<Arc<Self>, EnvError> {
+        if port == 0 { return Err(EnvError::Fetch("Invalid fixture port".into())); }
+        Self::configured(Arc::new(Utc::now), BTreeMap::new(), None, Some(port))
+    }
+
+    #[cfg(feature = "account-fixture")]
+    pub fn persistent_account_fixture(directory: &std::path::Path, key: &[u8; 32], port: u16) -> Result<Arc<Self>, EnvError> {
+        if port == 0 { return Err(EnvError::Fetch("Invalid fixture port".into())); }
+        let (store, values) = crate::persistence::EncryptedStore::open(directory, key)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        Self::configured(Arc::new(Utc::now), values, Some(store), Some(port))
+    }
+
     fn configured(
         clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
         values: BTreeMap<String, Vec<u8>>,
         persistence: Option<crate::persistence::EncryptedStore>,
+        _fixture_port: Option<u16>,
     ) -> Result<Arc<Self>, EnvError> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| EnvError::Other("Core runtime unavailable".into()))?;
         let (sequential, mut queue) =
             tokio::sync::mpsc::channel::<futures::future::BoxFuture<'static, ()>>(128);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none());
+        #[cfg(feature = "account-fixture")]
+        let client = if _fixture_port.is_some() { client.no_proxy() } else { client };
         let env = Arc::new(Self {
             #[cfg(test)]
             test_http: Mutex::new(None),
+            #[cfg(test)]
+            test_http_async: Mutex::new(None),
+            #[cfg(feature = "account-fixture")]
+            fixture_port: _fixture_port,
             storage: Mutex::new(values),
             persistence,
             canceled: CancellationToken::new(),
+            catalog_requests: Mutex::new(CancellationToken::new()),
             failed: AtomicBool::new(false),
             tasks: tokio_util::task::TaskTracker::new(),
             runtime: runtime.clone(),
             sequential,
             clock,
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
+            client: client.build()
                 .map_err(|_| EnvError::Fetch("HTTP client unavailable".into()))?,
         });
         let weak = Arc::downgrade(&env);
@@ -137,6 +188,15 @@ fn context() -> Result<Arc<Environment>, EnvError> {
         .try_with(Arc::clone)
         .map_err(|_| EnvError::Other("Core context unavailable".into()))
 }
+pub(crate) fn catalog_request_cancellation() -> Result<CancellationToken, EnvError> {
+    let env = context()?;
+    let token = env
+        .catalog_requests
+        .lock()
+        .map_err(|_| EnvError::Other("Core request scope unavailable".into()))?
+        .clone();
+    Ok(token)
+}
 fn canceled() -> EnvError {
     EnvError::Other("Core session canceled".into())
 }
@@ -144,8 +204,66 @@ fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, EnvError> {
     serde_json::from_slice(bytes).map_err(|_| EnvError::Serde("Invalid JSON".into()))
 }
 
+pub(crate) type StorageBatch = BTreeMap<String, Option<Vec<u8>>>;
+
+fn write_storage_values(
+    env: Result<Arc<Environment>, EnvError>,
+    updates: Result<StorageBatch, EnvError>,
+) -> TryEnvFuture<()> {
+    async move {
+        let env = env?;
+        let updates = updates?;
+        let mut store = env
+            .storage
+            .lock()
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        if env.canceled.is_cancelled() {
+            return Err(canceled());
+        }
+        let mut next = store.clone();
+        for (key, value) in updates {
+            if let Some(value) = value {
+                next.insert(key, value);
+            } else {
+                next.remove(&key);
+            }
+        }
+        let size = next.iter().try_fold(0usize, |sum, (key, value)| {
+            sum.checked_add(key.len())
+                .and_then(|sum| sum.checked_add(value.len()))
+        });
+        if size.is_none_or(|size| size > STORAGE_LIMIT) {
+            return Err(EnvError::StorageWriteError(
+                "Storage budget exceeded".into(),
+            ));
+        }
+        if let Some(persistence) = &env.persistence {
+            persistence.save(&next).map_err(|_| {
+                EnvError::StorageWriteError("Encrypted storage write failed".into())
+            })?;
+        }
+        // Publish all keys only after the single encrypted-store replacement succeeds.
+        *store = next;
+        Ok(())
+    }
+    .boxed()
+}
+
 pub struct NativeEnv;
+impl NativeEnv {
+    /// Atomic update of already-serialized Core values in this identity's store.
+    pub(crate) fn set_storage_batch(updates: StorageBatch) -> TryEnvFuture<()> {
+        write_storage_values(context(), Ok(updates))
+    }
+}
+
 impl Env for NativeEnv {
+    fn addon_transport(
+        url: &reqwest::Url,
+    ) -> Box<dyn stremio_core::addon_transport::AddonTransport> {
+        crate::addon_transport::transport(url)
+    }
+
     fn fetch<
         IN: Serialize + ConditionalSend + 'static,
         OUT: for<'de> Deserialize<'de> + ConditionalSend + 'static,
@@ -157,6 +275,20 @@ impl Env for NativeEnv {
             let env = context?;
             let (parts, body) = request.into_parts();
             #[cfg(test)]
+            {
+                let hook = env.test_http_async.lock().unwrap().clone();
+                if let Some(hook) = hook {
+                    let bytes = serde_json::to_vec(&body)
+                        .map_err(|_| EnvError::Serde("Invalid request".into()))?;
+                    let response = tokio::select! { biased;
+                        _ = env.canceled.cancelled() => return Err(canceled()),
+                        response = hook(parts, bytes) => response?,
+                    };
+                    return decode(&response);
+                }
+            }
+
+            #[cfg(test)]
             if let Some(http) = env.test_http.lock().unwrap().clone() {
                 if env.canceled.is_cancelled() {
                     return Err(canceled());
@@ -166,6 +298,11 @@ impl Env for NativeEnv {
                 return decode(&http(&parts, &body)?);
             }
             let uri = parts.uri.to_string();
+            #[cfg(feature = "account-fixture")]
+            let uri = match env.fixture_port {
+                Some(port) => fixture_uri(&parts.uri, port)?,
+                None => uri,
+            };
             if !matches!(parts.uri.scheme_str(), Some("http" | "https")) {
                 return Err(EnvError::Fetch("Unsupported URL scheme".into()));
             }
@@ -190,6 +327,9 @@ impl Env for NativeEnv {
                     .send()
                     .await
                     .map_err(|_| EnvError::Fetch("Request failed".into()))?;
+                if matches!(response.status().as_u16(), 401 | 403) {
+                    return Err(EnvError::Fetch(AUTH_REJECTED.into()));
+                }
                 if !response.status().is_success() {
                     return Err(EnvError::Fetch("HTTP status rejected".into()));
                 }
@@ -238,54 +378,12 @@ impl Env for NativeEnv {
         .boxed()
     }
     fn set_storage<T: Serialize>(key: &str, value: Option<&T>) -> TryEnvFuture<()> {
-        let key = key.to_owned();
-        let context = context();
-        let value = value
+        let values = value
             .map(serde_json::to_vec)
             .transpose()
+            .map(|value| BTreeMap::from([(key.to_owned(), value)]))
             .map_err(|_| EnvError::Serde("Invalid storage value".into()));
-        async move {
-            let env = context?;
-            let value = value?;
-            let mut store = env
-                .storage
-                .lock()
-                .map_err(|_| EnvError::StorageUnavailable)?;
-            if env.canceled.is_cancelled() {
-                return Err(canceled());
-            }
-            let remaining: usize = store
-                .iter()
-                .filter(|(k, _)| *k != &key)
-                .map(|(k, v)| k.len() + v.len())
-                .sum();
-            if value
-                .as_ref()
-                .is_some_and(|v| key.len() + v.len() > STORAGE_LIMIT.saturating_sub(remaining))
-            {
-                return Err(EnvError::StorageWriteError(
-                    "Storage budget exceeded".into(),
-                ));
-            }
-            if let Some(persistence) = &env.persistence {
-                let mut next = store.clone();
-                if let Some(value) = value {
-                    next.insert(key, value);
-                } else {
-                    next.remove(&key);
-                }
-                persistence.save(&next).map_err(|_| {
-                    EnvError::StorageWriteError("Encrypted storage write failed".into())
-                })?;
-                *store = next;
-            } else if let Some(value) = value {
-                store.insert(key, value);
-            } else {
-                store.remove(&key);
-            }
-            Ok(())
-        }
-        .boxed()
+        write_storage_values(context(), values)
     }
     fn exec_concurrent<F: Future<Output = ()> + ConditionalSend + 'static>(future: F) {
         spawn(future, false);
@@ -346,5 +444,137 @@ fn spawn(future: impl Future<Output = ()> + Send + 'static, sequential: bool) {
             },
             &env.runtime,
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_batch_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failed_batch_preserves_both_keys_and_retry_survives_reopen() {
+        let directory = std::env::temp_dir().join(format!(
+            "cue-storage-batch-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let unavailable = directory.with_extension("unavailable");
+        let updates = |first: u32, second: u32| {
+            BTreeMap::from([
+                ("recent".into(), Some(serde_json::to_vec(&first).unwrap())),
+                ("older".into(), Some(serde_json::to_vec(&second).unwrap())),
+            ])
+        };
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            NativeEnv::set_storage_batch(updates(11, 22)).await.unwrap();
+            std::fs::rename(&directory, &unavailable).unwrap();
+            assert!(NativeEnv::set_storage_batch(updates(33, 44)).await.is_err());
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(11)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(22)
+            );
+            std::fs::rename(&unavailable, &directory).unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(11)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(22)
+            );
+            NativeEnv::set_storage_batch(updates(33, 44)).await.unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(33)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(44)
+            );
+            // A rejected oversized batch must not partially delete an existing key.
+            assert!(
+                NativeEnv::set_storage_batch(BTreeMap::from([
+                    ("recent".into(), Some(vec![0; STORAGE_LIMIT])),
+                    ("older".into(), None),
+                ]))
+                .await
+                .is_err()
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(33)
+            );
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("older").await.unwrap(),
+                Some(44)
+            );
+            NativeEnv::set_storage_batch(BTreeMap::from([
+                ("recent".into(), Some(b"55".to_vec())),
+                ("older".into(), None),
+            ]))
+            .await
+            .unwrap();
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            assert_eq!(
+                NativeEnv::get_storage::<u32>("recent").await.unwrap(),
+                Some(55)
+            );
+            assert_eq!(NativeEnv::get_storage::<u32>("older").await.unwrap(), None);
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+/// Fixture sessions cannot fall through to the public Internet. Only the pinned
+/// account API origin is mapped, retaining the actual path/query and HTTP body.
+#[cfg(feature = "account-fixture")]
+fn fixture_uri(uri: &http::Uri, port: u16) -> Result<String, EnvError> {
+    if uri.scheme_str() != Some("https")
+        || uri.authority().map(|value| value.as_str()) != Some("api.strem.io")
+    {
+        return Err(EnvError::Fetch("Fixture destination rejected".into()));
+    }
+    Ok(format!("http://127.0.0.1:{port}{}", uri.path_and_query().map(|value| value.as_str()).unwrap_or("/")))
+}
+
+#[cfg(all(test, feature = "account-fixture"))]
+mod fixture_tests {
+    use super::*;
+    #[test]
+    fn fixture_mapping_rejects_other_origins_and_preserves_request_target() {
+        assert_eq!(fixture_uri(&"https://api.strem.io/api/login?fixture=1".parse().unwrap(), 12345).unwrap(),
+            "http://127.0.0.1:12345/api/login?fixture=1");
+        for uri in ["http://api.strem.io/api/login", "https://api.strem.io.evil.test/api/login",
+            "https://user@api.strem.io/api/login", "https://api.strem.io:444/api/login",
+            "https://example.test/manifest.json", "http://127.0.0.1:12345/api/login"] {
+            assert!(fixture_uri(&uri.parse().unwrap(), 12345).is_err());
+        }
+        assert!(Environment::account_fixture(0).is_err());
     }
 }

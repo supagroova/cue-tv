@@ -1,11 +1,28 @@
 import Foundation
 
+/// Selects only the external account transport; namespace/adoption logic is shared.
+nonisolated enum AccountLoginTransport: Sendable {
+    case stremio
+    #if DEBUG && targetEnvironment(simulator)
+    case fixture(UInt16)
+    #endif
+    var startup: NativeCoreService.Startup {
+        switch self {
+        case .stremio: .newAccount
+        #if DEBUG && targetEnvironment(simulator)
+        case .fixture(let port): .fixtureAccount(port)
+        #endif
+        }
+    }
+}
+
 /// Single-use owner of a candidate account until verified selection is handed to the UI.
 actor CoreAccountLogin {
     enum Failure: Error, Equatable { case busy, authenticationFailed, timeout, invalidIdentity }
     nonisolated let namespace: UUID
     private let storage: CoreStorage
     private let selection: CoreAccountSelection
+    private let transport: AccountLoginTransport
     private var service: NativeCoreService?
     private var operation: Task<NativeCoreService, any Error>?
     private var cancelled = false
@@ -13,11 +30,12 @@ actor CoreAccountLogin {
     private var handedOff = false
     private var preparationStarted = false
 
-    init(root: URL? = nil, selection: CoreAccountSelection = .shared) {
+    init(root: URL? = nil, selection: CoreAccountSelection = .shared, transport: AccountLoginTransport = .stremio) {
         let id = UUID()
         namespace = id
         storage = CoreStorage.account(id: id, root: root)
         self.selection = selection
+        self.transport = transport
     }
 
     func signIn(email: String, password: String) async throws -> NativeCoreService {
@@ -49,7 +67,7 @@ actor CoreAccountLogin {
         try Task.checkCancellation()
         preparationStarted = true
         let configuration = try await storage.prepare()
-        let candidate = NativeCoreService(persistence: configuration, startup: .newAccount)
+        let candidate = NativeCoreService(persistence: configuration, startup: transport.startup)
         service = candidate
         try Task.checkCancellation()
         try await candidate.start()

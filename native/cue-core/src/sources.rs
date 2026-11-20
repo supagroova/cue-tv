@@ -137,21 +137,66 @@ pub fn view_with_addons(
     })
 }
 
+/// Native-only Player selection. Keeps provider requests and private stream data
+/// out of presentation snapshots while retaining the exact chosen source.
+pub fn player_selection(
+    model: &MetaDetails,
+    index: usize,
+) -> Result<stremio_core::models::player::Selected, &'static str> {
+    let selected = model.selected.as_ref().ok_or("invalid_source")?;
+    let video = selected.stream_path.as_ref().ok_or("invalid_source")?;
+    let meta = model
+        .meta_items
+        .iter()
+        .find(|page| {
+            page.request.path.resource == "meta"
+                && page.request.path.id == selected.meta_path.id
+                && page.request.path.r#type == selected.meta_path.r#type
+                && page
+                    .content
+                    .as_ref()
+                    .and_then(|content| content.ready())
+                    .is_some_and(|meta| {
+                        meta.preview.id == selected.meta_path.id
+                            && meta.preview.r#type == selected.meta_path.r#type
+                    })
+        })
+        .ok_or("invalid_source")?;
+    let (page, stream) = model
+        .meta_streams
+        .iter()
+        .chain(&model.streams)
+        .filter_map(|page| Some((page, page.content.as_ref()?.ready()?)))
+        .flat_map(|(page, streams)| streams.iter().map(move |stream| (page, stream)))
+        .nth(index)
+        .ok_or("invalid_source")?;
+    if video.resource != "stream"
+        || video.r#type != selected.meta_path.r#type
+        || page.request.path.resource != "stream"
+        || page.request.path.id != video.id
+        || page.request.path.r#type != video.r#type
+    {
+        return Err("invalid_source");
+    }
+    Ok(stremio_core::models::player::Selected {
+        stream: stream.clone(),
+        stream_request: Some(page.request.clone()),
+        meta_request: Some(meta.request.clone()),
+        // Existing explicit subtitle discovery owns this work and its cancellation.
+        subtitles_path: None,
+    })
+}
+
 pub(crate) fn prepare(
     model: &MetaDetails,
     index: usize,
 ) -> Result<crate::playback_source::PreparedTorrent, &'static str> {
-    let stream = model
-        .meta_streams
-        .iter()
-        .chain(&model.streams)
-        .filter_map(|page| page.content.as_ref()?.ready())
-        .flatten()
-        .nth(index)
-        .ok_or("invalid_source")?;
+    let player = player_selection(model, index)?;
+    let stream = &player.stream;
     let selected = model.selected.as_ref().ok_or("invalid_source")?;
     let video = selected.stream_path.as_ref().ok_or("invalid_source")?;
     Ok(crate::playback_source::PreparedTorrent {
+        playback_token: 0,
         subtitles: crate::subtitles::choices(&stream.subtitles),
         meta_id: selected.meta_path.id.clone(),
         video_id: video.id.clone(),
@@ -164,17 +209,12 @@ pub(crate) fn prepare_https(
     model: &MetaDetails,
     index: usize,
 ) -> Result<crate::playback_source::PreparedHttps, &'static str> {
-    let stream = model
-        .meta_streams
-        .iter()
-        .chain(&model.streams)
-        .filter_map(|page| page.content.as_ref()?.ready())
-        .flatten()
-        .nth(index)
-        .ok_or("invalid_source")?;
+    let player = player_selection(model, index)?;
+    let stream = &player.stream;
     let selected = model.selected.as_ref().ok_or("invalid_source")?;
     let video = selected.stream_path.as_ref().ok_or("invalid_source")?;
     Ok(crate::playback_source::PreparedHttps {
+        playback_token: 0,
         subtitles: crate::subtitles::choices(&stream.subtitles),
         meta_id: selected.meta_path.id.clone(),
         video_id: video.id.clone(),

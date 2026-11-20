@@ -5,7 +5,7 @@ inputs:
     description: Independent build lane; prevents partial caches overwriting one another.
     required: true
   native-artifact-hit:
-    description: Exact simulator artifacts were verified before setup; Cargo is unnecessary.
+    description: Both simulator component caches matched exactly; verification follows setup before use.
     default: 'false'
 runs:
   using: composite
