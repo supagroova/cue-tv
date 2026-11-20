@@ -27,9 +27,11 @@ snapshot, fixing immediate retry against a stale active flag. These tests exerci
 real HTTP, FFI and storage, but do not establish the full SwiftUI journey.
 
 Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
-a successful account-refresh UI journey, pending-journal sign-out recovery,
-ambiguous operation timeout reconciliation, failed-save UI and abrupt interruption
-coverage, cache-purge recovery, and broader console privacy qualification.
+a successful account-refresh UI journey, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
+coverage, physical cache-purge recovery, and broader console privacy qualification.
+Simulator composites now qualify pending-journal sign-out with held HTTP and failed
+filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
+while encrypted account state and keys remain intact.
 Earlier phases' unresolved gates and the physical-device matrix remain required.
 Rust panic-hook redaction and VLC logging suppression are implemented; neither
 proves that all OS crash reports or third-party output are private.

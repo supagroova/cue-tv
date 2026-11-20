@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 import Testing
 @testable import SittingRoomTV
 
@@ -48,23 +49,9 @@ import Testing
 func accountRefreshFormResumesRejectedSyncWithoutChangingOwner(failure: String) async throws {
     let fixture = try await AccountHTTPFixture.start(recovery: true, rejectFirstRefresh: failure == "identity", holdFirstRefresh: failure == "cancel")
     defer { fixture.listener.cancel() }
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let storage = CoreStorage.account(id: UUID(), root: root)
-    let configuration = try await storage.prepare()
-    let service = NativeCoreService(persistence: configuration, startup: .fixtureAccount(fixture.port))
-    try await service.start()
-    _ = try await accountState(service) { $0.status == .ready }
-    try await service.login(email: "fixture@example.test", password: "fixture-password")
-    var state = try await accountState(service) { $0.model?.authenticated == true && $0.model?.pendingEffects == 0 }
-    let choice = try #require(state.model?.catalogs.first)
-    try await service.loadCatalog(index: choice.index, expectedRevision: try #require(state.model?.revision))
-    state = try await accountState(service) { $0.model?.catalog?.status == .ready }
-    #expect(state.model?.catalog?.items.first?.id == "account-title")
-    try await service.loadDetails(index: 0, expectedRevision: try #require(state.model?.revision))
-    state = try await accountState(service) { $0.model?.details?.status == .ready }
-    try await service.setDetailsLibrary(true, expectedRevision: try #require(state.model?.revision))
-    state = try await accountState(service) { $0.model?.sync?.state == .reauthenticationRequired }
-    #expect(state.model?.sync?.pendingTitles == 1)
+    let account = try await pausedAccount(fixture)
+    let (root, storage, configuration, service) = (account.root, account.storage, account.configuration, account.service)
+    var state = account.state
     let originalSession = state.session
     let home = StandaloneModel(service: service)
     let run = Task { await home.run() }
@@ -130,6 +117,136 @@ func accountRefreshFormResumesRejectedSyncWithoutChangingOwner(failure: String) 
     await run.value
     try await service.discardAccountStorage(storage)
     try? FileManager.default.removeItem(at: root)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func signOutRetiresPendingSyncAndHeldRefreshPreservingOtherAccount(failCleanup: Bool) async throws {
+    let fixture = try await AccountHTTPFixture.start(recovery: true, holdFirstRefresh: true)
+    defer { fixture.listener.cancel() }
+    let account = try await pausedAccount(fixture)
+    let selection = CoreAccountSelection(keyAccount: "pending-signout-" + UUID().uuidString)
+    let keyQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: CoreStorage.keyService,
+        kSecAttrAccount as String: "account-v1:" + account.namespace.uuidString.lowercased()
+    ]
+    try await selection.save(.init(namespace: account.namespace, userID: "fixture-user"))
+    let other = CoreStorage.account(id: UUID(), root: account.root)
+    let otherConfiguration = try await other.prepare()
+    let sentinel = Data("other-account-retained".utf8)
+    let sentinelURL = otherConfiguration.directory.appendingPathComponent("sentinel")
+    try sentinel.write(to: sentinelURL)
+    let home = StandaloneModel(service: account.service, accountSelection: selection, accountRoot: account.root)
+    let run = Task { await home.run() }
+    for _ in 0..<200 where home.snapshot?.model?.sync?.state != .reauthenticationRequired {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(home.snapshot?.session == account.state.session)
+    let form = AccountReauthenticationModel(home: home, session: account.state.session)
+    var completions = 0
+    form.submit(email: "fixture@example.test", password: "replacement-password") { completions += 1 }
+    for _ in 0..<200 where await fixture.probe.loginCount < 2 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.probe.loginCount == 2)
+    let stateURL = account.configuration.directory.appendingPathComponent("state.bin")
+    let retainedState = try Data(contentsOf: stateURL)
+    let heldDirectory = account.configuration.directory.appendingPathExtension("held")
+    if failCleanup {
+        // Corrupt only this fixture's path. Cleanup must reject the symlink,
+        // retain its account owner, and never delete the other account target.
+        try FileManager.default.moveItem(at: account.configuration.directory, to: heldDirectory)
+        try FileManager.default.createSymbolicLink(at: account.configuration.directory, withDestinationURL: otherConfiguration.directory)
+        await #expect(throws: CoreStorage.Failure.unsafeDirectory) { try await home.signOut() }
+        #expect(home.needsSignOutRetry)
+        #expect(SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecSuccess)
+        #expect(try Data(contentsOf: heldDirectory.appendingPathComponent("state.bin")) == retainedState)
+        #expect(try Data(contentsOf: sentinelURL) == sentinel)
+        await #expect(throws: NativeCoreService.Failure.stopped) { try await home.replace(with: NativeCoreService()) }
+        try FileManager.default.removeItem(at: account.configuration.directory)
+        try FileManager.default.moveItem(at: heldDirectory, to: account.configuration.directory)
+    }
+    try await home.signOut()
+    await run.value
+    #expect(await form.cancel())
+    for _ in 0..<100 where await fixture.probe.closedRefreshes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.probe.closedRefreshes == 1)
+    #expect(completions == 0)
+    #expect(await fixture.probe.uploads.count == 1)
+    #expect(try await selection.load() == nil)
+    #expect(!home.needsSignOutRetry)
+    #expect(home.snapshot == nil)
+    #expect(!FileManager.default.fileExists(atPath: account.configuration.directory.path))
+    #expect(SecItemCopyMatching(keyQuery as CFDictionary, nil) == errSecItemNotFound)
+    await #expect(throws: CoreStorage.Failure.missingState) { _ = try await account.storage.prepareExistingAccount() }
+    await #expect(throws: NativeCoreService.Failure.stopped) { _ = try await account.service.snapshot() }
+    #expect(try await other.prepare().key == otherConfiguration.key)
+    #expect(try Data(contentsOf: sentinelURL) == sentinel)
+    try await other.removeUnopenedAccount()
+    try FileManager.default.removeItem(at: account.root)
+}
+
+@Test @MainActor func mediaCachePurgeRestartsPeerTransferWithoutTouchingPendingAccount() async throws {
+    let fixture = try await AccountHTTPFixture.start(recovery: true)
+    defer { fixture.listener.cancel() }
+    let account = try await pausedAccount(fixture)
+    let encryptedURL = account.configuration.directory.appendingPathComponent("state.bin")
+    let encryptedBefore = try Data(contentsOf: encryptedURL)
+    let (tracker, port) = try await startFixtureTracker()
+    defer { tracker.cancel() }
+    let mediaRoot = account.root.appendingPathComponent("media-cache")
+    let cache = TorrentCacheStore(root: mediaRoot)
+    let model = SourcePlaybackModel(cache: cache)
+    let request = CoreTorrentRequest(metaId: "account-title", videoId: "account-title", kind: "movie",
+        magnet: "magnet:?xt=urn:btih:1be994f3f99cc80c9c2830b113432065d1551e9d&tr=http://127.0.0.1:\(port)/announce",
+        fileIndex: 0, fileMustInclude: [])
+    let client = URLSession(configuration: .ephemeral)
+    defer { client.invalidateAndCancel() }
+    var originalBytes: Data?
+    for cycle in 0..<2 {
+        await model.start(.torrent(request))
+        let url = try #require(model.playbackURL)
+        let (bytes, _) = try await client.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        #expect(bytes.count == 175917)
+        if let originalBytes { #expect(bytes == originalBytes) } else { originalBytes = bytes }
+        await model.stop()
+        #expect(!model.cleanupFailed)
+        let state = try await account.service.snapshot()
+        #expect(state.session == account.state.session)
+        #expect(state.model?.authenticated == true)
+        #expect(state.model?.detailsInLibrary == true)
+        #expect(state.model?.sync?.state == .reauthenticationRequired)
+        #expect(state.model?.sync?.pendingTitles == 1)
+        #expect(try Data(contentsOf: encryptedURL) == encryptedBefore)
+        #expect(try await account.storage.prepareExistingAccount().key == account.configuration.key)
+        if cycle == 0 { try FileManager.default.removeItem(at: mediaRoot) }
+    }
+    #expect(await fixture.probe.uploads.count == 1)
+    try await account.service.discardAccountStorage(account.storage)
+    try FileManager.default.removeItem(at: account.root)
+}
+
+private func pausedAccount(_ fixture: AccountHTTPFixture) async throws -> (
+    root: URL, namespace: UUID, storage: CoreStorage, configuration: CorePersistenceConfiguration,
+    service: NativeCoreService, state: CoreSnapshot
+) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let namespace = UUID()
+    let storage = CoreStorage.account(id: namespace, root: root)
+    let configuration = try await storage.prepare()
+    let service = NativeCoreService(persistence: configuration, startup: .fixtureAccount(fixture.port))
+    try await service.start()
+    _ = try await accountState(service) { $0.status == .ready }
+    try await service.login(email: "fixture@example.test", password: "fixture-password")
+    var state = try await accountState(service) { $0.model?.authenticated == true && $0.model?.pendingEffects == 0 }
+    let choice = try #require(state.model?.catalogs.first)
+    try await service.loadCatalog(index: choice.index, expectedRevision: try #require(state.model?.revision))
+    state = try await accountState(service) { $0.model?.catalog?.status == .ready }
+    #expect(state.model?.catalog?.items.first?.id == "account-title")
+    try await service.loadDetails(index: 0, expectedRevision: try #require(state.model?.revision))
+    state = try await accountState(service) { $0.model?.details?.status == .ready }
+    try await service.setDetailsLibrary(true, expectedRevision: try #require(state.model?.revision))
+    state = try await accountState(service) { $0.model?.sync?.state == .reauthenticationRequired }
+    #expect(state.model?.sync?.pendingTitles == 1)
+    return (root, namespace, storage, configuration, service, state)
 }
 
 private func accountState(_ service: NativeCoreService, matching predicate: (CoreSnapshot) -> Bool) async throws -> CoreSnapshot {

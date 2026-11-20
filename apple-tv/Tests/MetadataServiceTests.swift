@@ -171,7 +171,7 @@ import CryptoKit
     }
 }
 
-private func startFixtureTracker() async throws -> (NWListener, UInt16) {
+func startFixtureTracker() async throws -> (NWListener, UInt16) {
     let tracker = try NWListener(using: .tcp, on: .any)
     tracker.newConnectionHandler = { connection in
         connection.start(queue: .global())
