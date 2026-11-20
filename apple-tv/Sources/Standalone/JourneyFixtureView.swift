@@ -1,11 +1,18 @@
 #if DEBUG
 import SwiftUI
+#if targetEnvironment(simulator)
+import Darwin
+import CoreFoundation
+#endif
 
 /// Installs an owned HTTP add-on through the real Core; never substitutes a UI snapshot.
 struct JourneyFixtureView: View {
     @State private var model: StandaloneModel?
     @State private var failed = false
     @State private var cleared = false
+    #if targetEnvironment(simulator)
+    @State private var interruptionRegistered = false
+    #endif
     var body: some View {
         Group {
             if cleared { Text("Journey storage cleared") }
@@ -29,6 +36,16 @@ struct JourneyFixtureView: View {
                         cleared = true
                         return
                     }
+                    #if targetEnvironment(simulator)
+                    if environment["CUE_JOURNEY_ABRUPT_EXIT"] == "1", !interruptionRegistered {
+                        // Test-only process boundary: SIGKILL cannot run lifecycle saves.
+                        // The random storage namespace prevents another journey triggering it.
+                        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+                            kill(getpid(), SIGKILL)
+                        }, "cue.journey.kill.\(id.uuidString)" as CFString, nil, .deliverImmediately)
+                        interruptionRegistered = true
+                    }
+                    #endif
                     service = NativeCoreService(persistence: try await storage.prepare())
                 } else { service = NativeCoreService() }
                 owner = service

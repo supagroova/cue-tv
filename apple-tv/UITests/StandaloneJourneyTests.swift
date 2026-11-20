@@ -1,11 +1,13 @@
 import XCTest
 import CoreGraphics
+import CoreFoundation
 
 /// Opt-in: scripts/fixtures/serve-addon.py supplies real Stremio protocol resources.
 nonisolated final class StandaloneJourneyTests: XCTestCase {
     @MainActor func testBackRestoresSelectedEpisodeAndTitle() throws { try journey(play: false) }
     @MainActor func testSelectedEpisodePlaysFromPeerAndCloses() throws { try journey(play: true, resume: true) }
     @MainActor func testHomeInterruptionReturnsToSourceAndPreservesResume() throws { try journey(play: true, resume: true, background: true) }
+    @MainActor func testPeriodicProgressSurvivesAbruptTermination() throws { try journey(play: true, resume: true, relaunch: true, abrupt: true) }
     @MainActor func testProgressSurvivesProcessRelaunch() throws { try journey(play: true, resume: true, relaunch: true) }
     @MainActor func testStreamSubtitleAppearsAndCanBeTurnedOff() throws { try journey(play: true, captions: true) }
     @MainActor func testSeasonFilterPreservesEpisodeSelectionAndBackFocus() throws { try journey(play: false, filterSeason: true) }
@@ -160,10 +162,11 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
         XCTAssertEqual(search.value as? String, query)
     }
     @MainActor func testEpisodeWatchedControlChangesOnlySelectedEpisodeAndPreservesBackFocus() throws { try journey(play: false, watched: true) }
-    @MainActor private func journey(play: Bool, resume: Bool = false, background: Bool = false, relaunch: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
+    @MainActor private func journey(play: Bool, resume: Bool = false, background: Bool = false, relaunch: Bool = false, abrupt: Bool = false, captions: Bool = false, filterSeason: Bool = false, watched: Bool = false) throws {
         let app = XCUIApplication()
         app.launchEnvironment["CUE_JOURNEY_FIXTURE"] = "1"
         if relaunch { app.launchEnvironment["CUE_JOURNEY_STORAGE"] = UUID().uuidString }
+        if abrupt { app.launchEnvironment["CUE_JOURNEY_ABRUPT_EXIT"] = "1" }
         defer {
             if relaunch {
                 app.terminate()
@@ -226,8 +229,8 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             XCUIRemote.shared.press(.select)
             let clock = app.staticTexts["source-playback-time"]
             XCTAssertTrue(clock.waitForExistence(timeout: 25))
-            expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= (resume ? 8 : 3) }, evaluatedWith: nil)
-            waitForExpectations(timeout: 20)
+            expectation(for: NSPredicate { _, _ in clock.exists && (Int(clock.label.dropLast()) ?? 0) >= (abrupt ? 20 : (resume ? 8 : 3)) }, evaluatedWith: nil)
+            waitForExpectations(timeout: abrupt ? 30 : 20)
             XCTAssertFalse(app.staticTexts["source-playback-error"].exists)
             XCTAssertEqual(clock.value as? String, "Duration: 36 seconds", "Duration must come from the selected decoded fixture")
             let diagnostics = app.descendants(matching: .any).matching(identifier: "source-diagnostics").firstMatch
@@ -285,7 +288,12 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             }
             XCTAssertTrue(app.buttons["Close"].hasFocus)
             let lastVisibleSeconds = try XCTUnwrap(Int(clock.label.dropLast()))
-            if background {
+            if abrupt {
+                let namespace = try XCTUnwrap(app.launchEnvironment["CUE_JOURNEY_STORAGE"])
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                    CFNotificationName("cue.journey.kill.\(namespace)" as CFString), nil, nil, true)
+                XCTAssertTrue(app.wait(for: .notRunning, timeout: 5), "SIGKILL must end playback without Close, Home or lifecycle cleanup")
+            } else if background {
                 XCUIRemote.shared.press(.home)
                 expectation(for: NSPredicate { _, _ in
                     app.state == .runningBackground || app.state == .runningBackgroundSuspended
@@ -298,13 +306,16 @@ nonisolated final class StandaloneJourneyTests: XCTestCase {
             } else {
                 XCUIRemote.shared.press(captions ? .menu : .select)
             }
-            XCTAssertTrue(source.waitForExistence(timeout: 5))
-            expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
-            waitForExpectations(timeout: 5)
-            XCTAssertTrue(source.hasFocus, "Closing playback restores the chosen source")
+            if !abrupt {
+                XCTAssertTrue(source.waitForExistence(timeout: 5))
+                expectation(for: NSPredicate { _, _ in source.hasFocus }, evaluatedWith: nil)
+                waitForExpectations(timeout: 5)
+                XCTAssertTrue(source.hasFocus, "Closing playback restores the chosen source")
+            }
             if resume {
                 if relaunch {
-                    app.terminate()
+                    if !abrupt { app.terminate() }
+                    app.launchEnvironment.removeValue(forKey: "CUE_JOURNEY_ABRUPT_EXIT")
                     app.launch()
                     for (index, button) in [catalog, title, episode, source].enumerated() {
                         XCTAssertTrue(button.waitForExistence(timeout: 20))
