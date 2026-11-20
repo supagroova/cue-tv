@@ -1,0 +1,40 @@
+name: MPVProbe
+options:
+  deploymentTarget:
+    tvOS: '17.0'
+packages:
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit
+    revision: d9194243bdc68b87d8989376ab52aee7da6c8e0b
+targets:
+  MPVProbe:
+    type: application
+    platform: tvOS
+    sources:
+      - Sources
+      - path: ../../apple-tv/Resources/PlaybackLab
+        buildPhase: resources
+    dependencies:
+      - package: MPVKit
+        product: MPVKit
+    settings:
+      base:
+        SWIFT_VERSION: '6.0'
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.cuetv.mpv-probe
+  MPVProbeUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources: [UITests]
+    dependencies: [{target: MPVProbe}]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MPVProbe:
+    build:
+      targets:
+        MPVProbe: all
+    test:
+      targets: [MPVProbeUITests]

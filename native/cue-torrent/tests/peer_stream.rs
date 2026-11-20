@@ -32,6 +32,11 @@ async fn dht_discovers_peer_with_trackers_disabled() {
     check_fixture("single", 0, true, "dht").await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mkv_peer_bytes_and_content_type() {
+    check_fixture("mkv", 0, false, "direct").await;
+}
+
 async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
     if std::env::var_os("RUST_LOG").is_some() {
         let _ = tracing_subscriber::fmt()
@@ -43,11 +48,13 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let torrent =
             std::fs::read(root.join(format!("fixtures/torrents/{name}.torrent"))).unwrap();
-        let bytes = std::fs::read(root.join(format!(
-            "apple-tv/Resources/PlaybackLab/episode0{}.mp4",
-            index + 1
-        )))
-        .unwrap();
+        let filename = if name == "mkv" {
+            "episode01.mkv".to_owned()
+        } else {
+            format!("episode0{}.mp4", index + 1)
+        };
+        let bytes =
+            std::fs::read(root.join("apple-tv/Resources/PlaybackLab").join(&filename)).unwrap();
         let seed_dir = tempfile::tempdir().unwrap();
         let seed_files = if name == "multi-episode" {
             seed_dir.path().join("CueTV-fixtures")
@@ -55,7 +62,12 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
             seed_dir.path().to_owned()
         };
         std::fs::create_dir_all(&seed_files).unwrap();
-        for file in ["episode01.mp4", "episode02.mp4", "tail-index.mp4"] {
+        for file in [
+            "episode01.mp4",
+            "episode02.mp4",
+            "tail-index.mp4",
+            "episode01.mkv",
+        ] {
             std::fs::copy(
                 root.join("apple-tv/Resources/PlaybackLab").join(file),
                 seed_files.join(file),
@@ -227,6 +239,14 @@ async fn check_fixture(name: &str, index: usize, magnet: bool, protocol: &str) {
         );
         let head = client.head(&playback.url).send().await.unwrap();
         assert_eq!(head.status(), 200);
+        assert_eq!(
+            head.headers()["content-type"],
+            if name == "mkv" {
+                "video/x-matroska"
+            } else {
+                "video/mp4"
+            }
+        );
         assert_eq!(head.headers()["content-length"], bytes.len().to_string());
         let bad = client
             .get(&playback.url)

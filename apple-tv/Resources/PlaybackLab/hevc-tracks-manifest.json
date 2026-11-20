@@ -1,0 +1,77 @@
+{
+  "permission": "Project-owned synthetic colors, tones and subtitle text.",
+  "generator": "scripts/fixtures/generate-player-matrix.py",
+  "encoder": "hevc_videotoolbox (macOS)",
+  "ffmpeg": "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers",
+  "source_sha256": "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb",
+  "filename": "hevc-tracks.mkv",
+  "bytes": 294322,
+  "sha256": "c0abcae027bf945a4948f019a34bf9fcf486f5ea39c916e3a34ce20a98b3cba5",
+  "duration_seconds": 12.021,
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "video",
+      "codec_name": "hevc",
+      "profile": "Main",
+      "width": 1920,
+      "height": 1080,
+      "pix_fmt": "yuv420p",
+      "color_space": "bt709",
+      "tags": {
+        "HANDLER_NAME": "VideoHandler",
+        "VENDOR_ID": "[0][0][0][0]",
+        "ENCODER": "Lavc hevc_videotoolbox",
+        "DURATION": "00:00:12.000000000"
+      }
+    },
+    {
+      "index": 1,
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "profile": "LC",
+      "sample_rate": "48000",
+      "channels": 1,
+      "tags": {
+        "title": "Original tone",
+        "HANDLER_NAME": "SoundHandler",
+        "VENDOR_ID": "[0][0][0][0]",
+        "ENCODER": "Lavc aac",
+        "DURATION": "00:00:12.021000000"
+      }
+    },
+    {
+      "index": 2,
+      "codec_type": "audio",
+      "codec_name": "aac",
+      "profile": "LC",
+      "sample_rate": "48000",
+      "channels": 1,
+      "tags": {
+        "title": "880 Hz alternate",
+        "ENCODER": "Lavc aac",
+        "DURATION": "00:00:12.021000000"
+      }
+    },
+    {
+      "index": 3,
+      "codec_type": "subtitle",
+      "codec_name": "subrip",
+      "tags": {
+        "title": "SRT fixture",
+        "ENCODER": "Lavc srt",
+        "DURATION": "00:00:12.000000000"
+      }
+    },
+    {
+      "index": 4,
+      "codec_type": "subtitle",
+      "codec_name": "webvtt",
+      "tags": {
+        "title": "WebVTT fixture",
+        "ENCODER": "Lavc webvtt",
+        "DURATION": "00:00:12.000000000"
+      }
+    }
+  ]
+}

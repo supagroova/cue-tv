@@ -98,10 +98,11 @@ async fn uncached_seek_and_stop_interrupts_pending_body() {
                 .await
                 .unwrap();
             assert_eq!(response.status(), 206);
-            assert_eq!(
-                response.bytes().await.unwrap().as_ref(),
-                &vec![(piece % 251) as u8; 1024]
-            );
+            let bytes = tokio::time::timeout(Duration::from_secs(15), response.bytes())
+                .await
+                .expect("an uncached range must not wait behind a full peer request backlog")
+                .unwrap();
+            assert_eq!(bytes.as_ref(), &vec![(piece % 251) as u8; 1024]);
         }
         let response = client
             .get(&playback.url)

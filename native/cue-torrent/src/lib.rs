@@ -1,5 +1,8 @@
 //! Embedded byte transport. The HTTP adapter binds only to loopback.
+pub mod failure;
 mod ffi;
+use failure::FailureCode;
+pub mod storage_budget;
 use anyhow::{Context, Result, bail};
 use axum::{
     Router,
@@ -10,8 +13,10 @@ use axum::{
     routing::get,
 };
 use futures_util::StreamExt;
+use librqbit::storage::StorageFactoryExt;
 use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Magnet, Session, SessionOptions};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use storage_budget::{BudgetFactory, DiskProbe, StorageBudget};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
@@ -49,6 +54,7 @@ struct StreamState {
     torrent: Arc<librqbit::ManagedTorrent>,
     index: usize,
     len: u64,
+    content_type: &'static str,
     cancel: CancellationToken,
 }
 
@@ -79,7 +85,7 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
         })
         .header("accept-ranges", "bytes")
         .header("content-length", count)
-        .header("content-type", "video/mp4")
+        .header("content-type", state.content_type)
         .header("cache-control", "no-store");
     if partial {
         response = response.header(
@@ -110,7 +116,15 @@ async fn serve(State(state): State<StreamState>, method: Method, headers: Header
 }
 
 /// Owns both swarm and HTTP server. Call stop before discarding to await teardown.
+struct StorageLease(BudgetFactory);
+impl Drop for StorageLease {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 pub struct PlaybackSession {
+    storage: StorageLease,
     pub url: String,
     session: Arc<Session>,
     torrent: Arc<librqbit::ManagedTorrent>,
@@ -155,15 +169,78 @@ impl PlaybackSession {
         initial_peers: Vec<SocketAddr>,
         discovery: Discovery,
     ) -> Result<Self> {
+        Self::start_budgeted(
+            source,
+            index,
+            output,
+            initial_peers,
+            discovery,
+            StorageBudget::default(),
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_budgeted(
+        source: TorrentSource,
+        index: usize,
+        output: PathBuf,
+        initial_peers: Vec<SocketAddr>,
+        discovery: Discovery,
+        budget: StorageBudget,
+        probe: Option<DiskProbe>,
+    ) -> Result<Self> {
+        Self::start_budgeted_in_root(
+            source,
+            index,
+            output,
+            initial_peers,
+            discovery,
+            budget,
+            probe,
+            None,
+        )
+        .await
+    }
+
+    pub async fn start_budgeted_in_root(
+        source: TorrentSource,
+        index: usize,
+        output: PathBuf,
+        initial_peers: Vec<SocketAddr>,
+        discovery: Discovery,
+        budget: StorageBudget,
+        probe: Option<DiskProbe>,
+        cache_root: Option<PathBuf>,
+    ) -> Result<Self> {
+        let accounting_root = if let Some(root) = cache_root {
+            if !root.is_absolute()
+                || !output.is_absolute()
+                || std::fs::symlink_metadata(&root)?.file_type().is_symlink()
+                || std::fs::symlink_metadata(&output)?.file_type().is_symlink()
+            {
+                bail!("invalid cache root");
+            }
+            let canonical_root = root.canonicalize()?;
+            let canonical_output = output.canonicalize()?;
+            if canonical_output.parent() != Some(canonical_root.as_path()) {
+                bail!("cache root must be output parent");
+            }
+            canonical_root
+        } else {
+            output.clone()
+        };
+        let storage = BudgetFactory::new(accounting_root, budget, probe);
+        let storage_lease = StorageLease(storage.clone());
         let source = match source {
             TorrentSource::Bytes(bytes) => AddTorrent::from_bytes(bytes),
             TorrentSource::Magnet(value) => {
                 if value.len() > 16384 || !value.starts_with("magnet:?") {
-                    bail!("invalid magnet");
+                    bail!(FailureCode::InvalidMetadata);
                 }
-                let magnet = Magnet::parse(&value)?;
+                let magnet = Magnet::parse(&value).context(FailureCode::InvalidMetadata)?;
                 if magnet.as_id20().is_none() {
-                    bail!("v1 torrent hash required");
+                    bail!(FailureCode::UnsupportedFormat);
                 }
                 AddTorrent::from_url(value)
             }
@@ -179,6 +256,7 @@ impl PlaybackSession {
                     ..Default::default()
                 }),
                 persistence: None,
+                default_storage_factory: Some(storage.boxed()),
                 disable_trackers: !discovery.trackers,
                 disable_local_service_discovery: true,
                 cancellation_token: Some(cancel.clone()),
@@ -193,27 +271,55 @@ impl PlaybackSession {
                 .add_torrent(
                     source,
                     Some(AddTorrentOptions {
+                        // Bound queued bytes ahead of a new seek (16 * 16 KiB per peer).
+                        // The upstream default of 128 can strand a seek behind 2 MiB.
+                        peer_opts: Some(librqbit::PeerConnectionOptions {
+                            max_request_window: Some(16),
+                            ..Default::default()
+                        }),
                         only_files: Some(vec![index]),
                         initial_peers: Some(initial_peers),
                         ..Default::default()
                     }),
                 )
-                .await?
+                .await
+                .context(FailureCode::InvalidMetadata)?
                 .into_handle()
-                .context("torrent handle")?;
+                .context(FailureCode::InvalidMetadata)?;
             handle.wait_until_initialized().await?;
-            let len = handle
-                .with_metadata(|m| m.file_infos.get(index).map(|f| f.len))?
-                .context("file index")?;
+            if storage_lease.0.has_failed() {
+                bail!("storage policy failed during initialization");
+            }
+            let (len, content_type, extension) = handle
+                .with_metadata(|m| {
+                    m.file_infos.get(index).map(|f| {
+                        let (mime, ext) =
+                            match f.relative_filename.extension().and_then(|s| s.to_str()) {
+                                Some(ext) if ext.eq_ignore_ascii_case("mkv") => {
+                                    ("video/x-matroska", "mkv")
+                                }
+                                Some(ext)
+                                    if ext.eq_ignore_ascii_case("mp4")
+                                        || ext.eq_ignore_ascii_case("m4v") =>
+                                {
+                                    ("video/mp4", "mp4")
+                                }
+                                _ => ("application/octet-stream", "bin"),
+                            };
+                        (f.len, mime, ext)
+                    })
+                })?
+                .context(FailureCode::InvalidMetadata)?;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let address = listener.local_addr()?;
-            let path = format!("/{}/stream.mp4", uuid::Uuid::new_v4());
+            let path = format!("/{}/stream.{extension}", uuid::Uuid::new_v4());
             let router = Router::new()
                 .route(&path, get(serve))
                 .with_state(StreamState {
                     torrent: handle.clone(),
                     index,
                     len,
+                    content_type,
                     cancel: cancel.clone(),
                 });
             let stopped = cancel.clone();
@@ -229,6 +335,7 @@ impl PlaybackSession {
             Ok((url, server, torrent)) => {
                 guard.disarm();
                 Ok(Self {
+                    storage: storage_lease,
                     url,
                     session,
                     torrent,
@@ -239,16 +346,34 @@ impl PlaybackSession {
             Err(e) => {
                 cancel.cancel();
                 session.stop().await;
+                if storage_lease.0.has_failed() {
+                    return Err(storage_lease
+                        .0
+                        .limit_failure()
+                        .unwrap_or(FailureCode::Read)
+                        .into());
+                }
                 Err(e)
             }
         }
     }
     pub fn snapshot(&self) -> serde_json::Value {
+        if self.storage.0.has_failed() {
+            return self
+                .storage
+                .0
+                .limit_failure()
+                .unwrap_or(FailureCode::Read)
+                .snapshot();
+        }
         let stats = self.torrent.stats();
+        if stats.error.is_some() {
+            return FailureCode::Read.snapshot();
+        }
         let files = self.torrent.with_metadata(|m| m.file_infos.iter().enumerate().map(|(index, file)| {
             serde_json::json!({"index": index, "path": file.relative_filename.to_string_lossy(), "bytes": file.len})
         }).collect::<Vec<_>>()).unwrap_or_default();
-        serde_json::json!({"state": if stats.error.is_some() {"failed"} else {"ready"}, "url": self.url,
+        serde_json::json!({"state": "ready", "url": self.url,
             "verified_bytes": stats.progress_bytes, "total_bytes": stats.total_bytes, "files": files})
     }
 
@@ -257,6 +382,7 @@ impl PlaybackSession {
     }
 
     pub async fn stop(self) {
+        self.storage.0.close();
         self.cancel.cancel();
         self.session.stop().await;
         self.server.abort();
@@ -287,6 +413,7 @@ mod tests {
 
 impl Drop for PlaybackSession {
     fn drop(&mut self) {
+        self.storage.0.close();
         self.cancel.cancel();
         self.server.abort();
     }

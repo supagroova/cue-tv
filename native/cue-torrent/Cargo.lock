@@ -466,6 +466,7 @@ dependencies = [
  "anyhow",
  "axum",
  "futures-util",
+ "libc",
  "librqbit",
  "librqbit-bencode",
  "reqwest 0.12.28",

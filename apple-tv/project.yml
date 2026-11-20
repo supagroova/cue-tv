@@ -3,6 +3,10 @@ options:
   bundleIdPrefix: com.rupertlaycock.couchtv
   deploymentTarget:
     tvOS: '17.0'
+packages:
+  VLCKit:
+    url: https://github.com/videolan/vlckit
+    revision: 3d0f0fa7031eab1a67c817c98a495e1c68fc998c
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -24,12 +28,14 @@ targets:
       - Sources
       - path: Resources/PlaybackLab
         buildPhase: resources
-      - path: ../fixtures/torrents/single.torrent
+      - path: ../fixtures/torrents
         buildPhase: resources
       - path: TVConfig.plist
         buildPhase: resources
       - path: ../tvos/CouchTV/Assets.xcassets
         buildPhase: resources
+    dependencies:
+      - package: VLCKit
     preBuildScripts:
       - name: Build embedded torrent engine
         script: bash "$SRCROOT/../scripts/native/build.sh"
