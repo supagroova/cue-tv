@@ -255,6 +255,103 @@ func signOutRetiresPendingSyncAndHeldRefreshPreservingOtherAccount(failCleanup: 
     try FileManager.default.removeItem(at: account.root)
 }
 
+@Test @MainActor
+func accountRefreshRetainsOwnershipAfterLostCancellationReceipts() async throws {
+    let fixture = try await AccountHTTPFixture.start(recovery: true, rejectFirstRefresh: true)
+    defer { fixture.listener.cancel() }
+    let account = try await pausedAccount(fixture)
+    let boundary = LostRefreshReceiptService(account.service)
+    let home = StandaloneModel(service: boundary)
+    let run = Task { await home.run() }
+    defer { run.cancel() }
+    for _ in 0..<200 where home.snapshot?.model?.sync?.state != .reauthenticationRequired {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let form = AccountReauthenticationModel(home: home, session: account.state.session)
+    var completions = 0
+    let stateURL = account.configuration.directory.appendingPathComponent("state.bin")
+    let retainedState = try Data(contentsOf: stateURL)
+    form.submit(email: "fixture@example.test", password: "replacement-password") { completions += 1 }
+    // Rejected identity reaches the form's automatic cleanup after admission.
+    // Wait for that observable outcome rather than racing admission with Cancel.
+    for _ in 0..<400 where form.busy { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.probe.loginCount == 2)
+    #expect(await boundary.cancelSequences == [1])
+    #expect(!form.canSubmit)
+    #expect(!(await form.cancel()))
+    #expect(!form.busy)
+    #expect(!form.canSubmit)
+    #expect(form.error == "Sign-in could not stop. Please retry Cancel.")
+    #expect(completions == 0)
+    #expect(await boundary.cancelSequences == [1, 1])
+    #expect(try Data(contentsOf: stateURL) == retainedState)
+    #expect(try await account.service.accountIdentity() == "fixture-user")
+    #expect(try await account.service.snapshot().model?.sync?.pendingTitles == 1)
+    form.submit(email: "fixture@example.test", password: "must-not-submit") { completions += 1 }
+    #expect(!form.busy)
+    #expect(await fixture.probe.loginCount == 2)
+    #expect(await form.cancel())
+    #expect(await boundary.cancelSequences == [1, 1, 1])
+    #expect(form.canSubmit)
+    form.submit(email: "fixture@example.test", password: "replacement-password") { completions += 1 }
+    for _ in 0..<400 where form.busy { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!form.busy)
+    #expect(completions == 1)
+    #expect(form.error == nil)
+    let settled = try await accountState(account.service) { $0.model?.sync?.pendingTitles == 0 }
+    #expect(settled.session == account.state.session)
+    #expect(settled.model?.detailsInLibrary == true)
+    #expect(await fixture.probe.uploads.map(\.authKey) == ["fixture-token", "replacement-token"])
+    #expect(await fixture.probe.loginCount == 3)
+    run.cancel()
+    await run.value
+    try await account.service.discardAccountStorage(account.storage)
+    try FileManager.default.removeItem(at: account.root)
+}
+
+/// Fault only the service-boundary receipt; HTTP, FFI and persistence remain real.
+private actor LostRefreshReceiptService: CoreService {
+    let native: NativeCoreService
+    private(set) var cancelSequences: [UInt64] = []
+    init(_ native: NativeCoreService) { self.native = native }
+    func cancelReauthentication(sequence: UInt64) async throws {
+        cancelSequences.append(sequence)
+        try await native.cancelReauthentication(sequence: sequence)
+        if cancelSequences.count <= 2 { throw NativeCoreService.Failure.requestTimeout }
+    }
+    func playback(token: UInt64, action: CorePlaybackAction, time: UInt64, duration: UInt64) async throws -> CorePlaybackProgress? { try await native.playback(token: token, action: action, time: time, duration: duration) }
+    func startPlayback(token: UInt64) async throws { try await native.startPlayback(token: token) }
+    func checkpointPlayback(token: UInt64) async throws { try await native.checkpointPlayback(token: token) }
+    func closePlayback(token: UInt64) async throws { try await native.closePlayback(token: token) }
+    func start() async throws { try await native.start() }
+    func accountIdentity() async throws -> String? { try await native.accountIdentity() }
+    func login(email: String, password: String) async throws { try await native.login(email: email, password: password) }
+    func reauthenticate(email: String, password: String) async throws -> UInt64 { try await native.reauthenticate(email: email, password: password) }
+    func retrySync() async throws { try await native.retrySync() }
+    func logout() async throws { try await native.logout() }
+    func snapshot() async throws -> CoreSnapshot { try await native.snapshot() }
+    func setInterfaceLanguage(_ language: String) async throws { try await native.setInterfaceLanguage(language) }
+    func loadAddon(_ manifestURL: String) async throws { try await native.loadAddon(manifestURL) }
+    func installAddon(expectedRevision: UInt64) async throws { try await native.installAddon(expectedRevision: expectedRevision) }
+    func selectDetailsSeason(_ season: UInt32?, expectedRevision: UInt64) async throws { try await native.selectDetailsSeason(season, expectedRevision: expectedRevision) }
+    func showDetailsVideos(offset: Int, expectedRevision: UInt64) async throws { try await native.showDetailsVideos(offset: offset, expectedRevision: expectedRevision) }
+    func loadSources(videoIndex: Int?, expectedRevision: UInt64) async throws { try await native.loadSources(videoIndex: videoIndex, expectedRevision: expectedRevision) }
+    func showSources(offset: Int, expectedRevision: UInt64) async throws { try await native.showSources(offset: offset, expectedRevision: expectedRevision) }
+    func setDetailsLibrary(_ member: Bool, expectedRevision: UInt64) async throws { try await native.setDetailsLibrary(member, expectedRevision: expectedRevision) }
+    func setDetailsWatched(_ watched: Bool, videoID: String?, expectedRevision: UInt64) async throws { try await native.setDetailsWatched(watched, videoID: videoID, expectedRevision: expectedRevision) }
+    func showLibrary(offset: Int, expectedRevision: UInt64) async throws { try await native.showLibrary(offset: offset, expectedRevision: expectedRevision) }
+    func loadLibraryDetails(index: Int, expectedRevision: UInt64) async throws { try await native.loadLibraryDetails(index: index, expectedRevision: expectedRevision) }
+    func loadDetails(index: Int, expectedRevision: UInt64) async throws { try await native.loadDetails(index: index, expectedRevision: expectedRevision) }
+    func loadCatalog(index: Int, expectedRevision: UInt64) async throws { try await native.loadCatalog(index: index, expectedRevision: expectedRevision) }
+    func searchCatalog(index: Int, query: String, expectedRevision: UInt64) async throws { try await native.searchCatalog(index: index, query: query, expectedRevision: expectedRevision) }
+    func showCatalogChoices(offset: Int, expectedRevision: UInt64) async throws { try await native.showCatalogChoices(offset: offset, expectedRevision: expectedRevision) }
+    func showCatalogItems(offset: Int, expectedRevision: UInt64) async throws { try await native.showCatalogItems(offset: offset, expectedRevision: expectedRevision) }
+    func discoverSubtitles(metaId: String, videoId: String, kind: String) async throws -> CoreSubtitleDiscovery { try await native.discoverSubtitles(metaId: metaId, videoId: videoId, kind: kind) }
+    func prepareTorrent(index: Int, expectedRevision: UInt64) async throws -> CoreTorrentRequest { try await native.prepareTorrent(index: index, expectedRevision: expectedRevision) }
+    func prepareHTTPS(index: Int, expectedRevision: UInt64) async throws -> CoreHTTPSRequest { try await native.prepareHTTPS(index: index, expectedRevision: expectedRevision) }
+    func stop() async throws { try await native.stop() }
+}
+
 private func pausedAccount(_ fixture: AccountHTTPFixture) async throws -> (
     root: URL, namespace: UUID, storage: CoreStorage, configuration: CorePersistenceConfiguration,
     service: NativeCoreService, state: CoreSnapshot
