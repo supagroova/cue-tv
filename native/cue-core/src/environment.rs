@@ -27,9 +27,20 @@ tokio::task_local! { static CONTEXT: Arc<Environment>; }
 #[cfg(test)]
 type TestHttp =
     Arc<dyn Fn(&http::request::Parts, &[u8]) -> Result<Vec<u8>, EnvError> + Send + Sync>;
+#[cfg(test)]
+type TestHttpAsync = Arc<
+    dyn Fn(
+            http::request::Parts,
+            Vec<u8>,
+        ) -> futures::future::BoxFuture<'static, Result<Vec<u8>, EnvError>>
+        + Send
+        + Sync,
+>;
 pub struct Environment {
     #[cfg(test)]
     pub(crate) test_http: Mutex<Option<TestHttp>>,
+    #[cfg(test)]
+    pub(crate) test_http_async: Mutex<Option<TestHttpAsync>>,
     storage: Mutex<BTreeMap<String, Vec<u8>>>,
     persistence: Option<crate::persistence::EncryptedStore>,
     canceled: CancellationToken,
@@ -67,6 +78,8 @@ impl Environment {
         let env = Arc::new(Self {
             #[cfg(test)]
             test_http: Mutex::new(None),
+            #[cfg(test)]
+            test_http_async: Mutex::new(None),
             storage: Mutex::new(values),
             persistence,
             canceled: CancellationToken::new(),
@@ -216,6 +229,20 @@ impl Env for NativeEnv {
         async move {
             let env = context?;
             let (parts, body) = request.into_parts();
+            #[cfg(test)]
+            {
+                let hook = env.test_http_async.lock().unwrap().clone();
+                if let Some(hook) = hook {
+                    let bytes = serde_json::to_vec(&body)
+                        .map_err(|_| EnvError::Serde("Invalid request".into()))?;
+                    let response = tokio::select! { biased;
+                        _ = env.canceled.cancelled() => return Err(canceled()),
+                        response = hook(parts, bytes) => response?,
+                    };
+                    return decode(&response);
+                }
+            }
+
             #[cfg(test)]
             if let Some(http) = env.test_http.lock().unwrap().clone() {
                 if env.canceled.is_cancelled() {

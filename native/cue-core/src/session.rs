@@ -68,6 +68,11 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    #[cfg(test)]
+    TestLibraryItem(
+        stremio_core::types::library::LibraryItem,
+        oneshot::Sender<Result<(), &'static str>>,
+    ),
     SyncPrepared(
         u64,
         stremio_core::types::profile::Auth,
@@ -151,6 +156,18 @@ pub struct CoreSession {
     owner: Option<tokio::task::JoinHandle<()>>,
 }
 impl CoreSession {
+    #[cfg(test)]
+    pub(crate) async fn test_library_item(
+        &self,
+        item: stremio_core::types::library::LibraryItem,
+    ) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .send(Command::TestLibraryItem(item, send))
+            .await
+            .map_err(|_| "stopped")?;
+        receive.await.map_err(|_| "stopped")?
+    }
     /// Guest startup never accepts account credentials.
     pub async fn guest(environment: Arc<Environment>) -> Result<Self, EnvError> {
         Self::restore(environment, None, false).await
@@ -837,6 +854,15 @@ async fn run(
         let mut manual_library_title = None;
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
+            #[cfg(test)]
+            Command::TestLibraryItem(item, reply) => (
+                Msg::Internal(Internal::UpdateLibraryItem(item)),
+                Some(reply),
+                addon_generation,
+                catalog_generation,
+                details_generation,
+                source_generation,
+            ),
             Command::SyncPrepared(ticket, auth, result) => {
                 if !sync_scheduler.is_current(ticket) {
                     continue;

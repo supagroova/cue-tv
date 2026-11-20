@@ -126,3 +126,110 @@ async fn rejected_upload_keeps_intent_and_does_not_retry_without_reauthenticatio
     );
     session.stop().await;
 }
+
+#[tokio::test]
+async fn older_upload_reply_cannot_clear_a_new_edit_admitted_during_http() {
+    use futures::FutureExt;
+    use std::sync::Mutex;
+    use tokio::sync::Notify;
+    let env = stored_pending().await;
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let first_started = Arc::new(Notify::new());
+    let second_started = Arc::new(Notify::new());
+    let release_first = Arc::new(Notify::new());
+    let release_second = Arc::new(Notify::new());
+    let (positions, start1, start2, release1, release2) = (
+        observed.clone(),
+        first_started.clone(),
+        second_started.clone(),
+        release_first.clone(),
+        release_second.clone(),
+    );
+    *env.test_http_async.lock().unwrap() = Some(Arc::new(move |parts, bytes| {
+        assert!(parts.uri.path().ends_with("/datastorePut"));
+        let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let index = {
+            let mut positions = positions.lock().unwrap();
+            positions.push(
+                request["changes"][0]["state"]["timeOffset"]
+                    .as_u64()
+                    .unwrap(),
+            );
+            positions.len()
+        };
+        let (started, release) = if index == 1 {
+            (start1.clone(), release1.clone())
+        } else {
+            (start2.clone(), release2.clone())
+        };
+        async move {
+            started.notify_one();
+            release.notified().await;
+            Ok(br#"{"result":{"success":true}}"#.to_vec())
+        }
+        .boxed()
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), first_started.notified())
+        .await
+        .unwrap();
+    let mut item = env
+        .scope(async {
+            NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .items["title"]
+                .clone()
+        })
+        .await;
+    item.state.time_offset = 200;
+    session.test_library_item(item).await.unwrap();
+    release_first.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(3), second_started.notified())
+        .await
+        .unwrap();
+    env.scope(async {
+        assert_eq!(
+            NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision("title"),
+            Some(2)
+        );
+        assert_eq!(
+            NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                .await
+                .unwrap()
+                .unwrap()
+                .items["title"]
+                .state
+                .time_offset,
+            200
+        );
+    })
+    .await;
+    release_second.notify_one();
+    let mut pending = true;
+    for _ in 0..200 {
+        pending = env
+            .scope(async {
+                NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .has_pending()
+            })
+            .await;
+        if !pending {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(!pending);
+    assert_eq!(*observed.lock().unwrap(), vec![100, 200]);
+    session.stop().await;
+}
