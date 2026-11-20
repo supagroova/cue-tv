@@ -114,8 +114,12 @@ Retire independently retains its most recent successful token, clears it on logo
 and acknowledges retries without touching a newer player. Retire never stands in
 for a durable Close. Both retained receipts are bounded and session-local.
 
-These guarantees do not make arbitrary playback operations replayable: checkpoint
-and progress-operation ambiguity still require their own reconciliation proofs. The host regression holds the real sequential writer, drops the close
+Core-level tests also verify that repeating exact absolute progress, pause and
+seek events does not double-count watched time. Dropping a checkpoint waiter does
+not roll back the admitted write: a concurrent retry remains busy until completion,
+and a later checkpoint captures the newer player state. These are native-session
+and real-storage proofs. The full Swift/UI timeout-and-retry journey remains a
+separate qualification gate; arbitrary reordered operations are not replay-safe. The host regression holds the real sequential writer, drops the close
 waiter, releases storage, then verifies retry, unchanged ciphertext and isolation
 from a newer player. The Swift bridge also exercises repeated Close.
 

@@ -17,12 +17,12 @@ async fn checkpoint_ack_requires_durable_write_and_retry_survives_reopen() {
         .unwrap();
 }
 #[tokio::test]
-async fn lost_close_ack_can_be_reconciled_without_repeating_the_save() {
+async fn lost_checkpoint_and_close_acks_can_be_reconciled() {
     tokio::time::timeout(std::time::Duration::from_secs(10), roundtrip(true))
         .await
         .unwrap();
 }
-async fn roundtrip(lose_close_receipt: bool) {
+async fn roundtrip(lose_receipts: bool) {
     let directory = std::env::temp_dir().join(format!(
         "cue-checkpoint-{}-{}",
         std::process::id(),
@@ -140,6 +140,7 @@ async fn roundtrip(lose_close_receipt: bool) {
     })
     .await;
     started.await.unwrap();
+    let mut release = Some(release);
     {
         let save = session.checkpoint_playback(token);
         tokio::pin!(save);
@@ -163,8 +164,14 @@ async fn roundtrip(lose_close_receipt: bool) {
             )
             .await
             .unwrap();
+        if !lose_receipts {
+            release.take().unwrap().send(()).unwrap();
+            save.await.unwrap();
+        }
+    }
+    if let Some(release) = release {
         release.send(()).unwrap();
-        save.await.unwrap();
+        session.settled().await.unwrap();
     }
     env.scope(async {
         let bucket = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
@@ -249,7 +256,7 @@ async fn roundtrip(lose_close_receipt: bool) {
             Err("playback_closing")
         );
         assert_eq!(session.close_playback(token).await, Err("checkpoint_busy"));
-        if !lose_close_receipt {
+        if !lose_receipts {
             release_close.take().unwrap().send(()).unwrap();
             close.await.unwrap();
         }

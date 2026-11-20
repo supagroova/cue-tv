@@ -436,6 +436,44 @@ async fn content_windows_fetch_remote_pages_without_gaps_or_duplicates() {
         .await
         .unwrap();
     assert_eq!(played.time_watched, 100);
+    // Queue retry after an unknown receipt repeats the exact absolute sample.
+    // Neither repetition nor repeated pause/seek may add viewed time.
+    for event in [
+        PlaybackEvent::TimeChanged {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::TimeChanged {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::Paused(true),
+        PlaybackEvent::Paused(true),
+        PlaybackEvent::Paused(false),
+        PlaybackEvent::Paused(false),
+        PlaybackEvent::Seek {
+            time: 900,
+            duration: 1000,
+        },
+        PlaybackEvent::Seek {
+            time: 900,
+            duration: 1000,
+        },
+    ] {
+        assert_eq!(
+            session
+                .playback_event(playing.playback_token, event)
+                .await
+                .unwrap(),
+            Progress {
+                time: 900,
+                duration: 1000,
+                time_watched: 100,
+                watched: false
+            }
+        );
+    }
+
     assert!(
         !played.watched,
         "Seeking to credits must not count skipped content"
