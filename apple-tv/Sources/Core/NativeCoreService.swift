@@ -312,6 +312,9 @@ actor NativeCoreService: CoreService {
 
     func cancelReauthentication(sequence: UInt64) async throws {
         guard sequence > 0 else { throw Failure.invalidRequest }
+        // A released session has no remaining refresh work. Failed or in-flight
+        // retirement retains its handle and must still report cleanup failure.
+        guard handle != nil else { return }
         try dispatch(["version": 1, "action": "cancel_reauthentication", "sequence": sequence])
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while true {

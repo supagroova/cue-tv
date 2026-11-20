@@ -119,6 +119,37 @@ func accountRefreshFormResumesRejectedSyncWithoutChangingOwner(failure: String) 
     try? FileManager.default.removeItem(at: root)
 }
 
+@Test @MainActor
+func stoppedAccountRefreshCanDismissWithoutLosingPendingLibrary() async throws {
+    let fixture = try await AccountHTTPFixture.start(recovery: true, holdFirstRefresh: true)
+    defer { fixture.listener.cancel() }
+    let account = try await pausedAccount(fixture)
+    let home = StandaloneModel(service: account.service)
+    let run = Task { await home.run() }
+    for _ in 0..<200 where home.snapshot?.model?.sync?.state != .reauthenticationRequired {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    let form = AccountReauthenticationModel(home: home, session: account.state.session)
+    var completions = 0
+    form.submit(email: "fixture@example.test", password: "replacement-password") { completions += 1 }
+    for _ in 0..<200 where await fixture.probe.loginCount < 2 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.probe.loginCount == 2)
+    let retainedState = try Data(contentsOf: account.configuration.directory.appendingPathComponent("state.bin"))
+    // End the actual home/session lifetime while its refresh HTTP response is held.
+    run.cancel()
+    await run.value
+    #expect(await form.cancel())
+    #expect(await form.cancel())
+    #expect(completions == 0)
+    #expect(!form.busy)
+    #expect(try Data(contentsOf: account.configuration.directory.appendingPathComponent("state.bin")) == retainedState)
+    for _ in 0..<100 where await fixture.probe.closedRefreshes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(await fixture.probe.closedRefreshes == 1)
+    #expect(await fixture.probe.uploads.count == 1)
+    try await account.service.discardAccountStorage(account.storage)
+    try? FileManager.default.removeItem(at: account.root)
+}
+
 @Test(arguments: [false, true]) @MainActor
 func signOutRetiresPendingSyncAndHeldRefreshPreservingOtherAccount(failCleanup: Bool) async throws {
     let fixture = try await AccountHTTPFixture.start(recovery: true, holdFirstRefresh: true)
