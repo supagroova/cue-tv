@@ -1,5 +1,6 @@
 #if DEBUG && targetEnvironment(simulator)
 import SwiftUI
+import Security
 
 /// Creates a real paused synthetic account; all subsequent controls are production UI.
 struct AccountJourneyFixtureView: View {
@@ -34,7 +35,12 @@ struct AccountJourneyFixtureView: View {
                 let storage = CoreStorage.account(id: namespace, root: root)
                 let selection = CoreAccountSelection(keyAccount: "account-journey-" + namespace.uuidString.lowercased())
                 if environment["CUE_ACCOUNT_JOURNEY_CLEAR"] == "1" {
-                    let selected = try await selection.load()
+                    let selected: CoreAccountSelection.Account?
+                    do { selected = try await selection.load() }
+                    catch CoreAccountSelection.Failure.invalidRecord {
+                        try await selection.clearInvalidRecord()
+                        selected = nil
+                    }
                     let entries = FileManager.default.fileExists(atPath: root.path)
                         ? try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) : []
                     guard entries.allSatisfy({ UUID(uuidString: $0.lastPathComponent) != nil }) else {
@@ -51,6 +57,17 @@ struct AccountJourneyFixtureView: View {
                     return
                 }
                 configuration = Configuration(root: root, selection: selection)
+                if environment["CUE_ACCOUNT_JOURNEY_INVALID_SELECTION"] == "1" {
+                    let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                        kSecAttrService as String: CoreStorage.keyService,
+                        kSecAttrAccount as String: "account-journey-" + namespace.uuidString.lowercased(),
+                        kSecValueData as String: Data("invalid-json".utf8)]
+                    guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
+                        throw CoreAccountSelection.Failure.invalidRecord
+                    }
+                    model = StandaloneModel(accountSelection: selection, accountRoot: root)
+                    return
+                }
                 if environment["CUE_ACCOUNT_JOURNEY_FIRST_SIGN_IN"] == "1" {
                     guard try await selection.load() == nil else { throw CoreAccountSelection.Failure.alreadySelected }
                     model = StandaloneModel(service: NativeCoreService(), accountSelection: selection, accountRoot: root)
