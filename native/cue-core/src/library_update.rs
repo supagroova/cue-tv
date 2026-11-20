@@ -19,6 +19,24 @@ pub(crate) fn update(
             msg::{Event, Internal},
         },
     };
+    // Core's timestamp plan can discover remote changes, but cannot acknowledge
+    // our revision journal. Only the journal uploader may send local state.
+    if let Msg::Internal(Internal::LibrarySyncPlanResult(request, Ok((pull_ids, _)))) = message {
+        if ctx
+            .profile
+            .auth
+            .as_ref()
+            .is_some_and(|auth| auth.key == request.auth_key)
+        {
+            return <Ctx as Update<NativeEnv>>::update(
+                ctx,
+                &Msg::Internal(Internal::LibrarySyncPlanResult(
+                    request.clone(),
+                    Ok((pull_ids.clone(), vec![])),
+                )),
+            );
+        }
+    }
     // Apply the same account-key guard as pinned Core before touching session state.
     if let Msg::Internal(Internal::LibraryPullResult(request, Ok(items))) = message {
         if ctx
@@ -172,6 +190,15 @@ mod tests {
             let mut admitted = None;
             let effects = update(&mut ctx, &Msg::Internal(Internal::UpdateLibraryItem(item)), None, &mut admitted);
             assert_eq!(admitted.as_ref().and_then(|journal| journal.revision("fixture")), Some(1), "Intent must be reserved before effects execute");
+            let plan = stremio_core::types::api::DatastoreRequest {
+                auth_key: ctx.profile.auth.as_ref().unwrap().key.clone(),
+                collection: stremio_core::constants::LIBRARY_COLLECTION_NAME.into(),
+                command: stremio_core::types::api::DatastoreCommand::Meta,
+            };
+            let planned = update(&mut ctx, &Msg::Internal(Internal::LibrarySyncPlanResult(plan.clone(), Ok((vec![], vec!["fixture".into()])))), None, &mut admitted);
+            assert!(planned.into_iter().all(|effect| !matches!(effect, Effect::Future(_))), "Timestamp plan bypassed the revision journal uploader");
+            let pull_plan = update(&mut ctx, &Msg::Internal(Internal::LibrarySyncPlanResult(plan, Ok((vec!["fixture".into()], vec!["fixture".into()])))), None, &mut admitted);
+            assert_eq!(pull_plan.into_iter().filter(|effect| matches!(effect, Effect::Future(EffectFuture::Concurrent(_)))).count(), 1, "Pull discovery must remain available while uploads are journal-owned");
             let mut remote_item = ctx.library.items["fixture"].clone();
             remote_item.state.flagged_watched = 0;
             remote_item.mtime += chrono::Duration::days(1);
