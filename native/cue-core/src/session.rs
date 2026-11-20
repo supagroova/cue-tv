@@ -612,7 +612,9 @@ impl CoreSession {
         ack.await.map_err(|_| "session_stopped")?
     }
     /// Freezes progress and retires the owner only after its final local save.
-    /// A failed write leaves the owner available for explicit retry.
+    /// A failed write leaves the owner available for explicit retry. The most
+    /// recent successful close remains acknowledged until another close or logout,
+    /// so a caller that lost its receipt can reconcile without repeating the save.
     pub async fn close_playback(&self, token: u64) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
         self.commands
@@ -868,6 +870,7 @@ async fn run(
     let mut playback: Option<crate::player::Playback> = None;
     let mut checkpoint_pending = false;
     let mut playback_closing = false;
+    let mut last_closed_playback: Option<u64> = None;
     let mut video_offset = 0usize;
     let mut selected_season = None;
     let mut source_offset = 0usize;
@@ -1360,6 +1363,7 @@ async fn run(
                 source_generation += 1;
                 pending_playback = None;
                 playback = None;
+                last_closed_playback = None;
                 addon = AddonDetails::default();
                 catalog = crate::catalog::Catalog::default();
                 details = MetaDetails::default();
@@ -1686,6 +1690,10 @@ async fn run(
                 continue;
             }
             Command::Checkpoint(token, close, reply) => {
+                if close && last_closed_playback == Some(token) {
+                    let _ = reply.send(Ok(()));
+                    continue;
+                }
                 let Some(owner) = playback.as_ref().filter(|owner| owner.token == token) else {
                     let _ = reply.send(Err("stale_playback"));
                     continue;
@@ -1752,7 +1760,7 @@ async fn run(
             }
             Command::CheckpointDone(result, reply) => {
                 if playback_closing && result.is_ok() {
-                    playback = None;
+                    last_closed_playback = playback.take().map(|owner| owner.token);
                 }
                 playback_closing = false;
                 checkpoint_pending = false;

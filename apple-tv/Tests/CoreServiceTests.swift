@@ -225,6 +225,8 @@ import Security
     #expect(played?.watched == false)
     try await service.checkpointPlayback(token: handoff.playbackToken)
     try await service.closePlayback(token: handoff.playbackToken)
+    // Reconcile a potentially lost close receipt through the real Swift/C bridge.
+    try await service.closePlayback(token: handoff.playbackToken)
     await #expect(throws: NativeCoreService.Failure.requestFailed("stale_playback")) {
         try await service.playback(token: handoff.playbackToken, action: .played, time: 950, duration: 1000)
     }

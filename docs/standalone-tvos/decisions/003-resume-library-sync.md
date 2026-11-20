@@ -98,6 +98,22 @@ Authentication rejection pauses sync until reauthentication; it does not erase
 local progress. Sign-out follows the existing explicit account cleanup contract,
 including removal of that account's journal after owner retirement.
 
+## Lost close acknowledgements
+
+An accepted final checkpoint may finish after its caller times out or cancels its
+wait. Within that Core session, retain only the most recent successfully closed
+playback token. A repeated Close for that token acknowledges the prior durable
+save without writing again or touching a newer player. Clear this receipt on
+logout; it is not persisted across sessions. Failed or still-pending writes do not
+create successful receipts, and unrelated tokens still fail as stale.
+
+This changes duplicate Close from `stale_playback` to success for that one retained
+token. It does not make arbitrary playback operations replayable: start, retire,
+checkpoint and progress-operation ambiguity still require their own reconciliation
+proofs. The host regression holds the real sequential writer, drops the close
+waiter, releases storage, then verifies retry, unchanged ciphertext and isolation
+from a newer player. The Swift bridge also exercises repeated Close.
+
 ## Implementation and acceptance gates
 
 1. Add Core-backed library actions and bounded snapshots, with real session tests

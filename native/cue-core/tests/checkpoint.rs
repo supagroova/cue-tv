@@ -12,11 +12,17 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn checkpoint_ack_requires_durable_write_and_retry_survives_reopen() {
-    tokio::time::timeout(std::time::Duration::from_secs(10), roundtrip())
+    tokio::time::timeout(std::time::Duration::from_secs(10), roundtrip(false))
         .await
         .unwrap();
 }
-async fn roundtrip() {
+#[tokio::test]
+async fn lost_close_ack_can_be_reconciled_without_repeating_the_save() {
+    tokio::time::timeout(std::time::Duration::from_secs(10), roundtrip(true))
+        .await
+        .unwrap();
+}
+async fn roundtrip(lose_close_receipt: bool) {
     let directory = std::env::temp_dir().join(format!(
         "cue-checkpoint-{}-{}",
         std::process::id(),
@@ -213,6 +219,7 @@ async fn roundtrip() {
     })
     .await;
     started_close.await.unwrap();
+    let mut release_close = Some(release_close);
     {
         let close = session.close_playback(token);
         tokio::pin!(close);
@@ -233,8 +240,15 @@ async fn roundtrip() {
             Err("playback_closing")
         );
         assert_eq!(session.close_playback(token).await, Err("checkpoint_busy"));
+        if !lose_close_receipt {
+            release_close.take().unwrap().send(()).unwrap();
+            close.await.unwrap();
+        }
+        // Otherwise drop the waiting caller while the actual writer is blocked.
+    }
+    if let Some(release_close) = release_close {
         release_close.send(()).unwrap();
-        close.await.unwrap();
+        session.settled().await.unwrap();
     }
     assert_eq!(
         session
@@ -248,7 +262,28 @@ async fn roundtrip() {
             .await,
         Err("stale_playback")
     );
-    assert_eq!(session.close_playback(token).await, Err("stale_playback"));
+    let saved = std::fs::read(directory.join("state.bin")).unwrap();
+    assert_eq!(session.close_playback(token).await, Ok(()));
+    assert_eq!(std::fs::read(directory.join("state.bin")).unwrap(), saved);
+    assert_eq!(
+        session.close_playback(u64::MAX).await,
+        Err("stale_playback")
+    );
+    // A duplicate close must not retire a newer owner, even for the same title.
+    let next = session
+        .prepare_torrent(0, session.snapshot().revision)
+        .await
+        .unwrap();
+    assert_ne!(next.playback_token, token);
+    session.start_playback(next.playback_token).await.unwrap();
+    assert_eq!(session.close_playback(token).await, Ok(()));
+    assert!(
+        session
+            .playback_event(next.playback_token, PlaybackEvent::Paused(true))
+            .await
+            .is_ok()
+    );
+    session.retire_playback(next.playback_token).await.unwrap();
     assert_eq!(
         session.checkpoint_playback(token).await,
         Err("stale_playback")
@@ -312,6 +347,28 @@ async fn roundtrip() {
         }
     );
     resumed.retire_playback(fresh.playback_token).await.unwrap();
+    assert_eq!(resumed.close_playback(token).await, Err("stale_playback"));
+    let terminal = resumed
+        .prepare_torrent(0, resumed.snapshot().revision)
+        .await
+        .unwrap();
+    resumed
+        .start_playback(terminal.playback_token)
+        .await
+        .unwrap();
+    resumed
+        .close_playback(terminal.playback_token)
+        .await
+        .unwrap();
+    resumed
+        .close_playback(terminal.playback_token)
+        .await
+        .unwrap();
+    resumed.logout().await.unwrap();
+    assert_eq!(
+        resumed.close_playback(terminal.playback_token).await,
+        Err("stale_playback")
+    );
     resumed.stop().await;
     drop(resumed);
     server.await.unwrap();
