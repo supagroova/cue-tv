@@ -30,3 +30,5 @@ pub mod player;
 mod checkpoint;
 
 mod sync_journal;
+
+mod library_update;

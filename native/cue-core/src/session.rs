@@ -12,7 +12,7 @@ use stremio_core::{
         meta_details::{MetaDetails, Selected as DetailsSelected},
     },
     runtime::{
-        Effect, EffectFuture, Effects, Env, EnvError, Update, UpdateWithCtx,
+        Effect, EffectFuture, Effects, Env, EnvError, UpdateWithCtx,
         msg::{
             Action, ActionCatalogWithFilters, ActionCtx, ActionLoad, ActionMetaDetails, Event,
             Internal, Msg,
@@ -748,6 +748,7 @@ async fn run(
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
         };
+        let mut manual_library_title = None;
         let (message, reply, origin, catalog_origin, details_origin, source_origin) = match command
         {
             Command::DetailsWatched(video_id, watched, expected, reply) => {
@@ -817,6 +818,7 @@ async fn run(
                         watched,
                     );
                 }
+                manual_library_title = Some(meta.id.clone());
                 // Repeated intent retries disk persistence without increasing play count.
                 let message = if unchanged {
                     Msg::Internal(Internal::LibraryChanged(false))
@@ -856,6 +858,7 @@ async fn run(
                     let _ = reply.send(Ok(()));
                     continue;
                 }
+                manual_library_title = Some(meta.id.clone());
                 // Core suppresses unchanged updates, including after a failed disk write.
                 // Reasserting membership must still persist the current library.
                 let message = if ctx
@@ -1573,7 +1576,8 @@ async fn run(
                     stremio_core::types::server_urls::ServerUrlsBucket::new::<NativeEnv>(None);
                 messages.push_back(Msg::Internal(Internal::StreamingServerUrlsBucketChanged));
             }
-            let context_effects = <Ctx as Update<NativeEnv>>::update(&mut ctx, &message);
+            let context_effects =
+                crate::library_update::update(&mut ctx, &message, manual_library_title.as_deref());
             let stale_manifest = origin != addon_generation
                 && matches!(&message, Msg::Internal(Internal::ManifestRequestResult(..)));
             let addon_effects = if stale_manifest {
