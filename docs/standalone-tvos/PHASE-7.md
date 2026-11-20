@@ -63,6 +63,13 @@ The recorder identifies an incremental unsigned build; independent clean-rebuild
 repeatability, complete notices/source materials and physical qualification remain
 separate gates. It does not replace the historical source snapshot manifest.
 
+Local candidate `release-candidate-001` was recorded successfully at clean commit
+`7ee7493c06fcd47b38f36b8540ff05aeb7dec329`: 7 app files, 2 native archives and
+3 dependency resolution files. All app checksums were independently rechecked.
+The evidence stays under `.agent-work/release-candidate-001`; it identifies this
+unsigned incremental candidate, not later commits or an independently reproduced
+clean build. Its task receipt is `1651cc4f10454521a5ca5abb91c250ce`.
+
 ## First installation and upgrade protocol
 
 1. Complete the phase 6 release audit and select a fully reviewed commit. Record
