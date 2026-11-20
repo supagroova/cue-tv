@@ -32,7 +32,8 @@ int32_t cue_core_login(uint64_t handle, const uint8_t *email, size_t email_lengt
 // For an existing paused account only; never changes account identity or namespace.
 // Admission is not completion: watch model.sync.reauth_sequence/reauthenticating and errors.
 // JSON v1 cancel_reauthentication with sequence targets only that attempt; never signs out.
-/* Last processed cancellation sequence, or zero. Not a snapshot inference. */
+/* Last processed cancellation sequence, or zero. The settled snapshot is
+ * published before the receipt, allowing immediate retry. Not a snapshot inference. */
 uint64_t cue_core_reauthentication_cancelled(uint64_t handle);
 int32_t cue_core_reauthenticate(uint64_t handle, const uint8_t *email, size_t email_length, const uint8_t *password, size_t password_length);
 // Restore an existing account from the same encrypted directory/key contract.

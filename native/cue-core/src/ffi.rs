@@ -329,7 +329,12 @@ async fn own(
                             Command::RetrySync { .. } => session.retry_sync().await,
                             Command::CancelReauthentication { sequence, .. } => {
                                 let result = session.cancel_reauthentication(sequence).await;
-                                if result.is_ok() { entry.reauth_cancelled.store(sequence, Ordering::Release); }
+                                if result.is_ok() {
+                                    // Receipt permits an immediate retry. Publish the settled
+                                    // state first so admission cannot read the old active flag.
+                                    publish(&entry, handle, "ready", Some(session.snapshot()), None);
+                                    entry.reauth_cancelled.store(sequence, Ordering::Release);
+                                }
                                 result
                             },
                             Command::PrepareTorrent { ticket, index, revision } => {

@@ -20,6 +20,12 @@ The committed [resume-cycle report](evidence/resume-cycles-2026-11-18.json)
 records the graceful relaunch experiment. Latest code checkpoint: `71af98f`.
 CI for that checkpoint is still running at this documentation update.
 
+Synthetic-account form-model tests now cover same-account refresh after HTTP401,
+wrong-account rejection, encrypted-save failure and held-login cancellation, each
+with safe retry. The cancellation receipt now follows publication of its settled
+snapshot, fixing immediate retry against a stale active flag. These tests exercise
+real HTTP, FFI and storage, but do not establish the full SwiftUI journey.
+
 Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
 a successful account-refresh UI journey, pending-journal sign-out recovery,
 ambiguous operation timeout reconciliation, failed-save UI and abrupt interruption
