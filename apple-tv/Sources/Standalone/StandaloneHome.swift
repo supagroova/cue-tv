@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct StandaloneHome: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: StandaloneModel
     init(model: StandaloneModel = StandaloneModel()) { _model = State(initialValue: model) }
     @State private var screen = Screen.catalogs
@@ -261,6 +262,9 @@ struct StandaloneHome: View {
         }
         .onExitCommand(perform: backAction)
         .task(id: restart) { await model.run() }
+        .task(id: scenePhase) {
+            if scenePhase == .active { await model.retrySync() }
+        }
         .fullScreenCover(item: $refreshAccount) { refresh in
             AccountReauthenticationView(model: refresh, onClose: { refreshAccount = nil })
         }

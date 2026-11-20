@@ -741,3 +741,9 @@ Added a real-session regression that holds the sequential storage worker, waits 
 Focused green `6c63d6ee92894c6ea63da06e356874b2`; deliberately bypassing the ACK receive wait failed with “New edit crossed durable ACK barrier: Ok(())” (`08ec481cf4ae4ffe94e51cd434136c94`). Production code was restored; full locked native suite passed `6ec83ba8cf1c45158cc8f7f76eb2ba4d`. This is in-memory storage ordering evidence, not physical interruption or encrypted reopen qualification. Only test code and cfg(test) instrumentation changed, so no additional Apple build was needed for this slice.
 
 Review audit: PRs 3,4,5,6,7,8,13 have zero unresolved review threads, with no further pages. PR13 head d09af57 CI was still running. Keep remaining cleanup fault/UI, lifecycle and physical gates open.
+
+### 2026-11-20 — foreground sync retry wiring
+
+StandaloneHome now observes scenePhase with a cancellable SwiftUI task and calls the existing guarded retry when active. StandaloneModel admits this only for an authenticated waiting account, with no sign-out or retry in progress; native guards independently preserve rejection pauses and serialize the durable retry save. Initial activation before state restoration is harmless because native startup schedules restored pending work. Network recovery without a scene transition continues to use native capped retry/backoff; no path monitor was added.
+
+Simulator suite passed `a8e2504c40ba4da2a7633a20e8f7f8fe`; unsigned tvOS device build passed `43bfceb273d64c009bc63c520b148949`. This wiring does not prove a connected-account foreground journey or physical Home/sleep behavior. PR13 d09af57 Apple CI jobs were confirmed in progress (44799070585), building device libraries and running simulator suites. Remaining qualification gates stay open.
