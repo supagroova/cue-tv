@@ -130,6 +130,9 @@ impl Journal {
         next.encode()?;
         Ok(next)
     }
+    pub(crate) fn pending_count(&self) -> usize {
+        self.entries.len()
+    }
     pub(crate) fn has_pending(&self) -> bool {
         !self.entries.is_empty()
     }

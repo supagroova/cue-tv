@@ -109,6 +109,14 @@ async fn rejected_upload_keeps_intent_and_does_not_retry_without_reauthenticatio
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!(session.snapshot().error, Some("account_sync_failed"));
+    session.set_interface_language("fra").await.unwrap();
+    assert_eq!(
+        session.snapshot().sync.as_ref().unwrap().state,
+        "reauthentication_required"
+    );
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().pending_titles, 1);
+    assert_eq!(session.retry_sync().await, Err("reauthentication_required"));
+
     tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     env.scope(async {

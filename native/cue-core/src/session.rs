@@ -47,8 +47,14 @@ pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static st
     }
     Ok(selected)
 }
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct SyncSnapshot {
+    pub pending_titles: usize,
+    pub state: &'static str,
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
+    pub sync: Option<SyncSnapshot>,
     pub authenticated: bool,
     pub revision: u64,
     pub stopped: bool,
@@ -68,6 +74,7 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    RetrySync(oneshot::Sender<Result<(), &'static str>>),
     #[cfg(test)]
     TestLibraryItem(
         stremio_core::types::library::LibraryItem,
@@ -226,7 +233,7 @@ impl CoreSession {
             }
         };
         let (commands, inbox) = mpsc::channel(64);
-        let initial = snapshot(
+        let mut initial = snapshot(
             &ctx,
             &AddonDetails::default(),
             &crate::catalog::Catalog::default(),
@@ -241,6 +248,11 @@ impl CoreSession {
             0,
             false,
             None,
+        );
+        initial.sync = sync_view(
+            &ctx,
+            journal.as_ref(),
+            &crate::sync_scheduler::Scheduler::default(),
         );
         let (identity_publish, identity) = watch::channel(account_identity(&ctx));
         let (publish, state) = watch::channel(initial);
@@ -264,6 +276,7 @@ impl CoreSession {
                 env.fail();
                 let mut state = publish.borrow().clone();
                 state.stopped = true;
+                state.sync = None;
                 state.pending_effects = 0;
                 state.error = env.failure();
                 publish.send_replace(state);
@@ -283,6 +296,13 @@ impl CoreSession {
     /// Explicit private identity copy for protected account selection, never UI snapshots.
     pub fn account_identity(&self) -> Option<String> {
         self.identity.borrow().clone()
+    }
+    pub async fn retry_sync(&self) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::RetrySync(send))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
     }
     pub async fn logout(&self) -> Result<(), &'static str> {
         let (reply, ack) = oneshot::channel();
@@ -668,6 +688,7 @@ fn snapshot(
 ) -> Snapshot {
     let (catalogs, catalog_total) = crate::catalog::choices(ctx, catalog_choices_offset);
     Snapshot {
+        sync: None,
         library: crate::library::view(&ctx.library, library_offset),
         details_in_library: crate::details::selected_preview(details).map(|meta| {
             ctx.library
@@ -745,6 +766,42 @@ fn retain_playback(
         selection,
     });
     Ok(token)
+}
+
+fn sync_view(
+    ctx: &Ctx,
+    journal: Option<&crate::sync_journal::Journal>,
+    scheduler: &crate::sync_scheduler::Scheduler,
+) -> Option<SyncSnapshot> {
+    ctx.profile.auth.as_ref()?;
+    let pending_titles = journal.map_or(0, |journal| journal.pending_count());
+    let state = if scheduler.is_paused() {
+        "reauthentication_required"
+    } else if scheduler.has_in_flight() {
+        "syncing"
+    } else if pending_titles > 0 {
+        "waiting"
+    } else {
+        "idle"
+    };
+    Some(SyncSnapshot {
+        pending_titles,
+        state,
+    })
+}
+fn publish_state(
+    publish: &watch::Sender<Snapshot>,
+    ctx: &Ctx,
+    journal: Option<&crate::sync_journal::Journal>,
+    scheduler: &crate::sync_scheduler::Scheduler,
+    mut state: Snapshot,
+) {
+    state.sync = if state.stopped {
+        None
+    } else {
+        sync_view(ctx, journal, scheduler)
+    };
+    publish.send_replace(state);
 }
 
 async fn run(
@@ -846,6 +903,15 @@ async fn run(
                 }
             }
         }
+        let sync = sync_view(&ctx, journal.as_ref(), &sync_scheduler);
+        publish.send_if_modified(|state| {
+            if state.sync != sync {
+                state.sync = sync;
+                true
+            } else {
+                false
+            }
+        });
         let command = tokio::select! { biased;
             _ = env.cancelled() => break,
             command = inbox.recv() => match command { Some(command) => command, None => break },
@@ -863,6 +929,18 @@ async fn run(
                 details_generation,
                 source_generation,
             ),
+            Command::RetrySync(reply) => {
+                let result = if !sync_allowed || ctx.profile.auth.is_none() {
+                    Err("account_sync_unavailable")
+                } else if sync_scheduler.is_paused() {
+                    Err("reauthentication_required")
+                } else {
+                    sync_scheduler.retry_now(sync_started.elapsed());
+                    Ok(())
+                };
+                let _ = reply.send(result);
+                continue;
+            }
             Command::SyncPrepared(ticket, auth, result) => {
                 if !sync_scheduler.is_current(ticket) {
                     continue;
@@ -1222,22 +1300,28 @@ async fn run(
                     )
                 } else {
                     revision += 1;
-                    publish.send_replace(snapshot(
+                    publish_state(
+                        &publish,
                         &ctx,
-                        &addon,
-                        &catalog,
-                        &details,
-                        video_offset,
-                        selected_season,
-                        source_offset,
-                        catalog_choices_offset,
-                        library_offset,
-                        catalog_item_offset,
-                        revision,
-                        pending,
-                        false,
-                        error,
-                    ));
+                        journal.as_ref(),
+                        &sync_scheduler,
+                        snapshot(
+                            &ctx,
+                            &addon,
+                            &catalog,
+                            &details,
+                            video_offset,
+                            selected_season,
+                            source_offset,
+                            catalog_choices_offset,
+                            library_offset,
+                            catalog_item_offset,
+                            revision,
+                            pending,
+                            false,
+                            error,
+                        ),
+                    );
                     let _ = reply.send(Ok(()));
                     continue;
                 }
@@ -1255,22 +1339,28 @@ async fn run(
                 library_offset = offset;
                 error = None;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    library_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -1291,22 +1381,28 @@ async fn run(
                 }
                 catalog_choices_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    library_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -1560,22 +1656,28 @@ async fn run(
                 }
                 source_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    library_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -1593,22 +1695,28 @@ async fn run(
                 }
                 video_offset = offset;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    library_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -1627,22 +1735,28 @@ async fn run(
                 video_offset = 0;
                 selected_season = season;
                 revision += 1;
-                publish.send_replace(snapshot(
+                publish_state(
+                    &publish,
                     &ctx,
-                    &addon,
-                    &catalog,
-                    &details,
-                    video_offset,
-                    selected_season,
-                    source_offset,
-                    catalog_choices_offset,
-                    library_offset,
-                    catalog_item_offset,
-                    revision,
-                    pending,
-                    false,
-                    error,
-                ));
+                    journal.as_ref(),
+                    &sync_scheduler,
+                    snapshot(
+                        &ctx,
+                        &addon,
+                        &catalog,
+                        &details,
+                        video_offset,
+                        selected_season,
+                        source_offset,
+                        catalog_choices_offset,
+                        library_offset,
+                        catalog_item_offset,
+                        revision,
+                        pending,
+                        false,
+                        error,
+                    ),
+                );
                 let _ = reply.send(Ok(()));
                 continue;
             }
@@ -1840,22 +1954,28 @@ async fn run(
             }
         }
         identity.send_replace(account_identity(&ctx));
-        publish.send_replace(snapshot(
+        publish_state(
+            &publish,
             &ctx,
-            &addon,
-            &catalog,
-            &details,
-            video_offset,
-            selected_season,
-            source_offset,
-            catalog_choices_offset,
-            library_offset,
-            catalog_item_offset,
-            revision,
-            pending,
-            false,
-            error,
-        ));
+            journal.as_ref(),
+            &sync_scheduler,
+            snapshot(
+                &ctx,
+                &addon,
+                &catalog,
+                &details,
+                video_offset,
+                selected_season,
+                source_offset,
+                catalog_choices_offset,
+                library_offset,
+                catalog_item_offset,
+                revision,
+                pending,
+                false,
+                error,
+            ),
+        );
         if let Some(reply) = reply {
             let _ = reply.send(if error.is_none() {
                 Ok(())
@@ -1867,20 +1987,26 @@ async fn run(
     sync_cancel.cancel();
     inbox.close();
     identity.send_replace(None);
-    publish.send_replace(snapshot(
+    publish_state(
+        &publish,
         &ctx,
-        &addon,
-        &catalog,
-        &details,
-        video_offset,
-        selected_season,
-        source_offset,
-        catalog_choices_offset,
-        library_offset,
-        catalog_item_offset,
-        revision,
-        0,
-        true,
-        env.failure().or(error),
-    ));
+        journal.as_ref(),
+        &sync_scheduler,
+        snapshot(
+            &ctx,
+            &addon,
+            &catalog,
+            &details,
+            video_offset,
+            selected_season,
+            source_offset,
+            catalog_choices_offset,
+            library_offset,
+            catalog_item_offset,
+            revision,
+            0,
+            true,
+            env.failure().or(error),
+        ),
+    );
 }

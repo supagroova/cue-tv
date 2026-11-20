@@ -17,6 +17,12 @@ pub(crate) struct Scheduler {
     paused: bool,
 }
 impl Scheduler {
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused
+    }
+    pub(crate) fn has_in_flight(&self) -> bool {
+        self.in_flight.is_some()
+    }
     pub(crate) fn is_current(&self, ticket: u64) -> bool {
         self.in_flight == Some(ticket)
     }

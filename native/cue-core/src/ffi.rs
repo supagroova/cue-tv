@@ -276,6 +276,7 @@ async fn own(
                         result = async { match command {
                             Command::Login { email, password } => session.login(&email, &password).await,
                             Command::Logout { .. } => session.logout().await,
+                            Command::RetrySync { .. } => session.retry_sync().await,
                             Command::PrepareTorrent { ticket, index, revision } => {
                                 let result = session.prepare_torrent(index, revision).await;
                                 let value = match result {
@@ -484,6 +485,9 @@ enum Command {
     Logout {
         version: u32,
     },
+    RetrySync {
+        version: u32,
+    },
     #[serde(skip)]
     PrepareTorrent {
         ticket: u64,
@@ -576,7 +580,7 @@ impl Command {
             | Self::PrepareTorrent { .. }
             | Self::PrepareHttps { .. }
             | Self::Login { .. } => false,
-            Self::Logout { version } => *version == 1,
+            Self::Logout { version } | Self::RetrySync { version } => *version == 1,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
             | Self::DetailsVideos { version, .. }
