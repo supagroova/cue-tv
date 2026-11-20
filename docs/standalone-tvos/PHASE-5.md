@@ -30,8 +30,12 @@ qualifies first sign-in, rejected-password retry, account adoption/catalog brows
 reauthentication with retained library content, and sign-out. These exercise real
 HTTP, FFI and storage against an isolated synthetic service, not live Stremio.
 
-Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
-live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
+A controlled simulator test now verifies Swift ownership and retry after two lost
+reauthentication cancellation receipts, including blocked resubmission, retained
+encrypted pending state and successful same-account recovery. This injects receipt
+loss at the CoreService boundary; actual native queue/timeout faults remain unqualified.
+
+Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
 filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
