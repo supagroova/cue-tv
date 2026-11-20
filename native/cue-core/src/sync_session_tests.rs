@@ -932,10 +932,28 @@ async fn cancelling_refresh_preserves_account_and_stale_cancel_cannot_stop_new_a
 
 #[tokio::test]
 async fn durable_ack_barrier_holds_new_edit_until_storage_completes() {
+    ack_barrier_case(false).await;
+}
+
+#[tokio::test]
+async fn stopping_during_durable_ack_cancels_writer_and_preserves_pending_intent() {
+    ack_barrier_case(true).await;
+}
+
+async fn ack_barrier_case(stop_during_ack: bool) {
     use futures::FutureExt;
     use std::sync::Mutex;
     use tokio::sync::Notify;
-    let env = stored_pending().await;
+    let directory = std::env::temp_dir().join(format!(
+        "cue-ack-barrier-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let env = seed_pending(Environment::persistent(&directory, &[47; 32]).unwrap()).await;
     let observed = Arc::new(Mutex::new(Vec::new()));
     let first_started = Arc::new(Notify::new());
     let second_started = Arc::new(Notify::new());
@@ -1009,6 +1027,38 @@ async fn durable_ack_barrier_holds_new_edit_until_storage_completes() {
     .await
     .unwrap();
     // HTTP has finished and its durable ACK is now waiting behind our writer.
+    if stop_during_ack {
+        tokio::time::timeout(std::time::Duration::from_secs(3), session.stop())
+            .await
+            .unwrap();
+        assert!(session.snapshot().stopped);
+        assert!(
+            release_write.send(()).is_err(),
+            "Stopped writer retained the blocked future"
+        );
+        drop(session);
+        drop(env);
+        let reopened = Environment::persistent(&directory, &[47; 32]).unwrap();
+        reopened
+            .scope(async {
+                let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(journal.revision("title"), Some(1));
+                let library = NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(library.items["title"].state.time_offset, 100);
+            })
+            .await;
+        assert_eq!(*observed.lock().unwrap(), vec![100]);
+        reopened.shutdown().await;
+        drop(reopened);
+        std::fs::remove_dir_all(&directory).unwrap();
+        return;
+    }
     {
         let edit = session.test_library_item(item);
         tokio::pin!(edit);
@@ -1064,4 +1114,7 @@ async fn durable_ack_barrier_holds_new_edit_until_storage_completes() {
     assert!(!pending);
     assert_eq!(*observed.lock().unwrap(), vec![100, 200]);
     session.stop().await;
+    drop(session);
+    drop(env);
+    std::fs::remove_dir_all(directory).unwrap();
 }
