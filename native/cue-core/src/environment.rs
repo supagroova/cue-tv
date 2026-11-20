@@ -52,6 +52,11 @@ pub struct Environment {
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
 }
 impl Environment {
+    #[cfg(test)]
+    pub(crate) fn queued_writes(&self) -> usize {
+        self.sequential.max_capacity() - self.sequential.capacity()
+    }
+
     pub fn new() -> Result<Arc<Self>, EnvError> {
         Self::with_clock(Arc::new(Utc::now))
     }

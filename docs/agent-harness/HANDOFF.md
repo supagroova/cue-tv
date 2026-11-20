@@ -733,3 +733,11 @@ Missing-API red: `654a1328d56b4b3691153d2823f10dfa`; focused FFI green: `aac7a94
 Full native suite completed successfully (`f465d73b74fb48b6a18c5ef7d79ba71e`), superseding the live-session note above. Added deterministic real-queue pressure coverage: rejected and merely queued cancellation produce no completion receipt (`a91537d52e0146eba4f36ae0195f993e`). After Rust formatting, unsigned device build passed (`4c9e644ffde540a99d354094c9f7d85c`). Simulator evidence remains `4358cce93d65453ca88dfc1d6093b21d` (75 tests).
 
 This slice adds same-account refresh UI, attempt-scoped cancellation and native completion acknowledgment, retaining attempt identity on failed cleanup. It does not complete Phase 5. Next: fault-injected Swift cleanup/retry ownership coverage and successful refresh UI journey, then foreground/reconnection and remaining lifecycle/ACK gates. No physical qualification is claimed.
+
+### 2026-11-20 — durable upload ACK writer barrier regression
+
+Added a real-session regression that holds the sequential storage worker, waits until the upload ACK write is queued, then submits a newer edit. The edit cannot complete across the barrier; after release, the stored library contains the newer position and outgoing payloads are independently checked as [100, 200]. A test-only queue-depth observation exposes existing writer state without replacing persistence or session logic.
+
+Focused green `6c63d6ee92894c6ea63da06e356874b2`; deliberately bypassing the ACK receive wait failed with “New edit crossed durable ACK barrier: Ok(())” (`08ec481cf4ae4ffe94e51cd434136c94`). Production code was restored; full locked native suite passed `6ec83ba8cf1c45158cc8f7f76eb2ba4d`. This is in-memory storage ordering evidence, not physical interruption or encrypted reopen qualification. Only test code and cfg(test) instrumentation changed, so no additional Apple build was needed for this slice.
+
+Review audit: PRs 3,4,5,6,7,8,13 have zero unresolved review threads, with no further pages. PR13 head d09af57 CI was still running. Keep remaining cleanup fault/UI, lifecycle and physical gates open.
