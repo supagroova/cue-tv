@@ -1,0 +1,179 @@
+{
+  "scope": "Verified source notices for selected packages; incomplete combined-binary notice inventory",
+  "records": [
+    {
+      "packages": [
+        "cue-core",
+        "cue-torrent"
+      ],
+      "source": "repository LICENSE",
+      "retained": "LICENSE",
+      "sha256": "21eef08e728450688fbff3795c42268dbc684fe1bfb87bbe04df49aed80fd0e3",
+      "versions": {
+        "cue-core": "0.1.0",
+        "cue-torrent": "0.1.0"
+      },
+      "resolved_sources": {
+        "cue-core": "native/cue-core",
+        "cue-torrent": "native/cue-torrent"
+      }
+    },
+    {
+      "packages": [
+        "stremio-core",
+        "stremio-derive",
+        "stremio-watched-bitfield"
+      ],
+      "source_revision": "2c89236b47dfcd5e844c1dfae5737164cb616fbf",
+      "source": "https://github.com/Stremio/stremio-core/blob/2c89236b47dfcd5e844c1dfae5737164cb616fbf/LICENSE.md",
+      "retained": "native/licenses/Stremio-Core-MIT.txt",
+      "sha256": "22584fcd1da294428887b53b9fe0d9a75a03e42f83254b22dfe8c8df2317d622",
+      "versions": {
+        "stremio-core": "0.1.0",
+        "stremio-derive": "0.1.0",
+        "stremio-watched-bitfield": "0.1.0"
+      },
+      "resolved_sources": {
+        "stremio-core": "native/stremio-core",
+        "stremio-derive": "native/stremio-core/stremio-derive",
+        "stremio-watched-bitfield": "native/stremio-core/stremio-watched-bitfield"
+      }
+    },
+    {
+      "packages": [
+        "localsearch"
+      ],
+      "source_revision": "74fefe1da2fa17d2b4ef7e3e629da00f3946ee72",
+      "source": "pinned localsearch checkout/LICENSE",
+      "retained": "native/licenses/Stremio-Local-Search-MIT.txt",
+      "sha256": "ee6b7638024e69275dde0cf08a4a2caf894d4d141b50e980f5cfa6ddf58c98a6",
+      "versions": {
+        "localsearch": "0.1.0"
+      },
+      "resolved_sources": {
+        "localsearch": "git+https://github.com/Stremio/local-search?branch=main#74fefe1da2fa17d2b4ef7e3e629da00f3946ee72"
+      }
+    },
+    {
+      "packages": [
+        "librqbit",
+        "librqbit-bencode",
+        "librqbit-buffers",
+        "librqbit-clone-to-owned",
+        "librqbit-core",
+        "librqbit-dht",
+        "librqbit-lsd",
+        "librqbit-peer-protocol",
+        "librqbit-sha1-wrapper",
+        "librqbit-tracker-comms",
+        "librqbit-upnp"
+      ],
+      "source_revision": "f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+      "source": "https://github.com/ikatson/rqbit/blob/f23bacdddcc5318caa813418b8eb1b1d7307faaa/LICENSE",
+      "retained": "native/licenses/rqbit-Apache-2.0.txt",
+      "sha256": "6e6c6641a80b24c933a77886da6091f617131f925a24e593fcc1ccc47fb0a8a5",
+      "license_text": "native/licenses/Apache-2.0.txt",
+      "versions": {
+        "librqbit": "9.1.0",
+        "librqbit-bencode": "9.1.0",
+        "librqbit-buffers": "9.1.0",
+        "librqbit-clone-to-owned": "9.1.0",
+        "librqbit-core": "9.1.0",
+        "librqbit-dht": "9.1.0",
+        "librqbit-lsd": "9.1.0",
+        "librqbit-peer-protocol": "9.1.0",
+        "librqbit-sha1-wrapper": "9.1.0",
+        "librqbit-tracker-comms": "9.1.0",
+        "librqbit-upnp": "9.1.0"
+      },
+      "resolved_sources": {
+        "librqbit": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-bencode": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-buffers": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-clone-to-owned": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-core": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-dht": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-lsd": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-peer-protocol": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-sha1-wrapper": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-tracker-comms": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa",
+        "librqbit-upnp": "git+https://github.com/ikatson/rqbit?rev=f23bacdddcc5318caa813418b8eb1b1d7307faaa#f23bacdddcc5318caa813418b8eb1b1d7307faaa"
+      }
+    },
+    {
+      "packages": [
+        "assert_cfg"
+      ],
+      "source_revision": "4799cdc4e5e1a94ef6bdb24d8c5e7a71c72e2601",
+      "source": "https://github.com/rodrimati1992/assert_cfg/blob/4799cdc4e5e1a94ef6bdb24d8c5e7a71c72e2601/LICENSE-ZLIB.md",
+      "retained": "native/licenses/assert_cfg-Zlib.txt",
+      "sha256": "a2f6f941d80949cd8df8418463b221d9c0ea6f86d8b921c48b8e8872ce44de12",
+      "git_blob": "13597e722f6f45768c9690a27bc3aef052627da7",
+      "versions": {
+        "assert_cfg": "0.1.0"
+      },
+      "resolved_sources": {
+        "assert_cfg": "registry+https://github.com/rust-lang/crates.io-index"
+      }
+    },
+    {
+      "packages": [
+        "governor"
+      ],
+      "source_revision": "9f3a79dd47dd32acd589c562b8d4fefe99b93372",
+      "source": "https://github.com/boinkor-net/governor/blob/9f3a79dd47dd32acd589c562b8d4fefe99b93372/LICENSE",
+      "retained": "native/licenses/governor-MIT.txt",
+      "sha256": "2248fdedb215c73b6431d4c0419c6476c0aa19621fa94041aa7c5a3ce952e5cc",
+      "git_blob": "51c6a41e39f60578e343f14e47dda7fbe8ff3b05",
+      "versions": {
+        "governor": "0.10.4"
+      },
+      "resolved_sources": {
+        "governor": "registry+https://github.com/rust-lang/crates.io-index"
+      }
+    },
+    {
+      "packages": [
+        "stremio-official-addons"
+      ],
+      "source_revision": "272e36095d6ece7aea97f094a02a4fb0a94def59",
+      "source": "https://github.com/Stremio/stremio-official-addons/blob/272e36095d6ece7aea97f094a02a4fb0a94def59/LICENSE.md",
+      "retained": "native/licenses/Stremio-Official-Addons-MIT.txt",
+      "sha256": "22584fcd1da294428887b53b9fe0d9a75a03e42f83254b22dfe8c8df2317d622",
+      "git_blob": "ef4cc208d355da15e547df1ce30b6c33e2d6de1a",
+      "source_blob_matches_published_crate": true,
+      "versions": {
+        "stremio-official-addons": "2.1.2"
+      },
+      "resolved_sources": {
+        "stremio-official-addons": "registry+https://github.com/rust-lang/crates.io-index"
+      }
+    },
+    {
+      "packages": [
+        "fxhash"
+      ],
+      "source_revision": "537570af68de22d2f4bbdd5bee5d6e07268e6f42",
+      "source": "https://github.com/cbreeden/fxhash/blob/537570af68de22d2f4bbdd5bee5d6e07268e6f42/lib.rs",
+      "retained": "native/licenses/fxhash-source-NOTICE.txt",
+      "sha256": "4b88f68c805a1bb0883f4c202c95083cf9bfc8122a9c57e16a0786bfe4a3b2e0",
+      "scope": "Source copyright/license header with full Apache-2.0 alternative retained",
+      "source_blob_matches_published_crate": true,
+      "license_text": "native/licenses/Apache-2.0.txt",
+      "versions": {
+        "fxhash": "0.2.1"
+      },
+      "resolved_sources": {
+        "fxhash": "registry+https://github.com/rust-lang/crates.io-index"
+      }
+    }
+  ],
+  "standard_texts": [
+    {
+      "name": "Apache-2.0",
+      "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "retained": "native/licenses/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ]
+}
