@@ -1,4 +1,7 @@
 //! Native Stremio environment. Account persistence and the Swift ABI are separate stages.
+#[cfg(all(feature = "account-fixture", target_os = "tvos", not(target_abi = "sim")))]
+compile_error!("Account fixtures must not be included in physical Apple TV builds");
+
 pub mod environment;
 
 pub mod session;

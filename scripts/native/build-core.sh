@@ -18,4 +18,6 @@ if [[ "${CI:-}" == true && "$target" == aarch64-apple-tvos-sim && -n "${CUE_CORE
   exit 0
 fi
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
-cargo +1.100.0 build --locked --manifest-path native/cue-core/Cargo.toml --target "$target"
+build_args=(--locked --manifest-path native/cue-core/Cargo.toml --target "$target")
+if [[ "$target" == aarch64-apple-tvos-sim ]]; then build_args+=(--features account-fixture); fi
+cargo +1.100.0 build "${build_args[@]}"

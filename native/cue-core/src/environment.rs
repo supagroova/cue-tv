@@ -49,6 +49,8 @@ pub struct Environment {
     runtime: tokio::runtime::Handle,
     sequential: tokio::sync::mpsc::Sender<futures::future::BoxFuture<'static, ()>>,
     client: reqwest::Client,
+    #[cfg(feature = "account-fixture")]
+    fixture_port: Option<u16>,
     clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
 }
 impl Environment {
@@ -63,28 +65,52 @@ impl Environment {
     pub fn with_clock(
         clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
     ) -> Result<Arc<Self>, EnvError> {
-        Self::configured(clock, BTreeMap::new(), None)
+        Self::configured(clock, BTreeMap::new(), None, None)
     }
     /// Blocking initialization for an app-owned encrypted directory, off the UI actor.
     pub fn persistent(directory: &std::path::Path, key: &[u8; 32]) -> Result<Arc<Self>, EnvError> {
         let (store, values) = crate::persistence::EncryptedStore::open(directory, key)
             .map_err(|_| EnvError::StorageUnavailable)?;
-        Self::configured(Arc::new(Utc::now), values, Some(store))
+        Self::configured(Arc::new(Utc::now), values, Some(store), None)
     }
+    /// Explicit isolated network boundary for synthetic-account qualification.
+    /// No environment variables or process-wide routing are consulted.
+    #[cfg(feature = "account-fixture")]
+    pub fn account_fixture(port: u16) -> Result<Arc<Self>, EnvError> {
+        if port == 0 { return Err(EnvError::Fetch("Invalid fixture port".into())); }
+        Self::configured(Arc::new(Utc::now), BTreeMap::new(), None, Some(port))
+    }
+
+    #[cfg(feature = "account-fixture")]
+    pub fn persistent_account_fixture(directory: &std::path::Path, key: &[u8; 32], port: u16) -> Result<Arc<Self>, EnvError> {
+        if port == 0 { return Err(EnvError::Fetch("Invalid fixture port".into())); }
+        let (store, values) = crate::persistence::EncryptedStore::open(directory, key)
+            .map_err(|_| EnvError::StorageUnavailable)?;
+        Self::configured(Arc::new(Utc::now), values, Some(store), Some(port))
+    }
+
     fn configured(
         clock: Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>,
         values: BTreeMap<String, Vec<u8>>,
         persistence: Option<crate::persistence::EncryptedStore>,
+        _fixture_port: Option<u16>,
     ) -> Result<Arc<Self>, EnvError> {
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| EnvError::Other("Core runtime unavailable".into()))?;
         let (sequential, mut queue) =
             tokio::sync::mpsc::channel::<futures::future::BoxFuture<'static, ()>>(128);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none());
+        #[cfg(feature = "account-fixture")]
+        let client = if _fixture_port.is_some() { client.no_proxy() } else { client };
         let env = Arc::new(Self {
             #[cfg(test)]
             test_http: Mutex::new(None),
             #[cfg(test)]
             test_http_async: Mutex::new(None),
+            #[cfg(feature = "account-fixture")]
+            fixture_port: _fixture_port,
             storage: Mutex::new(values),
             persistence,
             canceled: CancellationToken::new(),
@@ -93,10 +119,7 @@ impl Environment {
             runtime: runtime.clone(),
             sequential,
             clock,
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
+            client: client.build()
                 .map_err(|_| EnvError::Fetch("HTTP client unavailable".into()))?,
         });
         let weak = Arc::downgrade(&env);
@@ -258,6 +281,11 @@ impl Env for NativeEnv {
                 return decode(&http(&parts, &body)?);
             }
             let uri = parts.uri.to_string();
+            #[cfg(feature = "account-fixture")]
+            let uri = match env.fixture_port {
+                Some(port) => fixture_uri(&parts.uri, port)?,
+                None => uri,
+            };
             if !matches!(parts.uri.scheme_str(), Some("http" | "https")) {
                 return Err(EnvError::Fetch("Unsupported URL scheme".into()));
             }
@@ -503,5 +531,33 @@ mod storage_batch_tests {
         env.shutdown().await;
         drop(env);
         std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+/// Fixture sessions cannot fall through to the public Internet. Only the pinned
+/// account API origin is mapped, retaining the actual path/query and HTTP body.
+#[cfg(feature = "account-fixture")]
+fn fixture_uri(uri: &http::Uri, port: u16) -> Result<String, EnvError> {
+    if uri.scheme_str() != Some("https")
+        || uri.authority().map(|value| value.as_str()) != Some("api.strem.io")
+    {
+        return Err(EnvError::Fetch("Fixture destination rejected".into()));
+    }
+    Ok(format!("http://127.0.0.1:{port}{}", uri.path_and_query().map(|value| value.as_str()).unwrap_or("/")))
+}
+
+#[cfg(all(test, feature = "account-fixture"))]
+mod fixture_tests {
+    use super::*;
+    #[test]
+    fn fixture_mapping_rejects_other_origins_and_preserves_request_target() {
+        assert_eq!(fixture_uri(&"https://api.strem.io/api/login?fixture=1".parse().unwrap(), 12345).unwrap(),
+            "http://127.0.0.1:12345/api/login?fixture=1");
+        for uri in ["http://api.strem.io/api/login", "https://api.strem.io.evil.test/api/login",
+            "https://user@api.strem.io/api/login", "https://api.strem.io:444/api/login",
+            "https://example.test/manifest.json", "http://127.0.0.1:12345/api/login"] {
+            assert!(fixture_uri(&uri.parse().unwrap(), 12345).is_err());
+        }
+        assert!(Environment::account_fixture(0).is_err());
     }
 }

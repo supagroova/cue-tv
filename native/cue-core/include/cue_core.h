@@ -19,6 +19,11 @@ uint64_t cue_core_create_persistent(const uint8_t *path, size_t path_length, con
 // Same directory/key contract; requires an empty dedicated account store.
 // Guest and restored sessions do not admit login. Nonempty storage fails startup.
 uint64_t cue_core_create_account(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length);
+// Test-only symbol, linked only with the account-fixture Cargo feature.
+// Creates an empty encrypted synthetic-account session routing API requests to
+// 127.0.0.1:port, rejecting every other destination; never use real credentials.
+// The feature is forbidden in physical tvOS builds. Port zero is rejected.
+uint64_t cue_core_create_account_fixture(const uint8_t *path, size_t path_length, const uint8_t *key, size_t key_length, uint16_t port);
 // Copies UTF-8 credentials, email 1..512 bytes, password 1..4096 bytes.
 // No control characters in email, no NUL in password. Never log these inputs.
 // Same admission result codes as dispatch; watch model.authenticated/model.error.

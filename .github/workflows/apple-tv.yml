@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .agent-work
-          cargo +1.100.0 test --locked --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
+          cargo +1.100.0 test --locked --features account-fixture --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
           cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
       - name: Build unsigned Apple TV app and native device libraries
         shell: bash

@@ -102,6 +102,8 @@ pub extern "C" fn cue_core_create() -> u64 {
 enum Startup {
     Guest,
     NewAccount,
+    #[cfg(feature = "account-fixture")]
+    FixtureNewAccount(u16),
     Restore(String),
 }
 struct Persistence {
@@ -131,6 +133,17 @@ pub unsafe extern "C" fn cue_core_create_account(
     key_length: usize,
 ) -> u64 {
     unsafe { persistent(path, path_length, key, key_length, Startup::NewAccount) }
+}
+/// Synthetic-account test entry point; absent from normal/device builds.
+/// # Safety
+/// Same copied directory/key contract as cue_core_create_account.
+#[cfg(feature = "account-fixture")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cue_core_create_account_fixture(
+    path: *const u8, path_length: usize, key: *const u8, key_length: usize, port: u16,
+) -> u64 {
+    if port == 0 { return 0; }
+    unsafe { persistent(path, path_length, key, key_length, Startup::FixtureNewAccount(port)) }
 }
 /// Restore an identity selected by protected app storage. All inputs are copied.
 /// # Safety
@@ -256,7 +269,16 @@ async fn own(
         .map(|config| config.startup.clone())
         .unwrap_or(Startup::Guest);
     let environment = match persistence {
-        Some(config) => Environment::persistent(&config.directory, &config.key),
+        Some(config) => {
+            #[cfg(feature = "account-fixture")]
+            if let Startup::FixtureNewAccount(port) = &config.startup {
+                Environment::persistent_account_fixture(&config.directory, &config.key, *port)
+            } else {
+                Environment::persistent(&config.directory, &config.key)
+            }
+            #[cfg(not(feature = "account-fixture"))]
+            Environment::persistent(&config.directory, &config.key)
+        },
         None => Environment::new(),
     };
     let env = match environment {
@@ -271,6 +293,8 @@ async fn own(
         match startup {
             Startup::Restore(user) => CoreSession::restore_account(env.clone(), &user).await,
             Startup::NewAccount => CoreSession::new_account(env.clone()).await,
+            #[cfg(feature = "account-fixture")]
+            Startup::FixtureNewAccount(_) => CoreSession::new_account(env.clone()).await,
             Startup::Guest => CoreSession::guest(env.clone()).await,
         }
     })

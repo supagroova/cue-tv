@@ -176,7 +176,21 @@ actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
         case requestFailed(String), refreshCleanupRequired(UInt64) }
     private let persistence: CorePersistenceConfiguration?
-    enum Startup: Sendable { case guest, newAccount, restoreAccount(String) }
+    enum Startup: Sendable {
+        case guest, newAccount, restoreAccount(String)
+        #if DEBUG && targetEnvironment(simulator)
+        case fixtureAccount(UInt16)
+        #endif
+        var allowsLogin: Bool {
+            switch self {
+            case .newAccount: true
+            #if DEBUG && targetEnvironment(simulator)
+            case .fixtureAccount: true
+            #endif
+            default: false
+            }
+        }
+    }
     private let startup: Startup
     private var refreshAdmissionInProgress = false
     /// Account restoration requires an identity from protected app storage.
@@ -202,7 +216,7 @@ actor NativeCoreService: CoreService {
         guard !retiringAccount else { throw Failure.stopped }
         guard retirement == nil else { throw Failure.busy }
         guard handle == nil else { return }
-        if case .newAccount = startup, persistence == nil { throw Failure.invalidRequest }
+        if startup.allowsLogin, persistence == nil { throw Failure.invalidRequest }
         if case .restoreAccount(let expectedUser) = startup {
             guard persistence != nil, !expectedUser.isEmpty, expectedUser.utf8.count <= 512,
                   !expectedUser.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
@@ -214,6 +228,12 @@ actor NativeCoreService: CoreService {
             let path = Data(persistence.directory.path.utf8)
             created = path.withUnsafeBytes { pathBytes in
                 persistence.key.withUnsafeBytes { keyBytes in
+                    #if DEBUG && targetEnvironment(simulator)
+                    if case .fixtureAccount(let port) = startup {
+                        return cue_core_create_account_fixture(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
+                            keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count, port)
+                    }
+                    #endif
                     if case .newAccount = startup {
                         return cue_core_create_account(pathBytes.bindMemory(to: UInt8.self).baseAddress, pathBytes.count,
                             keyBytes.bindMemory(to: UInt8.self).baseAddress, keyBytes.count)
@@ -249,7 +269,7 @@ actor NativeCoreService: CoreService {
 
     /// Returns after queue admission; callers observe authenticated state/error separately.
     func login(email: String, password: String) throws {
-        guard case .newAccount = startup else { throw Failure.invalidRequest }
+        guard startup.allowsLogin else { throw Failure.invalidRequest }
         try admitCredentials(email: email, password: password, refresh: false)
     }
 
