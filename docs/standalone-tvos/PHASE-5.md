@@ -35,6 +35,12 @@ reauthentication cancellation receipts, including blocked resubmission, retained
 encrypted pending state and successful same-account recovery. This injects receipt
 loss at the CoreService boundary; actual native queue/timeout faults remain unqualified.
 
+Unreadable account-selection records now expose an explicit, confirmed reset. It
+removes only the invalid selection, retaining account files and keys; a valid
+replacement selection blocks the reset. Signing in again does not recover retained
+unsynced data. The model/storage path is simulator-tested; the new confirmation
+dialog still needs remote-navigation and visual qualification.
+
 Remaining work includes live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
