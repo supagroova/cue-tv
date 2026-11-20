@@ -57,6 +57,20 @@ pub(crate) fn write_with_journal(
     Ok(NativeEnv::set_storage_batch(values))
 }
 
+/// Persist an exact-revision acknowledgement with the current library. Callers
+/// retain their admitted journal until this succeeds; a failed save is retryable.
+pub(crate) async fn acknowledge(
+    library: &LibraryBucket,
+    journal: &crate::sync_journal::Journal,
+    upload: &crate::sync_journal::Upload,
+) -> Result<crate::sync_journal::Journal, EnvError> {
+    let next = upload
+        .acknowledge(journal)
+        .map_err(|_| EnvError::StorageUnavailable)?;
+    write_with_journal(library, &next)?.await?;
+    Ok(next)
+}
+
 /// Run on the sequential storage queue, after preceding writes. Never build an
 /// outbound request from session state whose checkpoint may still fail.
 pub(crate) async fn committed_upload(
@@ -118,6 +132,65 @@ mod journal_tests {
         }))
         .unwrap();
         LibraryBucket::new(Some("owner-a".parse().unwrap()), vec![item])
+    }
+
+    #[tokio::test]
+    async fn failed_ack_save_keeps_pending_revision_and_retry_clears_it_durably() {
+        let directory = std::env::temp_dir().join(format!(
+            "cue-ack-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let unavailable = directory.with_extension("unavailable");
+        let env = Environment::persistent(&directory, &[8; 32]).unwrap();
+        env.scope(async {
+            let journal = Journal::new("owner-a")
+                .unwrap()
+                .with_intent("owner-a", "movie", "title")
+                .unwrap();
+            write_with_journal(&library(100), &journal)
+                .unwrap()
+                .await
+                .unwrap();
+            let upload = committed_upload("owner-a").await.unwrap().unwrap();
+            std::fs::rename(&directory, &unavailable).unwrap();
+            assert!(acknowledge(&library(100), &journal, &upload).await.is_err());
+            assert_eq!(
+                NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .revision("title"),
+                Some(1)
+            );
+            assert_eq!(journal.revision("title"), Some(1));
+            std::fs::rename(&unavailable, &directory).unwrap();
+            let cleared = acknowledge(&library(100), &journal, &upload).await.unwrap();
+            assert_eq!(cleared.revision("title"), None);
+        })
+        .await;
+        env.shutdown().await;
+        drop(env);
+        let reopened = Environment::persistent(&directory, &[8; 32]).unwrap();
+        reopened
+            .scope(async {
+                assert!(committed_upload("owner-a").await.unwrap().is_none());
+                assert_eq!(
+                    NativeEnv::get_storage::<LibraryBucket>(LIBRARY_RECENT_STORAGE_KEY)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .items["title"]
+                        .state
+                        .time_offset,
+                    100
+                );
+            })
+            .await;
+        reopened.shutdown().await;
+        drop(reopened);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
