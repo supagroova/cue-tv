@@ -1,0 +1,58 @@
+{
+  "permission": "Synthetic colors and generated sine audio created for this project; no third-party media.",
+  "generator": "scripts/fixtures/generate.py",
+  "ffmpeg": "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers",
+  "torrents": [
+    {
+      "file": "single.torrent",
+      "infoHash": "1be994f3f99cc80c9c2830b113432065d1551e9d",
+      "files": [
+        {
+          "index": 0,
+          "path": "episode01.mp4",
+          "bytes": 175917,
+          "sha256": "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb"
+        }
+      ],
+      "discovery": "No tracker or web seed embedded. Controlled seeder/trackers must be configured during engine tests."
+    },
+    {
+      "file": "multi-episode.torrent",
+      "infoHash": "66848a1f4b3f287a33b10509f20da4a086a7910d",
+      "files": [
+        {
+          "index": 0,
+          "path": "episode01.mp4",
+          "bytes": 175917,
+          "sha256": "426fc0fa1fc53b758d296cef543ecb9a05326a577e5c6c1fb837b12ad038d3fb"
+        },
+        {
+          "index": 1,
+          "path": "episode02.mp4",
+          "bytes": 175924,
+          "sha256": "f631461d61adde69f59ed6961a45bc1812b1dee0920497db67871a48a1652388"
+        },
+        {
+          "index": 2,
+          "path": "tail-index.mp4",
+          "bytes": 175920,
+          "sha256": "cd1bb60c5f2150fc19bcefc2682faf932e8826fb0e2eac7cf06daf1d605dad46"
+        }
+      ],
+      "discovery": "No tracker or web seed embedded. Controlled seeder/trackers must be configured during engine tests."
+    },
+    {
+      "file": "tail-index.torrent",
+      "infoHash": "bcd64d7032c421690a1be223450ae4471b6e76b9",
+      "files": [
+        {
+          "index": 0,
+          "path": "tail-index.mp4",
+          "bytes": 175920,
+          "sha256": "cd1bb60c5f2150fc19bcefc2682faf932e8826fb0e2eac7cf06daf1d605dad46"
+        }
+      ],
+      "discovery": "No tracker or web seed embedded. Controlled seeder/trackers must be configured during engine tests."
+    }
+  ]
+}
