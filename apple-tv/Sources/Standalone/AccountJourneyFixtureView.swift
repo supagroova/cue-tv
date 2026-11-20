@@ -3,13 +3,20 @@ import SwiftUI
 
 /// Creates a real paused synthetic account; all subsequent controls are production UI.
 struct AccountJourneyFixtureView: View {
+    private struct Configuration { let root: URL; let selection: CoreAccountSelection }
+    @State private var configuration: Configuration?
+    @State private var leftovers = false
     @State private var model: StandaloneModel?
     @State private var failed = false
     @State private var cleared = false
     var body: some View {
         Group {
-            if cleared { Text("Account journey storage cleared") }
-            else if let model { StandaloneHome(model: model) }
+            if cleared { Text(leftovers ? "Account journey cleared leftover data" : "Account journey storage cleared") }
+            else if let model, let configuration {
+                StandaloneHome(model: model, makeSignIn: {
+                    AccountSignInModel(root: configuration.root, selection: configuration.selection, transport: .fixture(42429))
+                })
+            }
             else if failed { Text("Account journey fixture could not start") }
             else { ProgressView("Preparing synthetic account…") }
         }
@@ -23,12 +30,30 @@ struct AccountJourneyFixtureView: View {
                 }
                 let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("CueAccountJourneyTests", isDirectory: true)
+                    .appendingPathComponent(namespace.uuidString.lowercased(), isDirectory: true)
                 let storage = CoreStorage.account(id: namespace, root: root)
                 let selection = CoreAccountSelection(keyAccount: "account-journey-" + namespace.uuidString.lowercased())
                 if environment["CUE_ACCOUNT_JOURNEY_CLEAR"] == "1" {
-                    try await selection.clear(ifMatching: namespace)
-                    try await storage.removeUnopenedAccount()
+                    let selected = try await selection.load()
+                    let entries = FileManager.default.fileExists(atPath: root.path)
+                        ? try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) : []
+                    guard entries.allSatisfy({ UUID(uuidString: $0.lastPathComponent) != nil }) else {
+                        throw CoreStorage.Failure.unsafeDirectory
+                    }
+                    leftovers = environment["CUE_ACCOUNT_JOURNEY_EXPECT_EMPTY"] == "1" && (selected != nil || !entries.isEmpty)
+                    if let selected { try await selection.clear(ifMatching: selected.namespace) }
+                    for entry in entries {
+                        guard let id = UUID(uuidString: entry.lastPathComponent) else { throw CoreStorage.Failure.unsafeDirectory }
+                        try await CoreStorage.account(id: id, root: root).removeUnopenedAccount()
+                    }
+                    if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) }
                     cleared = true
+                    return
+                }
+                configuration = Configuration(root: root, selection: selection)
+                if environment["CUE_ACCOUNT_JOURNEY_FIRST_SIGN_IN"] == "1" {
+                    guard try await selection.load() == nil else { throw CoreAccountSelection.Failure.alreadySelected }
+                    model = StandaloneModel(service: NativeCoreService(), accountSelection: selection, accountRoot: root)
                     return
                 }
                 let service = NativeCoreService(persistence: try await storage.prepare(), startup: .fixtureAccount(42429))

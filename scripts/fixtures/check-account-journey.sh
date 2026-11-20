@@ -27,7 +27,7 @@ import json
 from urllib.request import urlopen
 with urlopen('http://127.0.0.1:42429/probe', timeout=2) as response:
     observed = json.load(response)
-expected = dict(accepted_logins=2, rejected_logins=1, accepted_uploads=1, rejected_uploads=1)
+expected = dict(accepted_logins=3, rejected_logins=2, accepted_uploads=1, rejected_uploads=1)
 assert observed == expected, (observed, expected)
-print('Verified rejected password, credential refresh and pending-library upload over real HTTP.')
+print('Verified first sign-in, rejected passwords, credential refresh and pending-library upload over real HTTP.')
 PY

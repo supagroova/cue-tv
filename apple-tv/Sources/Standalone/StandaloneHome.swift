@@ -3,12 +3,17 @@ import SwiftUI
 struct StandaloneHome: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: StandaloneModel
-    init(model: StandaloneModel = StandaloneModel()) { _model = State(initialValue: model) }
+    private let makeSignIn: @MainActor () -> AccountSignInModel
+    init(model: StandaloneModel = StandaloneModel(), makeSignIn: @escaping @MainActor () -> AccountSignInModel = { AccountSignInModel() }) {
+        _model = State(initialValue: model)
+        _signIn = State(initialValue: makeSignIn())
+        self.makeSignIn = makeSignIn
+    }
     @State private var screen = Screen.catalogs
     @State private var manifest = ""
     @State private var search = ""
     @State private var restart = UUID()
-    @State private var signIn = AccountSignInModel()
+    @State private var signIn: AccountSignInModel
     @State private var showSignIn = false
     @State private var refreshAccount: AccountReauthenticationModel?
     @State private var preparingAccount = false
@@ -61,7 +66,7 @@ struct StandaloneHome: View {
                             guard await signIn.cancel() else { accountError = signIn.error; return }
                             do {
                                 try await model.replace(with: nil)
-                                signIn = AccountSignInModel()
+                                signIn = makeSignIn()
                                 showSignIn = true
                             } catch { accountError = "The current session could not stop. Please try again." }
                         }

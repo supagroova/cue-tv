@@ -11,23 +11,27 @@ The contract is [decision 003](decisions/003-resume-library-sync.md); the full e
 gates remain in [stage 5 of the plan](IMPLEMENTATION-PLAN.md#stage-5--resume-library-and-recovery).
 Branch: `codex/tvos-phase-5`, stacked on `codex/tvos-phase-4`.
 
-Current evidence includes 77 simulator tests (`b9a15dd15b4343fa8abd2df76d4de9ab`),
-Core tests (`5d2c878e68884d04b59fb255bfa42288`), unsigned device compilation
-(`7bc851debe4c44dbba3e4c0502ad316e`), and the selected-episode playback journey
-(`5e643ddaeb374ea68709dde0e0375859`). These task records live locally under
-`.agent-work/tasks/phase-5-library/`; they are not committed evidence artifacts.
-The committed [resume-cycle report](evidence/resume-cycles-2026-11-18.json)
-records the graceful relaunch experiment. Latest code checkpoint: `71af98f`.
-CI for that checkpoint is still running at this documentation update.
+Current simulator evidence includes 81 unit/native tests plus 12 short UI tests
+(`abe31d8c80c141d3902b1741dd67084e`), two opt-in account UI journeys
+(`0a22a1b23881460880561bc6209fecdc`), and unsigned device compilation
+(`7a55ec9fb52f40fb8d6b859e5e16a0d2`). Native Core+fixture tests passed
+`1f2c3c0a56434d2f95ad6196bf11c476`; no native implementation changed since.
+These task records live locally under `.agent-work/tasks/phase-5-library/`;
+they are not committed evidence artifacts. The committed
+[resume-cycle report](evidence/resume-cycles-2026-11-18.json) records the graceful
+relaunch experiment. All six remote checks passed at checkpoint `e96a5f7`;
+that result precedes the latest first-sign-in UI additions.
 
-Synthetic-account form-model tests now cover same-account refresh after HTTP401,
-wrong-account rejection, encrypted-save failure and held-login cancellation, each
-with safe retry. The cancellation receipt now follows publication of its settled
-snapshot, fixing immediate retry against a stale active flag. These tests exercise
-real HTTP, FFI and storage, but do not establish the full SwiftUI journey.
+Synthetic-account tests cover same-account refresh after HTTP401, wrong-account
+rejection, encrypted-save failure and held-login cancellation, each with safe retry.
+The cancellation receipt follows publication of its settled snapshot, fixing
+immediate retry against a stale active flag. Remote-driven simulator UI now also
+qualifies first sign-in, rejected-password retry, account adoption/catalog browsing,
+reauthentication with retained library content, and sign-out. These exercise real
+HTTP, FFI and storage against an isolated synthetic service, not live Stremio.
 
 Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
-first-sign-in UI and live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
+live-service qualification, ambiguous operation timeout reconciliation, full failed-save UI and abrupt interruption
 coverage, physical cache-purge recovery, and broader console privacy qualification.
 Simulator composites now qualify pending-journal sign-out with held HTTP and failed
 filesystem cleanup/retry, plus repeated peer transfer after disposable-cache deletion
@@ -51,20 +55,22 @@ bash scripts/fixtures/check-account-journey.sh \
 ```
 
 The runner owns a loopback server on port 42429 and stops it on exit. It waits for
-that process's readiness log before launching Xcode. The simulator-only debug view
-creates an isolated synthetic account and a real rejected pending library upload.
-The UI test then uses remote focus and text entry to reject a password, retry with
-replacement credentials, browse the retained library title, and sign out. It also
-checks that the password is cleared after rejection. The server independently
-asserts two accepted logins, one rejected login, one rejected upload and one
-accepted upload. No live account service or credentials are used.
+that process's readiness log before launching Xcode. Two remote-driven UI tests
+use isolated synthetic accounts: Guest → rejected password → successful first
+sign-in → catalog browsing → sign-out; and rejected pending library upload →
+rejected refresh password → successful refresh → retained library → sign-out.
+Both check that rejection clears the password. The server independently asserts
+three accepted logins, two rejected logins, one rejected upload and one accepted
+upload. No live account service or credentials are used.
 
-The test cleans its opaque storage namespace/Keychain selection in a separate
-launch even after assertion failures. The test view and startup flag are absent
-from physical-device builds. This journey stays outside routine CI and does not
-prove first sign-in UI, live-service compatibility, or physical remote behavior.
-The captured recovered-library screenshot was visually reviewed for readable
-content and focus. Exact local result and screenshot paths are in the handoff.
+XCTest teardown cleans each opaque storage namespace/Keychain selection in a
+separate launch, including after fatal UI-query failures. Successful journeys also
+require no leftover selection or account directories before cleanup, so cleanup
+cannot conceal failed sign-out. Test views and fixture transports are absent from
+physical-device builds. These journeys stay outside routine CI and do not prove
+live-service compatibility or physical remote behavior. Captured catalog/library
+screenshots were visually reviewed for readable content and focus; local paths
+and exact results are in the handoff.
 
 ## Native membership slice
 

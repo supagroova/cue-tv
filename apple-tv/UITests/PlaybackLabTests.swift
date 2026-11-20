@@ -25,9 +25,9 @@ nonisolated final class PlaybackLabTests: XCTestCase {
         for _ in 0..<8 where !signIn.hasFocus { XCUIRemote.shared.press(.up) }
         XCTAssertTrue(signIn.hasFocus)
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(app.secureTextFields["Password"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.textFields["Email"].exists)
-        XCTAssertFalse(app.buttons["Sign in"].isEnabled)
+        XCTAssertTrue(app.secureTextFields["account-signin-password"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["account-signin-email"].exists)
+        XCTAssertFalse(app.buttons["account-signin-submit"].isEnabled)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Stremio sign-in form"
         screenshot.lifetime = .keepAlways
