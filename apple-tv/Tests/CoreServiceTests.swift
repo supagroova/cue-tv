@@ -7,9 +7,10 @@ import Security
 @Suite struct CoreServiceTests {
 @Test func accountSyncStatusDecodesNativeWireStates() throws {
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
-    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required"}"#.utf8))
+    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required","reauthenticating":true}"#.utf8))
     #expect(rejected.state == .reauthenticationRequired)
     #expect(rejected.pendingTitles == 2)
+    #expect(rejected.reauthenticating == true)
     let waiting = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":1,"state":"waiting"}"#.utf8))
     #expect(waiting.state == .waiting)
 }

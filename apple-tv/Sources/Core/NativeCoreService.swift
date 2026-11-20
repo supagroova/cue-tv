@@ -28,6 +28,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
             case reauthenticationRequired = "reauthentication_required"
         }
         let pendingTitles: Int
+        let reauthenticating: Bool?
         let state: State
     }
     struct Model: Decodable, Sendable {

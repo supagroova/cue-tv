@@ -82,7 +82,7 @@ struct StandaloneHome: View {
                                 .disabled(model.retryingSync || model.signingOut)
                         }.focusSection()
                     case .reauthenticationRequired:
-                        Text("Stremio rejected this account session. Sync is paused; pending changes are retained.")
+                        Text(sync.reauthenticating == true ? "Signing in to Stremio…" : "Stremio rejected this account session. Sync is paused; pending changes are retained.")
                             .foregroundStyle(.orange)
                     }
                 }

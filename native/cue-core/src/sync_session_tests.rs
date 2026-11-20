@@ -755,3 +755,88 @@ async fn same_account_reauthentication_resumes_pending_upload_but_foreign_login_
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[tokio::test]
+async fn retiring_account_cancels_held_reauthentication_and_hides_progress() {
+    use futures::FutureExt;
+    for stop_owner in [false, true] {
+        let env = stored_pending().await;
+        let started = Arc::new(tokio::sync::Notify::new());
+        let cancelled = Arc::new(tokio::sync::Notify::new());
+        let (start, cancel) = (started.clone(), cancelled.clone());
+        *env.test_http_async.lock().unwrap() = Some(Arc::new(move |parts, _| {
+            if parts.uri.path().ends_with("/login") {
+                let (start, cancel) = (start.clone(), cancel.clone());
+                async move {
+                    let _drop = NotifyOnDrop(cancel);
+                    start.notify_one();
+                    futures::future::pending().await
+                }
+                .boxed()
+            } else if parts.uri.path().ends_with("/datastorePut") {
+                async { Ok(br#"{"error":{"code":1,"message":"expired fixture"}}"#.to_vec()) }
+                    .boxed()
+            } else {
+                assert!(parts.uri.path().ends_with("/logout"));
+                async { Ok(br#"{"result":{"success":true}}"#.to_vec()) }.boxed()
+            }
+        }));
+        let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+            .await
+            .unwrap();
+        for _ in 0..200 {
+            if session
+                .snapshot()
+                .sync
+                .as_ref()
+                .is_some_and(|sync| sync.state == "reauthentication_required")
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        session
+            .reauthenticate("fixture@example.test", "fixture-password")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), started.notified())
+            .await
+            .unwrap();
+        assert!(session.snapshot().sync.as_ref().unwrap().reauthenticating);
+        session.set_interface_language("fra").await.unwrap();
+        assert!(session.snapshot().sync.as_ref().unwrap().reauthenticating);
+        assert_eq!(
+            session
+                .reauthenticate("fixture@example.test", "fixture-password")
+                .await,
+            Err("account_busy")
+        );
+        if stop_owner {
+            session.stop().await;
+        } else {
+            session.logout().await.unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(3), cancelled.notified())
+            .await
+            .unwrap();
+        for _ in 0..200 {
+            if session.account_identity().is_none() && session.snapshot().pending_effects == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(session.account_identity().is_none());
+        assert!(session.snapshot().sync.is_none());
+        if !stop_owner {
+            env.scope(async {
+                let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(journal.revision("title"), Some(1));
+            })
+            .await;
+            session.stop().await;
+        }
+    }
+}

@@ -49,6 +49,7 @@ pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static st
 }
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct SyncSnapshot {
+    pub reauthenticating: bool,
     pub pending_titles: usize,
     pub state: &'static str,
 }
@@ -258,6 +259,7 @@ impl CoreSession {
             &ctx,
             journal.as_ref(),
             &crate::sync_scheduler::Scheduler::default(),
+            false,
         );
         let (identity_publish, identity) = watch::channel(account_identity(&ctx));
         let (publish, state) = watch::channel(initial);
@@ -798,6 +800,7 @@ fn sync_view(
     ctx: &Ctx,
     journal: Option<&crate::sync_journal::Journal>,
     scheduler: &crate::sync_scheduler::Scheduler,
+    reauthenticating: bool,
 ) -> Option<SyncSnapshot> {
     ctx.profile.auth.as_ref()?;
     let pending_titles = journal.map_or(0, |journal| journal.pending_count());
@@ -811,6 +814,7 @@ fn sync_view(
         "idle"
     };
     Some(SyncSnapshot {
+        reauthenticating,
         pending_titles,
         state,
     })
@@ -820,12 +824,13 @@ fn publish_state(
     ctx: &Ctx,
     journal: Option<&crate::sync_journal::Journal>,
     scheduler: &crate::sync_scheduler::Scheduler,
+    reauthenticating: bool,
     mut state: Snapshot,
 ) {
     state.sync = if state.stopped {
         None
     } else {
-        sync_view(ctx, journal, scheduler)
+        sync_view(ctx, journal, scheduler, reauthenticating)
     };
     publish.send_replace(state);
 }
@@ -968,7 +973,12 @@ async fn run(
                 }
             }
         }
-        let sync = sync_view(&ctx, journal.as_ref(), &sync_scheduler);
+        let sync = sync_view(
+            &ctx,
+            journal.as_ref(),
+            &sync_scheduler,
+            reauth_active.is_some(),
+        );
         publish.send_if_modified(|state| {
             if state.sync != sync {
                 state.sync = sync;
@@ -1478,6 +1488,7 @@ async fn run(
                         &ctx,
                         journal.as_ref(),
                         &sync_scheduler,
+                        reauth_active.is_some(),
                         snapshot(
                             &ctx,
                             &addon,
@@ -1517,6 +1528,7 @@ async fn run(
                     &ctx,
                     journal.as_ref(),
                     &sync_scheduler,
+                    reauth_active.is_some(),
                     snapshot(
                         &ctx,
                         &addon,
@@ -1559,6 +1571,7 @@ async fn run(
                     &ctx,
                     journal.as_ref(),
                     &sync_scheduler,
+                    reauth_active.is_some(),
                     snapshot(
                         &ctx,
                         &addon,
@@ -1834,6 +1847,7 @@ async fn run(
                     &ctx,
                     journal.as_ref(),
                     &sync_scheduler,
+                    reauth_active.is_some(),
                     snapshot(
                         &ctx,
                         &addon,
@@ -1873,6 +1887,7 @@ async fn run(
                     &ctx,
                     journal.as_ref(),
                     &sync_scheduler,
+                    reauth_active.is_some(),
                     snapshot(
                         &ctx,
                         &addon,
@@ -1913,6 +1928,7 @@ async fn run(
                     &ctx,
                     journal.as_ref(),
                     &sync_scheduler,
+                    reauth_active.is_some(),
                     snapshot(
                         &ctx,
                         &addon,
@@ -2132,6 +2148,7 @@ async fn run(
             &ctx,
             journal.as_ref(),
             &sync_scheduler,
+            reauth_active.is_some(),
             snapshot(
                 &ctx,
                 &addon,
@@ -2166,6 +2183,7 @@ async fn run(
         &ctx,
         journal.as_ref(),
         &sync_scheduler,
+        reauth_active.is_some(),
         snapshot(
             &ctx,
             &addon,
