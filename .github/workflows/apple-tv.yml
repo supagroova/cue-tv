@@ -63,7 +63,11 @@ jobs:
           assert ats.get('NSAllowsLocalNetworking') is True
           assert set(ats) == {'NSAllowsLocalNetworking'}, 'Unexpected Release ATS exception'
           assert (bundle / info['CFBundleExecutable']).is_file()
-          print('Verified unsigned Release bundle and local-only ATS exception')
+          fixture_names = {p.name for root in ('apple-tv/Resources/PlaybackLab', 'fixtures/torrents')
+                           for p in Path(root).iterdir() if p.is_file()}
+          leaked = sorted(p.name for p in bundle.iterdir() if p.name in fixture_names)
+          assert not leaked, f'Debug fixtures in Release bundle: {leaked}'
+          print('Verified unsigned Release bundle, ATS and absence of debug fixture resources')
           PYCODE
       - name: Upload native and device results
         if: always()

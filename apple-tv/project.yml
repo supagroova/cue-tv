@@ -50,6 +50,28 @@ targets:
         OTHER_LDFLAGS[sdk=appletvos*]: $(inherited) $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos/debug/libcue_torrent.a $(SRCROOT)/../.agent-work/native-target/aarch64-apple-tvos/debug/libcue_core.a
         PRODUCT_BUNDLE_IDENTIFIER: com.rupertlaycock.couchtv.appletv
         ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
+      configs:
+        Release:
+          # Debug-only fixture resources. CI audits the actual Release bundle.
+          EXCLUDED_SOURCE_FILE_NAMES:
+            - "$(inherited)"
+            - episode01.mkv
+            - episode01.mp4
+            - episode02.mp4
+            - hevc-mkv.torrent
+            - hevc-mp4.torrent
+            - hevc-tracks-manifest.json
+            - hevc-tracks.mkv
+            - hevc-tracks.mp4
+            - manifest.json
+            - mkv-manifest.json
+            - mkv.torrent
+            - multi-episode.torrent
+            - playback-fixtures.json
+            - single.torrent
+            - streaming-matrix-manifest.json
+            - tail-index.mp4
+            - tail-index.torrent
     info:
       path: Info.plist
       properties:

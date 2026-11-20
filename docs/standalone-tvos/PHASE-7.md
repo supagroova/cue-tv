@@ -35,6 +35,12 @@ unsigned output as an installable personal-release package.
 Keep signing secrets, personal settings, provisioning profiles and private account
 information outside Git and shared reports.
 
+Release configuration excludes the 17 current Playback Lab media/torrent/manifest
+resources. CI inspects the packaged app and fails if any fixture resource leaks
+back in; Debug retains them for its existing playback tests. The configuration
+uses Apple's [excluded-source build setting](https://developer.apple.com/documentation/xcode/build-settings-reference).
+This packaging check does not qualify the remaining binary notices or device runtime.
+
 ## First installation and upgrade protocol
 
 1. Complete the phase 6 release audit and select a fully reviewed commit. Record
