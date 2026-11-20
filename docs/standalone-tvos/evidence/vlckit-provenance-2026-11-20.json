@@ -1,0 +1,33 @@
+{
+  "scope": "Unsigned candidate release-candidate-001; provenance evidence, not complete source/license qualification",
+  "wrapper_revision": "3d0f0fa7031eab1a67c817c98a495e1c68fc998c",
+  "binary_archive": {
+    "url": "https://download.videolan.org/cocoapods/unstable/VLCKit-4.0-20261109-1916.zip",
+    "declared_sha256": "1fec7232f88e706f44d9a015133e08d742166eb2666cb44915c9f570bf339463"
+  },
+  "packaged_tvos_framework_sha256": "f3b717c5b6889f5beefec7bcec207a4bcc5d08fea0cd0ddb54e3152b3016c8c5",
+  "observed_libvlc_version_string": "4.0.0-dev-39728-gd107c01fbc",
+  "build_script_base_revision": "f7caf7922478f6cb7f1654b813d0c462d3e86f4a",
+  "build_script_sha256": "d225ded4195a4bb1910f1672d5959f14412556cdb6eecd5e04b704c9bc14eb0d",
+  "patches": {
+    "0001-Revert-contrib-live555-update-to-2022.07.14.patch": "d8c925fc1494fc93c4367c5eb67e3c8f7dc13aa7d460c5a81bb1663df41d51dc",
+    "0002-contrib-use-live555-version-that-is-compatible-with-.patch": "113fc4423e66a25874e29cf8222270826e440d2b1ccf67545bb30c6f6c74bdde",
+    "0003-modules-common-Use-the-full-module-name-as-MODULE_NA.patch": "2c17cad89e51f7f81498b3b8604ff44a5f9f24f486d74cb6da96f266051aed8b",
+    "0004-http-access-retain-auth-struct-for-the-runtime-of-th.patch": "0b1537ee586072ff982a1dbc8f30820ddba880beeb87a2bcf2f7f7fd4cd1971a",
+    "0005-access_output-file-Add-error-dialog-for-write-open.patch": "81aa7a359af4b467df9113026a81b18c60fefcee61ea344a14c964353600cb2f",
+    "0006-http-add-vlc_http_cookies_clear.patch": "e95daa014c5d4493f602bfafddea91d8fbc5ce4d281f60d194c72f3c2f3d8c93",
+    "0007-contrib-ffmpeg-use-audiotoolbox-on-iOS-for-AC-3.patch": "7ebb3e3ec3e03c8de65547d376c3d1651b47f1acdfb7c4871ecbed88b9345117",
+    "0008-Add-property-to-configure-an-http-access-token.patch": "b61bf5704d954c688c2f584eb3b3ca6a3ad0ecd1b90c58c5b18ca5bcd6e120c7",
+    "0009-contrib-ffmpeg-fix-cross-compilation-for-macOS-on-ma.patch": "9cbe5f82754dacf7528b06e8ddcae10dcface2e4cb6a977241f8111e65cfa598",
+    "0010-libvlc_media-add-cookie_jar-API.patch": "d7abdea572500fbadc59417791a429dcf3fde7fe8c4aa6cd0b06b9c05f3f626e",
+    "0011-extras-tools-prefer-shasum-over-sha512sum.patch": "195a5c2c92b8458d639fffc32e6e8fe0e7a6b2f59cf00c5935968c707b7adb54",
+    "0012-json-use-function-pointers-to-avoid-duplicate-symbol.patch": "a688da82a517fa3284de7dbc86d69353d54d0987db6b07cb3417ab9fdbe3e166"
+  },
+  "retained_wrapper_source_archive_sha256": "c3ecab951d796972427e9a60f7e4824ae6f032441f241d99782ecd871ab95f60",
+  "license_sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+  "unverified": [
+    "Published binary build flags and exact patched source identity",
+    "Complete bundled contrib component inventory and corresponding source/notices",
+    "Independent rebuild from retained materials"
+  ]
+}
