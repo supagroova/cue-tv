@@ -9,6 +9,9 @@ use stremio_core::{
     types::{library::LibraryBucket, profile::Profile},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test]
 async fn checkpoint_ack_requires_durable_write_and_retry_survives_reopen() {
@@ -24,9 +27,10 @@ async fn lost_checkpoint_and_close_acks_can_be_reconciled() {
 }
 async fn roundtrip(lose_receipts: bool) {
     let directory = std::env::temp_dir().join(format!(
-        "cue-checkpoint-{}-{}",
+        "cue-checkpoint-{}-{}-{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        chrono::Utc::now().timestamp_nanos_opt().unwrap(),
+        DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir(&directory).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
