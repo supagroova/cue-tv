@@ -527,6 +527,7 @@ recompiling seeder (71s) and torrent (26s). Next potential optimization: split C
 and torrent/seeder artifact caches with complete inputs. First measure Swift-only
 push reuse of existing bb38dc cache; no workflow change in this slice.
 
+CI component-cache follow-up: isolated `codex/apple-ci-component-cache` splits final Core artifacts from torrent/seeder artifacts, preserving full checks and independent source verification. All19 portable tests and workflow/shell lint pass; remote cold/full-hit/partial-hit validation remains required. See APPLE-CI.md.
 
 ### Phase 5 — playback waits for unadmitted private tickets
 

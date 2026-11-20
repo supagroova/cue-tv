@@ -10,17 +10,27 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = {
-    'libcue_core.a': 'aarch64-apple-tvos-sim/debug/libcue_core.a',
-    'libcue_torrent.a': 'aarch64-apple-tvos-sim/debug/libcue_torrent.a',
-    'seed': 'debug/examples/seed',
+    'core': {'libcue_core.a': 'aarch64-apple-tvos-sim/debug/libcue_core.a'},
+    'torrent': {
+        'libcue_torrent.a': 'aarch64-apple-tvos-sim/debug/libcue_torrent.a',
+        'seed': 'debug/examples/seed',
+    },
 }
+INPUTS = {
+    'core': ['native/cue-core', 'native/stremio-core', 'scripts/native/build-core.sh'],
+    'torrent': ['native/cue-torrent', 'scripts/native/build.sh'],
+}
+COMMON = ['scripts/native/artifact-cache.py', 'apple-tv/project.yml',
+          '.github/workflows/apple-tv.yml', '.github/actions/setup-apple/action.yml',
+          '.cargo', 'rust-toolchain.toml', 'rust-toolchain', 'Cargo.toml', 'Cargo.lock', 'native/.cargo', 'native/Cargo.toml', 'native/Cargo.lock']
 
-def fingerprint():
+def fingerprint(component):
+    inputs = INPUTS[component] + COMMON
     paths = subprocess.check_output(['git', 'ls-files', '--recurse-submodules', '-z', '--',
-        'native', 'scripts/native', 'apple-tv/project.yml', '.github/workflows/apple-tv.yml',
-        '.github/actions/setup-apple/action.yml'], cwd=ROOT).split(b'\0')
-    digest = hashlib.sha256(b'cue-sim-artifacts-v1-rust1.100.0-xcode26.6-arm64-dev-debug0-incremental0')
-    index = subprocess.check_output(['git', 'ls-files', '--stage', '-z', '--', 'native'], cwd=ROOT)
+        *inputs], cwd=ROOT).split(b'\0')
+    digest = hashlib.sha256(('cue-sim-components-v1-' + component +
+        '-rust1.100.0-xcode26.6-arm64-dev-debug0-incremental0').encode())
+    index = subprocess.check_output(['git', 'ls-files', '--stage', '-z', '--', *inputs], cwd=ROOT)
     for entry in index.split(b'\0'):
         if entry.startswith(b'160000 '):
             digest.update(entry + b'\0')
@@ -31,15 +41,16 @@ def fingerprint():
         digest.update(b'\0')
     return digest.hexdigest()
 
-def transfer(mode, key):
-    if key != fingerprint():
+def transfer(mode, component, key):
+    artifacts = ARTIFACTS[component]
+    if key != fingerprint(component):
         raise ValueError('Native artifact key does not match current sources')
-    cache = ROOT / '.agent-work/native-artifacts'
+    cache = ROOT / '.agent-work/native-artifacts' / component
     target = ROOT / '.agent-work/native-target'
     if mode == 'save':
         cache.mkdir(parents=True, exist_ok=True)
         manifest = {'key': key, 'files': {}}
-        for name, relative in ARTIFACTS.items():
+        for name, relative in artifacts.items():
             source = target / relative
             if not source.is_file() or source.stat().st_size == 0:
                 raise ValueError(f'Missing native artifact: {source}')
@@ -51,18 +62,19 @@ def transfer(mode, key):
         if manifest['key'] != key:
             raise ValueError('Cached native artifact source mismatch')
         # Validate the complete set before copying any artifact into build outputs.
-        for name in ARTIFACTS:
+        for name in artifacts:
             source = cache / name
             if not source.is_file() or source.stat().st_size == 0 or hashlib.sha256(source.read_bytes()).hexdigest() != manifest['files'][name]:
                 raise ValueError(f'Invalid native artifact: {name}')
-        for name, relative in ARTIFACTS.items():
+        for name, relative in artifacts.items():
             destination = target / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(cache / name, destination)
-        (target / ARTIFACTS['seed']).chmod(0o755)
+        if 'seed' in artifacts:
+            (target / artifacts['seed']).chmod(0o755)
 
 if __name__ == '__main__':
     if sys.argv[1] == 'key':
-        print(fingerprint())
+        print(fingerprint(sys.argv[2]))
     else:
-        transfer(sys.argv[1], sys.argv[2])
+        transfer(sys.argv[1], sys.argv[2], sys.argv[3])

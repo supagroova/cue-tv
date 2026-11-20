@@ -87,3 +87,13 @@ Local validation: all 15 portable tests pass, including existing artifact hit/mi
 ## Remove duplicate cross-platform builds
 
 The separate Build workflow previously ran twice for each feature-branch update with an open PR. For phase4 head `325a664`, push run `44146493809` used 4m33s and PR run `44146511806` used 5m54s; both executed the same Ubuntu build job. Restricting its push trigger to main preserves PR merge-context checks, merged-main checks and manual dispatch under the same job name while removing the redundant feature-push run. This reduces Ubuntu runner usage; it does not resolve macOS hosted-runner capacity shortages. The Companion Python peer setup and Android test/report steps remain unchanged.
+
+## Independent final native components
+
+The final simulator cache now has independent Core and torrent/seeder entries. Core includes `native/cue-core`, its Stremio submodule contents/revision and Core build script; torrent includes `native/cue-torrent` (including lockfile, vendor tree and seeder) and its build script. Both include the cache helper, shared Cargo configuration, project/workflow/setup configuration and pinned platform/toolchain/profile identity. No partial-key restore is allowed.
+
+Each hit verifies its own complete manifest before installation and enables only its corresponding prebuild bypass. Cargo setup remains enabled if either component misses. Hit artifacts install after dependency-cache restoration, preventing an older dependency cache from overwriting verified final outputs. Seeder compilation depends only on a torrent-cache miss. Both-hit runs retain the existing fast path; misses build normally. Every native, unit and short UI test and unsigned device build remains required; long playback remains manual-only.
+
+Evidence motivating this split: run44192724790 changed only Core inputs but rebuilt the seeder (71s Cargo time) and torrent simulator library (26s). The subsequent Swift-only run44195493403 reused all final artifacts and passed73 unit plus12 UI tests in6m55s simulator time versus9m56s. Component splitting should retain torrent/seeder reuse on Core-only changes, but remote partial-hit timing is not yet measured. New component keys require initial population.
+
+Portable verification covers exact restore, missing/corrupt entries, Core-only invalidation with a usable torrent hit, torrent lock/vendor invalidation without affecting Core, shared configuration invalidation, and independent Core restoration. All19 portable tests, actionlint and shell syntax pass. No local Xcode build was run for this CI change.
