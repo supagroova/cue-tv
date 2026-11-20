@@ -4,7 +4,7 @@ This is the standalone Apple TV development harness. Codex reads this file; Clau
 
 ## Product and current state
 
-Read [the PRD](docs/standalone-tvos/PRD.md) and the relevant stage of [the plan](docs/standalone-tvos/IMPLEMENTATION-PLAN.md). Direct torrents, personal sideloading and Stremio-only v1 are confirmed. A2737 / 64 GB / user-reported tvOS 27.2 is the target. Core, torrent engine and in-app player integration are planned, not implemented. A successful simulator run is not proof of physical torrent playback. Do not substitute debrid, Android, the Pi or an external player for the required architecture.
+Read [the PRD](docs/standalone-tvos/PRD.md) and the relevant stage of [the plan](docs/standalone-tvos/IMPLEMENTATION-PLAN.md). Direct torrents, personal sideloading and Stremio-only v1 are confirmed. A2737 / 64 GB / user-reported tvOS 27.2 is the target. Core and production playback integration remain planned. The debug Playback Lab demonstrates embedded torrent transfer from a controlled peer to AVPlayer in simulator; see PHASE-1.md for its limits. A successful simulator run is not proof of physical torrent playback. Do not substitute debrid, Android, the Pi or an external player for the required architecture.
 
 ## Start and resume
 
