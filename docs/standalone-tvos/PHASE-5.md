@@ -1,20 +1,36 @@
 # Phase 5 — resume, library and recovery
 
-Status: title-detail library membership works through Swift/FFI and Core, with
-encrypted-reopen and cancellation tests. Paged library browsing is connected to
-the UI; film and episode watched controls now use acknowledged Core saves.
-Playback checkpoints, sync and broader lifecycle work remain incomplete.
-Earlier phases retain their outstanding gates.
+Status as of 20 November 2026: implementation is in progress; this phase is not
+merge-ready. The standalone app has acknowledged library/watched saves, five-second
+playback checkpoints, Resume/Restart, an encrypted bounded sync journal with capped
+retry and same-account reauthentication, and local playback diagnostics. Controlled
+simulator playback and ten graceful exit/relaunch cycles have passed. These do not
+establish abrupt termination, physical suspension or live-account qualification.
 
-The contract and ordered implementation gates are in
-[decision 003](decisions/003-resume-library-sync.md). Source inspection found a
-180-second Core progress-write throttle and whole-second sync comparisons;
-relying on those unchanged would leave resume and conflict requirements unproven.
+The contract is [decision 003](decisions/003-resume-library-sync.md); the full exit
+gates remain in [stage 5 of the plan](IMPLEMENTATION-PLAN.md#stage-5--resume-library-and-recovery).
+Branch: `codex/tvos-phase-5`, stacked on `codex/tvos-phase-4`.
 
-Branch: `codex/tvos-phase-5`, stacked on `codex/tvos-phase-4` at `0bbecfa`.
-Next: bridge Core Player progress and acknowledged checkpoints, and cover UI failed-save
-retry/disappearance and multi-page library navigation. Device
-qualification is deferred until the Apple TV is available; simulator work continues.
+Current evidence includes 77 simulator tests (`b9a15dd15b4343fa8abd2df76d4de9ab`),
+Core tests (`5d2c878e68884d04b59fb255bfa42288`), unsigned device compilation
+(`7bc851debe4c44dbba3e4c0502ad316e`), and the selected-episode playback journey
+(`5e643ddaeb374ea68709dde0e0375859`). These task records live locally under
+`.agent-work/tasks/phase-5-library/`; they are not committed evidence artifacts.
+The committed [resume-cycle report](evidence/resume-cycles-2026-11-18.json)
+records the graceful relaunch experiment. Latest code checkpoint: `71af98f`.
+CI for that checkpoint is still running at this documentation update.
+
+Remaining work includes Swift ownership/retry after failed reauthentication cleanup,
+a successful account-refresh UI journey, pending-journal sign-out recovery,
+ambiguous operation timeout reconciliation, failed-save UI and abrupt interruption
+coverage, cache-purge recovery, and broader console privacy qualification.
+Earlier phases' unresolved gates and the physical-device matrix remain required.
+Rust panic-hook redaction and VLC logging suppression are implemented; neither
+proves that all OS crash reports or third-party output are private.
+
+The sections below are chronological implementation records. Their statements of
+“next” work or missing APIs describe the date of each slice, not the current state.
+Use the latest [handoff entries](../agent-harness/HANDOFF.md) for subsequent evidence.
 
 ## Native membership slice
 
