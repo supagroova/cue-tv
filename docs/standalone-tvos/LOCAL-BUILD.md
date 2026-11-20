@@ -32,12 +32,18 @@ Do not update them implicitly to resolve a build failure.
 ```sh
 make check
 make apple-build
+make apple-release-build
 xcrun simctl list devices available
 ```
 
 `make apple-build` generates `apple-tv/SittingRoomTV.xcodeproj` and builds the
 **Debug**, unsigned device app under `.agent-work/DerivedData`. It is compilation
-evidence, not a signed installable release. The helper creates missing ignored
+evidence, not a signed installable release. `make apple-release-build` explicitly
+selects Xcode Release and builds unsigned for the device; its packaged ATS settings
+were inspected locally. Native archives still use the existing Cargo development
+profile. See the [phase 6 audit](PHASE-6.md#unsigned-release-compilation-and-ats-audit)
+for exact scope and output location. Neither command proves signed installation.
+The helper creates missing ignored
 signing/config placeholders but preserves existing ones.
 
 The native integration tests require the owned loopback peer fixture. Start this
@@ -70,7 +76,7 @@ material. Open the generated Xcode project, select the Apple TV destination and
 review Signing & Capabilities before building/installing.
 
 Do not describe this as a release procedure completed successfully: Release
-transport configuration, actual signing/install, detached launch and same-identity
+runtime transport validation, actual signing/install, detached launch and same-identity
 upgrade are open gates in phases 6–7. The [phase 7 checklist](PHASE-7.md) records
 what must accompany a candidate before handover.
 

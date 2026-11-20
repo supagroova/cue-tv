@@ -27,8 +27,11 @@ are complete. Reproducibility means a recorded clean build can be repeated; it
 does not mean signed binaries are promised to be byte-identical.
 
 [LOCAL-BUILD.md](LOCAL-BUILD.md) documents current verified build entry points.
-`make apple-build` is explicitly Debug/unsigned. A release command and signed
-artifact are not yet qualified; do not relabel that output as a release package.
+`make apple-build` is explicitly Debug/unsigned. `make apple-release-build` now
+provides a locally verified unsigned Xcode Release build and packaged ATS audit;
+native archives still use their existing Cargo development profile. A signed
+artifact and physical Release runtime are not yet qualified. Do not relabel either
+unsigned output as an installable personal-release package.
 Keep signing secrets, personal settings, provisioning profiles and private account
 information outside Git and shared reports.
 
