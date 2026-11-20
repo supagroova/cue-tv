@@ -114,6 +114,37 @@ impl Journal {
         }
         Ok(())
     }
+    pub(crate) fn reconcile(
+        &self,
+        local: &stremio_core::types::library::LibraryBucket,
+        remote: Vec<stremio_core::types::library::LibraryItem>,
+    ) -> Result<stremio_core::types::library::LibraryBucket, Error> {
+        self.validate_library(local)?;
+        let mut merged = local.clone();
+        let mut seen = std::collections::BTreeSet::new();
+        for item in remote {
+            if !valid_id(&item.id)
+                || !matches!(item.r#type.as_str(), "movie" | "series")
+                || !seen.insert(item.id.clone())
+            {
+                return Err(Error::Invalid);
+            }
+            if local
+                .items
+                .get(&item.id)
+                .is_some_and(|local| local.r#type != item.r#type)
+            {
+                return Err(Error::Identity);
+            }
+            if !self.entries.contains_key(&item.id) {
+                // Timestamp ordering is not a remote acknowledgement. With no
+                // pending local intent the server record is authoritative.
+                merged.items.insert(item.id.clone(), item);
+            }
+        }
+        Ok(merged)
+    }
+
     pub(crate) fn encode(&self) -> Result<Vec<u8>, Error> {
         let bytes = serde_json::to_vec(self).map_err(|_| Error::Invalid)?;
         if bytes.len() > MAX_BYTES {
@@ -145,6 +176,66 @@ impl Journal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_local_state_wins_but_remote_state_wins_without_pending_intent() {
+        use stremio_core::types::library::{LibraryBucket, LibraryItem};
+        let item = |id: &str, position: u64, date: &str| -> LibraryItem {
+            serde_json::from_value(serde_json::json!({"_id":id,"type":"movie","name":"Fixture",
+                "removed":false,"temp":false,"_mtime":date,"state":{
+                "timeWatched":0,"timeOffset":position,"overallTimeWatched":0,"timesWatched":0,
+                "flaggedWatched":0,"duration":1000}}))
+            .unwrap()
+        };
+        let local = LibraryBucket::new(
+            Some("owner-a".parse().unwrap()),
+            vec![
+                item("pending", 200, "2026-01-02T00:00:00Z"),
+                item("clean", 300, "2026-01-02T00:00:00Z"),
+            ],
+        );
+        let journal = Journal::new("owner-a")
+            .unwrap()
+            .with_intent("owner-a", "movie", "pending")
+            .unwrap();
+        let remote = vec![
+            item("pending", 900, "2026-01-03T00:00:00Z"),
+            item("clean", 100, "2026-01-01T00:00:00Z"),
+        ];
+        let merged = journal.reconcile(&local, remote).unwrap();
+        assert_eq!(merged.items["pending"].state.time_offset, 200);
+        assert_eq!(merged.items["clean"].state.time_offset, 100);
+        let equal_time = journal
+            .reconcile(&local, vec![item("pending", 800, "2026-01-02T00:00:00Z")])
+            .unwrap();
+        assert_eq!(equal_time.items["pending"].state.time_offset, 200);
+        let duplicate = item("clean", 900, "2026-01-03T00:00:00Z");
+        assert!(matches!(
+            journal.reconcile(&local, vec![duplicate.clone(), duplicate]),
+            Err(Error::Invalid)
+        ));
+        let mut conflicting = item("pending", 900, "2026-01-03T00:00:00Z");
+        conflicting.r#type = "series".into();
+        assert!(matches!(
+            journal.reconcile(&local, vec![conflicting]),
+            Err(Error::Identity)
+        ));
+        let mut foreign = local.clone();
+        foreign.uid = Some("owner-b".parse().unwrap());
+        assert!(matches!(
+            journal.reconcile(&foreign, vec![]),
+            Err(Error::Identity)
+        ));
+        assert_eq!(
+            journal.revision("pending"),
+            Some(1),
+            "Pulls never acknowledge pending writes"
+        );
+        assert_eq!(
+            local.items["clean"].state.time_offset, 300,
+            "Planning must leave canonical state unchanged"
+        );
+    }
+
     #[test]
     fn older_ack_does_not_clear_a_newer_edit() {
         let first = Journal::new("owner-a")
