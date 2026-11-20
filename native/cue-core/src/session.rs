@@ -1362,6 +1362,7 @@ async fn run(
                 error = None;
                 addon_generation += 1;
                 catalog_generation += 1;
+                env.replace_catalog_requests();
                 details_generation += 1;
                 source_generation += 1;
                 pending_playback = None;
@@ -1485,6 +1486,9 @@ async fn run(
                     break;
                 };
                 catalog_generation = next;
+                env.replace_catalog_requests();
+                // Explicit reselection must issue a fresh request even for an identical query.
+                catalog = crate::catalog::Catalog::default();
                 catalog_item_offset = 0;
                 error = None;
                 (

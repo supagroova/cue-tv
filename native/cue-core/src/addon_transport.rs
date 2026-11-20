@@ -38,6 +38,18 @@ impl AddonTransport for ContentTransport {
             }
             .boxed();
         }
-        self.inner.resource(path)
+        let request = self.inner.resource(path);
+        if path.resource != "catalog" {
+            return request;
+        }
+        // Capture the generation while Core constructs the effect, not when it is polled.
+        let cancellation = crate::environment::catalog_request_cancellation();
+        async move {
+            let cancellation = cancellation?;
+            tokio::select! { biased;
+                _ = cancellation.cancelled() => Err(EnvError::Other("Catalogue request superseded".into())),
+                result = request => result,
+            }
+        }.boxed()
     }
 }
