@@ -7,10 +7,11 @@ import Security
 @Suite struct CoreServiceTests {
 @Test func accountSyncStatusDecodesNativeWireStates() throws {
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
-    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required","reauthenticating":true}"#.utf8))
+    let rejected = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":2,"state":"reauthentication_required","reauthenticating":true,"reauth_sequence":7}"#.utf8))
     #expect(rejected.state == .reauthenticationRequired)
     #expect(rejected.pendingTitles == 2)
     #expect(rejected.reauthenticating == true)
+    #expect(rejected.reauthSequence == 7)
     let waiting = try decoder.decode(CoreSnapshot.Sync.self, from: Data(#"{"pending_titles":1,"state":"waiting"}"#.utf8))
     #expect(waiting.state == .waiting)
 }
@@ -553,11 +554,8 @@ nonisolated private final class CoreHTTPFixture: Sendable {
     #expect(state.status == .ready)
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.login(email: "", password: "synthetic-password") }
     await #expect(throws: NativeCoreService.Failure.invalidRequest) { try await service.reauthenticate(email: "", password: "synthetic-password") }
-    try await service.reauthenticate(email: "fixture@example.test", password: "synthetic-password")
-    for _ in 0..<100 where state.error != "account_sync_unavailable" {
-        try await Task.sleep(for: .milliseconds(10)); state = try await service.snapshot()
-    }
-    #expect(state.error == "account_sync_unavailable")
+    await #expect(throws: NativeCoreService.Failure.invalidRequest) { _ = try await service.reauthenticate(email: "fixture@example.test", password: "synthetic-password") }
+    try await service.cancelReauthentication(sequence: 1)
     #expect(state.model?.authenticated == false)
     let revision = try #require(state.model?.revision)
     try await service.logout()

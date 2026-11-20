@@ -9,6 +9,7 @@ struct StandaloneHome: View {
     @State private var restart = UUID()
     @State private var signIn = AccountSignInModel()
     @State private var showSignIn = false
+    @State private var refreshAccount: AccountReauthenticationModel?
     @State private var preparingAccount = false
     @State private var accountError: String?
     @State private var selectedSource: SelectedSource?
@@ -84,6 +85,11 @@ struct StandaloneHome: View {
                     case .reauthenticationRequired:
                         Text(sync.reauthenticating == true ? "Signing in to Stremio…" : "Stremio rejected this account session. Sync is paused; pending changes are retained.")
                             .foregroundStyle(.orange)
+                        Button("Sign in again") {
+                            if let session = model.snapshot?.session {
+                                refreshAccount = AccountReauthenticationModel(home: model, session: session)
+                            }
+                        }.disabled(sync.reauthenticating == true || model.signingOut)
                     }
                 }
                 if let error = state.error, state.sync == nil || !error.hasPrefix("account_sync_") {
@@ -255,6 +261,9 @@ struct StandaloneHome: View {
         }
         .onExitCommand(perform: backAction)
         .task(id: restart) { await model.run() }
+        .fullScreenCover(item: $refreshAccount) { refresh in
+            AccountReauthenticationView(model: refresh, onClose: { refreshAccount = nil })
+        }
         .fullScreenCover(isPresented: $showSignIn) {
             AccountSignInView(model: signIn, home: model,
                 onClose: { showSignIn = false; screen = .catalogs; restart = UUID() },

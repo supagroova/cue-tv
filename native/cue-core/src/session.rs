@@ -49,6 +49,7 @@ pub(crate) fn validate_addon_url(url: &str) -> Result<AddonSelected, &'static st
 }
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct SyncSnapshot {
+    pub reauth_sequence: u64,
     pub reauthenticating: bool,
     pub pending_titles: usize,
     pub state: &'static str,
@@ -75,6 +76,7 @@ pub struct Snapshot {
 }
 type SubtitlePlan = (u64, Vec<stremio_core::types::addon::ResourceRequest>);
 enum Command {
+    CancelReauthentication(u64, oneshot::Sender<Result<(), &'static str>>),
     Reauthenticate(String, String, oneshot::Sender<Result<(), &'static str>>),
     Reauthenticated(
         u64,
@@ -260,6 +262,7 @@ impl CoreSession {
             journal.as_ref(),
             &crate::sync_scheduler::Scheduler::default(),
             false,
+            0,
         );
         let (identity_publish, identity) = watch::channel(account_identity(&ctx));
         let (publish, state) = watch::channel(initial);
@@ -322,6 +325,13 @@ impl CoreSession {
                 password.to_owned(),
                 send,
             ))
+            .map_err(|_| "account_busy")?;
+        receive.await.map_err(|_| "stopped")?
+    }
+    pub async fn cancel_reauthentication(&self, sequence: u64) -> Result<(), &'static str> {
+        let (send, receive) = oneshot::channel();
+        self.commands
+            .try_send(Command::CancelReauthentication(sequence, send))
             .map_err(|_| "account_busy")?;
         receive.await.map_err(|_| "stopped")?
     }
@@ -801,6 +811,7 @@ fn sync_view(
     journal: Option<&crate::sync_journal::Journal>,
     scheduler: &crate::sync_scheduler::Scheduler,
     reauthenticating: bool,
+    reauth_sequence: u64,
 ) -> Option<SyncSnapshot> {
     ctx.profile.auth.as_ref()?;
     let pending_titles = journal.map_or(0, |journal| journal.pending_count());
@@ -814,6 +825,7 @@ fn sync_view(
         "idle"
     };
     Some(SyncSnapshot {
+        reauth_sequence,
         reauthenticating,
         pending_titles,
         state,
@@ -825,12 +837,13 @@ fn publish_state(
     journal: Option<&crate::sync_journal::Journal>,
     scheduler: &crate::sync_scheduler::Scheduler,
     reauthenticating: bool,
+    reauth_sequence: u64,
     mut state: Snapshot,
 ) {
     state.sync = if state.stopped {
         None
     } else {
-        sync_view(ctx, journal, scheduler, reauthenticating)
+        sync_view(ctx, journal, scheduler, reauthenticating, reauth_sequence)
     };
     publish.send_replace(state);
 }
@@ -978,6 +991,7 @@ async fn run(
             journal.as_ref(),
             &sync_scheduler,
             reauth_active.is_some(),
+            reauth_sequence,
         );
         publish.send_if_modified(|state| {
             if state.sync != sync {
@@ -1004,6 +1018,25 @@ async fn run(
                 details_generation,
                 source_generation,
             ),
+            Command::CancelReauthentication(sequence, reply) => {
+                if reauth_active
+                    .as_ref()
+                    .is_some_and(|(active, _)| *active == sequence)
+                {
+                    reauth_cancel.cancel();
+                    reauth_active = None;
+                    reauth_ready = None;
+                    error = None;
+                    publish.send_modify(|state| {
+                        state.error = None;
+                        if let Some(sync) = &mut state.sync {
+                            sync.reauthenticating = false;
+                        }
+                    });
+                }
+                let _ = reply.send(Ok(()));
+                continue;
+            }
             Command::Reauthenticate(email, password, reply) => {
                 let Some(uid) = ctx.profile.uid().filter(|_| sync_allowed) else {
                     let _ = reply.send(Err("account_sync_unavailable"));
@@ -1489,6 +1522,7 @@ async fn run(
                         journal.as_ref(),
                         &sync_scheduler,
                         reauth_active.is_some(),
+                        reauth_sequence,
                         snapshot(
                             &ctx,
                             &addon,
@@ -1529,6 +1563,7 @@ async fn run(
                     journal.as_ref(),
                     &sync_scheduler,
                     reauth_active.is_some(),
+                    reauth_sequence,
                     snapshot(
                         &ctx,
                         &addon,
@@ -1572,6 +1607,7 @@ async fn run(
                     journal.as_ref(),
                     &sync_scheduler,
                     reauth_active.is_some(),
+                    reauth_sequence,
                     snapshot(
                         &ctx,
                         &addon,
@@ -1848,6 +1884,7 @@ async fn run(
                     journal.as_ref(),
                     &sync_scheduler,
                     reauth_active.is_some(),
+                    reauth_sequence,
                     snapshot(
                         &ctx,
                         &addon,
@@ -1888,6 +1925,7 @@ async fn run(
                     journal.as_ref(),
                     &sync_scheduler,
                     reauth_active.is_some(),
+                    reauth_sequence,
                     snapshot(
                         &ctx,
                         &addon,
@@ -1929,6 +1967,7 @@ async fn run(
                     journal.as_ref(),
                     &sync_scheduler,
                     reauth_active.is_some(),
+                    reauth_sequence,
                     snapshot(
                         &ctx,
                         &addon,
@@ -2149,6 +2188,7 @@ async fn run(
             journal.as_ref(),
             &sync_scheduler,
             reauth_active.is_some(),
+            reauth_sequence,
             snapshot(
                 &ctx,
                 &addon,
@@ -2184,6 +2224,7 @@ async fn run(
         journal.as_ref(),
         &sync_scheduler,
         reauth_active.is_some(),
+        reauth_sequence,
         snapshot(
             &ctx,
             &addon,

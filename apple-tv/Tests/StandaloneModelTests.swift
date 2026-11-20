@@ -321,3 +321,23 @@ private actor ActionGate {
     run.cancel()
     await run.value
 }
+
+@Test @MainActor func refreshFormCannotReplaceGuestAndCanCancelWithoutRetiringIt() async throws {
+    let service = NativeCoreService()
+    let home = StandaloneModel(service: service)
+    let run = Task { await home.run() }
+    for _ in 0..<100 where home.snapshot?.status != .ready { try await Task.sleep(for: .milliseconds(10)) }
+    let session = try #require(home.snapshot?.session)
+    let refresh = AccountReauthenticationModel(home: home, session: session)
+    refresh.submit(email: "fixture@example.test", password: "synthetic-password") {
+        Issue.record("Guest cannot be adopted as a refreshed account")
+    }
+    for _ in 0..<100 where refresh.busy { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(refresh.error != nil)
+    #expect(await refresh.cancel())
+    #expect(home.snapshot?.session == session)
+    #expect(home.snapshot?.model?.authenticated == false)
+    #expect(try await service.snapshot().status == .ready)
+    run.cancel()
+    await run.value
+}

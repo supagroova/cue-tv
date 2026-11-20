@@ -446,3 +446,23 @@ fn refresh_credentials_are_bounded_private_and_rejected_for_guests() {
         -1
     );
 }
+
+#[test]
+fn refresh_cancellation_has_an_explicit_native_acknowledgment() {
+    let _exclusive = BRIDGE.lock().unwrap();
+    let handle = cue_core_create();
+    until(|| state(handle)["status"] == "ready");
+    assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+    // An idle snapshot is not evidence that native has consumed this command.
+    let command = br#"{"version":1,"action":"cancel_reauthentication","sequence":7}"#;
+    assert_eq!(
+        unsafe { cue_core_dispatch(handle, command.as_ptr(), command.len()) },
+        0
+    );
+    until(|| cue_core_reauthentication_cancelled(handle) == 7);
+    assert_eq!(state(handle)["model"]["authenticated"], false);
+    cue_core_stop(handle);
+    until(|| cue_core_stop_status(handle) == 1);
+    assert_eq!(cue_core_release(handle), 1);
+    assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+}

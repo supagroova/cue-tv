@@ -26,6 +26,7 @@ impl Drop for Handoff {
     }
 }
 struct Entry {
+    reauth_cancelled: AtomicU64,
     identity: Mutex<Option<String>>,
     handoff: Mutex<Handoff>,
     commands: mpsc::Sender<Command>,
@@ -204,6 +205,7 @@ fn create(persistence: Option<Persistence>) -> u64 {
         };
         let (commands, inbox) = mpsc::channel(64);
         let entry = Arc::new(Entry {
+            reauth_cancelled: AtomicU64::new(0),
             identity: Mutex::new(None),
             commands,
             handoff: Mutex::new(Handoff::default()),
@@ -278,6 +280,11 @@ async fn own(
                             Command::Reauthenticate { email, password } => session.reauthenticate(&email, &password).await,
                             Command::Logout { .. } => session.logout().await,
                             Command::RetrySync { .. } => session.retry_sync().await,
+                            Command::CancelReauthentication { sequence, .. } => {
+                                let result = session.cancel_reauthentication(sequence).await;
+                                if result.is_ok() { entry.reauth_cancelled.store(sequence, Ordering::Release); }
+                                result
+                            },
                             Command::PrepareTorrent { ticket, index, revision } => {
                                 let result = session.prepare_torrent(index, revision).await;
                                 let value = match result {
@@ -494,6 +501,10 @@ enum Command {
     RetrySync {
         version: u32,
     },
+    CancelReauthentication {
+        version: u32,
+        sequence: u64,
+    },
     #[serde(skip)]
     PrepareTorrent {
         ticket: u64,
@@ -588,6 +599,7 @@ impl Command {
             | Self::Login { .. }
             | Self::Reauthenticate { .. } => false,
             Self::Logout { version } | Self::RetrySync { version } => *version == 1,
+            Self::CancelReauthentication { version, sequence } => *version == 1 && *sequence != 0,
             Self::InstallAddon { version, .. }
             | Self::DetailsSeason { version, .. }
             | Self::DetailsVideos { version, .. }
@@ -1170,4 +1182,56 @@ pub unsafe extern "C" fn cue_core_request_watched(
         ticket
     }))
     .unwrap_or(0)
+}
+
+/// Last cancellation command acknowledged by the native session; zero if absent.
+#[unsafe(no_mangle)]
+pub extern "C" fn cue_core_reauthentication_cancelled(handle: u64) -> u64 {
+    lookup(handle).map_or(0, |entry| entry.reauth_cancelled.load(Ordering::Acquire))
+}
+
+#[cfg(test)]
+mod cancellation_admission_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_or_only_queued_cancellation_is_not_acknowledged() {
+        // Hold the actual command consumer so queue pressure is deterministic.
+        let (commands, mut inbox) = mpsc::channel(1);
+        let handle = NEXT.fetch_add(1, Ordering::Relaxed);
+        let entry = Arc::new(Entry {
+            reauth_cancelled: AtomicU64::new(0),
+            identity: Mutex::new(None),
+            handoff: Mutex::new(Handoff::default()),
+            commands,
+            snapshot: Mutex::new(Vec::new()),
+            stop: CancellationToken::new(),
+            stopped: AtomicBool::new(false),
+        });
+        entries().lock().unwrap().insert(handle, entry.clone());
+        entry
+            .commands
+            .try_send(Command::RetrySync { version: 1 })
+            .unwrap();
+        let cancel = br#"{"version":1,"action":"cancel_reauthentication","sequence":7}"#;
+        assert_eq!(
+            unsafe { cue_core_dispatch(handle, cancel.as_ptr(), cancel.len()) },
+            -3
+        );
+        assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Command::RetrySync { .. }
+        ));
+        assert_eq!(
+            unsafe { cue_core_dispatch(handle, cancel.as_ptr(), cancel.len()) },
+            0
+        );
+        assert_eq!(cue_core_reauthentication_cancelled(handle), 0);
+        assert!(matches!(
+            inbox.try_recv().unwrap(),
+            Command::CancelReauthentication { sequence: 7, .. }
+        ));
+        entries().lock().unwrap().remove(&handle);
+    }
 }

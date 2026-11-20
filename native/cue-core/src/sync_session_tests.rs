@@ -840,3 +840,92 @@ async fn retiring_account_cancels_held_reauthentication_and_hides_progress() {
         }
     }
 }
+
+#[tokio::test]
+async fn cancelling_refresh_preserves_account_and_stale_cancel_cannot_stop_new_attempt() {
+    use futures::FutureExt;
+    let env = stored_pending().await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let cancelled = Arc::new(tokio::sync::Notify::new());
+    let (start, cancel) = (started.clone(), cancelled.clone());
+    *env.test_http_async.lock().unwrap() = Some(Arc::new(move |parts, _| {
+        if parts.uri.path().ends_with("/login") {
+            let (start, cancel) = (start.clone(), cancel.clone());
+            async move {
+                let _drop = NotifyOnDrop(cancel);
+                start.notify_one();
+                futures::future::pending().await
+            }
+            .boxed()
+        } else {
+            assert!(parts.uri.path().ends_with("/datastorePut"));
+            async { Ok(br#"{"error":{"code":1,"message":"expired fixture"}}"#.to_vec()) }.boxed()
+        }
+    }));
+    let mut session = CoreSession::restore_account(env.clone(), "owner-a")
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if session
+            .snapshot()
+            .sync
+            .as_ref()
+            .is_some_and(|sync| sync.state == "reauthentication_required")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    session
+        .reauthenticate("fixture@example.test", "fixture-password")
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    let first = session.snapshot().sync.as_ref().unwrap().reauth_sequence;
+    session.cancel_reauthentication(first).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), cancelled.notified())
+        .await
+        .unwrap();
+    assert_eq!(session.account_identity().as_deref(), Some("owner-a"));
+    assert_eq!(session.snapshot().sync.as_ref().unwrap().pending_titles, 1);
+    session
+        .reauthenticate("fixture@example.test", "fixture-password")
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    let second = session.snapshot().sync.as_ref().unwrap().reauth_sequence;
+    assert!(second > first);
+    session.cancel_reauthentication(first).await.unwrap();
+    assert!(session.snapshot().sync.as_ref().unwrap().reauthenticating);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(30), cancelled.notified())
+            .await
+            .is_err()
+    );
+    session.cancel_reauthentication(second).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), cancelled.notified())
+        .await
+        .unwrap();
+    assert_eq!(
+        session.snapshot().sync.as_ref().unwrap().state,
+        "reauthentication_required"
+    );
+    env.scope(async {
+        let profile = NativeEnv::get_storage::<Profile>(PROFILE_STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(profile.auth.unwrap().key.0, "synthetic-token");
+        let journal = NativeEnv::get_storage::<Journal>(crate::sync_journal::STORAGE_KEY)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(journal.revision("title"), Some(1));
+    })
+    .await;
+    session.stop().await;
+}

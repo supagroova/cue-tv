@@ -162,6 +162,26 @@ final class StandaloneModel {
         }
     }
 
+    func beginAccountRefresh(email: String, password: String, session: UInt64) async throws -> UInt64 {
+        guard let service, snapshot?.session == session, !signingOut, pendingSignOut == nil else {
+            throw NativeCoreService.Failure.stopped
+        }
+        let token = generation
+        let sequence = try await service.reauthenticate(email: email, password: password)
+        guard generation == token, !Task.isCancelled else {
+            let cancellation = Task { try await service.cancelReauthentication(sequence: sequence) }
+            do { try await cancellation.value }
+            catch { throw NativeCoreService.Failure.refreshCleanupRequired(sequence) }
+            throw CancellationError()
+        }
+        return sequence
+    }
+
+    func cancelAccountRefresh(sequence: UInt64, session: UInt64) async throws {
+        guard let service, snapshot?.session == session else { return }
+        try await service.cancelReauthentication(sequence: sequence)
+    }
+
     func retrySync() async {
         guard let service, !signingOut, pendingSignOut == nil, !retryingSync,
               snapshot?.model?.authenticated == true,

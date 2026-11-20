@@ -29,6 +29,7 @@ nonisolated struct CoreSnapshot: Decodable, Sendable {
         }
         let pendingTitles: Int
         let reauthenticating: Bool?
+        let reauthSequence: UInt64?
         let state: State
     }
     struct Model: Decodable, Sendable {
@@ -143,7 +144,8 @@ nonisolated protocol CoreService: Sendable {
     func start() async throws
     func accountIdentity() async throws -> String?
     func login(email: String, password: String) async throws
-    func reauthenticate(email: String, password: String) async throws
+    func reauthenticate(email: String, password: String) async throws -> UInt64
+    func cancelReauthentication(sequence: UInt64) async throws
     func retrySync() async throws
     func logout() async throws
     func snapshot() async throws -> CoreSnapshot
@@ -172,10 +174,11 @@ nonisolated protocol CoreService: Sendable {
 /// Serializes native admission off the UI actor; snapshots exclude account secrets.
 actor NativeCoreService: CoreService {
     enum Failure: Error, Equatable { case unavailable, stopped, invalidRequest, busy, malformedSnapshot, shutdownTimeout, requestTimeout
-        case requestFailed(String) }
+        case requestFailed(String), refreshCleanupRequired(UInt64) }
     private let persistence: CorePersistenceConfiguration?
     enum Startup: Sendable { case guest, newAccount, restoreAccount(String) }
     private let startup: Startup
+    private var refreshAdmissionInProgress = false
     /// Account restoration requires an identity from protected app storage.
     /// A missing/mismatched account fails rather than falling back to guest.
     init(persistence: CorePersistenceConfiguration? = nil, startup: Startup = .guest) {
@@ -250,10 +253,54 @@ actor NativeCoreService: CoreService {
         try admitCredentials(email: email, password: password, refresh: false)
     }
 
-    /// Admission only; credentials remain in the existing account namespace.
-    func reauthenticate(email: String, password: String) throws {
+    /// Wait for native admission identity, not authentication completion. One caller
+    /// owns admission at a time; cancellation targets only the expected next attempt.
+    func reauthenticate(email: String, password: String) async throws -> UInt64 {
+        try Task.checkCancellation()
         if case .guest = startup { throw Failure.invalidRequest }
+        guard !refreshAdmissionInProgress else { throw Failure.busy }
+        let initial = try snapshot()
+        guard initial.model?.authenticated == true, let sync = initial.model?.sync,
+              sync.state == .reauthenticationRequired, sync.reauthenticating != true,
+              let previous = sync.reauthSequence, previous < UInt64.max else { throw Failure.invalidRequest }
+        let expected = previous + 1
+        refreshAdmissionInProgress = true
+        defer { refreshAdmissionInProgress = false }
         try admitCredentials(email: email, password: password, refresh: true)
+        do {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while true {
+                try Task.checkCancellation()
+                let state = try snapshot()
+                guard state.session == initial.session, state.status != .stopped,
+                      state.model?.authenticated == true else { throw Failure.stopped }
+                if let sequence = state.model?.sync?.reauthSequence, sequence > previous {
+                    guard sequence == expected else { throw Failure.requestFailed("reauthentication_replaced") }
+                    return sequence
+                }
+                guard ContinuousClock.now < deadline else { throw Failure.requestTimeout }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        } catch {
+            let original = error
+            let cancellation = Task { try await self.cancelReauthentication(sequence: expected) }
+            do { try await cancellation.value }
+            catch { throw Failure.refreshCleanupRequired(expected) }
+            throw original
+        }
+    }
+
+    func cancelReauthentication(sequence: UInt64) async throws {
+        guard sequence > 0 else { throw Failure.invalidRequest }
+        try dispatch(["version": 1, "action": "cancel_reauthentication", "sequence": sequence])
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while true {
+            let state = try snapshot()
+            guard state.status != .stopped, let handle else { throw Failure.stopped }
+            if cue_core_reauthentication_cancelled(handle) == sequence { return }
+            guard ContinuousClock.now < deadline else { throw Failure.requestTimeout }
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 
     private func admitCredentials(email: String, password: String, refresh: Bool) throws {
