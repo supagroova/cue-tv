@@ -38,6 +38,35 @@ fn valid_id(value: &str) -> bool {
 }
 
 impl Journal {
+    /// Reserve capacity and revision before changing canonical in-memory state.
+    pub(crate) fn plan_intent(
+        current: &Option<Self>,
+        library: &stremio_core::types::library::LibraryBucket,
+        kind: &str,
+        id: &str,
+    ) -> Result<Option<Self>, Error> {
+        let Some(uid) = library.uid.as_ref() else {
+            return if current.is_none() {
+                Ok(None)
+            } else {
+                Err(Error::Identity)
+            };
+        };
+        let base = match current {
+            Some(journal) => journal.clone(),
+            None => Self::new(&uid.0)?,
+        };
+        base.validate_library(library)?;
+        if library
+            .items
+            .get(id)
+            .is_some_and(|item| item.r#type != kind)
+        {
+            return Err(Error::Identity);
+        }
+        Ok(Some(base.with_intent(&uid.0, kind, id)?))
+    }
+
     pub(crate) fn new(uid: &str) -> Result<Self, Error> {
         if !valid_id(uid) {
             return Err(Error::Identity);

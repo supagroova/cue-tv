@@ -183,10 +183,15 @@ impl CoreSession {
                             && auth.key.0.len() <= 4096 => {}
                     _ => return Err(EnvError::StorageUnavailable),
                 }
-                crate::restore::context(profile).await
+                let ctx = crate::restore::context(profile).await?;
+                let journal = NativeEnv::get_storage::<crate::sync_journal::Journal>(
+                    crate::sync_journal::STORAGE_KEY,
+                )
+                .await?;
+                Ok((ctx, journal))
             })
             .await;
-        let ctx = match setup {
+        let (ctx, journal) = match setup {
             Ok(ctx) => ctx,
             Err(error) => {
                 environment.shutdown().await;
@@ -217,6 +222,7 @@ impl CoreSession {
         let owner = tokio::spawn(async move {
             let result = std::panic::AssertUnwindSafe(env.scope(run(
                 ctx,
+                journal,
                 inbox,
                 outgoing,
                 publish.clone(),
@@ -716,6 +722,7 @@ fn retain_playback(
 
 async fn run(
     mut ctx: Ctx,
+    mut journal: Option<crate::sync_journal::Journal>,
     mut inbox: mpsc::Receiver<Command>,
     outgoing: mpsc::Sender<Command>,
     publish: watch::Sender<Snapshot>,
@@ -1216,10 +1223,26 @@ async fn run(
                         continue;
                     }
                 };
+                let next_journal = match crate::sync_journal::Journal::plan_intent(
+                    &journal,
+                    &ctx.library,
+                    &item.r#type,
+                    &item.id,
+                ) {
+                    Ok(next) => next,
+                    Err(_) => {
+                        let _ = reply.send(Err("checkpoint_write_failed"));
+                        continue;
+                    }
+                };
                 let mut library = ctx.library.clone();
                 let checkpoint_title = item.id.clone();
                 library.merge_items(vec![item]);
-                let write = match crate::checkpoint::write(&library, &checkpoint_title) {
+                let planned_write = match next_journal.as_ref() {
+                    Some(next) => crate::checkpoint::write_with_journal(&library, next),
+                    None => crate::checkpoint::write(&library, &checkpoint_title),
+                };
+                let write = match planned_write {
                     Ok(write) => write,
                     Err(_) => {
                         let _ = reply.send(Err("checkpoint_write_failed"));
@@ -1229,6 +1252,7 @@ async fn run(
                 // Later library actions snapshot this admitted progress. Writes
                 // share Core's sequential queue, preserving admission order.
                 ctx.library = library;
+                journal = next_journal;
                 checkpoint_pending = true;
                 playback_closing = close;
                 pending += 1;
@@ -1576,8 +1600,12 @@ async fn run(
                     stremio_core::types::server_urls::ServerUrlsBucket::new::<NativeEnv>(None);
                 messages.push_back(Msg::Internal(Internal::StreamingServerUrlsBucketChanged));
             }
-            let context_effects =
-                crate::library_update::update(&mut ctx, &message, manual_library_title.as_deref());
+            let context_effects = crate::library_update::update(
+                &mut ctx,
+                &message,
+                manual_library_title.as_deref(),
+                &mut journal,
+            );
             let stale_manifest = origin != addon_generation
                 && matches!(&message, Msg::Internal(Internal::ManifestRequestResult(..)));
             let addon_effects = if stale_manifest {
