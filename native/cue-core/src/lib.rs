@@ -39,3 +39,5 @@ mod sync_scheduler;
 
 #[cfg(test)]
 mod sync_session_tests;
+
+mod reauth;

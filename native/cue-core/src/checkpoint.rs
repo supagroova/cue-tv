@@ -57,6 +57,45 @@ pub(crate) fn write_with_journal(
     Ok(NativeEnv::set_storage_batch(values))
 }
 
+/// Prepare one encrypted replacement for same-owner credentials and admitted state.
+/// The caller must not publish the returned profile until the write succeeds.
+pub(crate) fn refresh_account(
+    current: &stremio_core::types::profile::Profile,
+    auth: &stremio_core::types::profile::Auth,
+    library: &LibraryBucket,
+    journal: Option<&crate::sync_journal::Journal>,
+) -> Result<(stremio_core::types::profile::Profile, TryEnvFuture<()>), EnvError> {
+    let uid = current.uid().ok_or(EnvError::StorageUnavailable)?;
+    if uid != auth.user.id
+        || library.uid.as_ref() != Some(&uid)
+        || auth.key.0.is_empty()
+        || auth.key.0.len() > 4096
+    {
+        return Err(EnvError::StorageUnavailable);
+    }
+    let journal = match journal {
+        Some(journal) => journal.clone(),
+        None => {
+            crate::sync_journal::Journal::new(&uid.0).map_err(|_| EnvError::StorageUnavailable)?
+        }
+    };
+    journal
+        .validate_library(library)
+        .map_err(|_| EnvError::StorageUnavailable)?;
+    let mut profile = current.clone();
+    profile.auth = Some(auth.clone());
+    let mut values = batch(library)?;
+    values.insert(
+        crate::sync_journal::STORAGE_KEY.into(),
+        Some(journal.encode().map_err(|_| EnvError::StorageUnavailable)?),
+    );
+    values.insert(
+        stremio_core::constants::PROFILE_STORAGE_KEY.into(),
+        Some(serde_json::to_vec(&profile).map_err(|_| EnvError::StorageUnavailable)?),
+    );
+    Ok((profile, NativeEnv::set_storage_batch(values)))
+}
+
 /// Persist an exact-revision acknowledgement with the current library. Callers
 /// retain their admitted journal until this succeeds; a failed save is retryable.
 pub(crate) async fn acknowledge(

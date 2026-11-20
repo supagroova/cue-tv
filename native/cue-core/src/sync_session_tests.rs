@@ -57,7 +57,7 @@ async fn stored_pending() -> Arc<Environment> {
     seed_pending(Environment::new().unwrap()).await
 }
 
-async fn seed_pending(env: Arc<Environment>) -> Arc<Environment> {
+pub(super) async fn seed_pending(env: Arc<Environment>) -> Arc<Environment> {
     let mut profile = Profile::default();
     profile.auth = Some(serde_json::from_value(serde_json::json!({
         "key":"synthetic-token", "user":{"_id":"owner-a","email":"fixture@example.test",
