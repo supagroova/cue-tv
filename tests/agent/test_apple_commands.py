@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class AppleCommandTests(unittest.TestCase):
-    def run_combined(self, xcode_exit=0):
+    def run_combined(self, xcode_exit=0, action="ci-test"):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             script = root / "scripts/agent/apple.sh"
@@ -35,7 +35,9 @@ class AppleCommandTests(unittest.TestCase):
             environment = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
                                DESTINATION="platform=tvOS Simulator,id=fixture-device",
                                CUE_TEST_ARGS=str(record), CUE_TEST_EXIT=str(xcode_exit))
-            result = subprocess.run(["bash", str(script), "ci-test"], env=environment,
+            if action == "release-build":
+                environment.pop("DESTINATION", None)
+            result = subprocess.run(["bash", str(script), action], env=environment,
                                     capture_output=True, text=True)
             commands = [json.loads(line) for line in record.read_text().splitlines()] if record.exists() else []
             return result, commands
@@ -57,3 +59,14 @@ class AppleCommandTests(unittest.TestCase):
         result, commands = self.run_combined(xcode_exit=7)
         self.assertEqual(len(commands), 1)
         self.assertEqual(result.returncode, 7)
+
+    def test_release_build_uses_release_device_configuration_without_signing(self):
+        result, commands = self.run_combined(action="release-build")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(commands), 1)
+        arguments = commands[0]
+        self.assertEqual(arguments[arguments.index("-configuration") + 1], "Release")
+        self.assertEqual(arguments[arguments.index("-sdk") + 1], "appletvos")
+        self.assertEqual(arguments[arguments.index("-destination") + 1], "generic/platform=tvOS")
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", arguments)
+        self.assertEqual(arguments[-1], "build")

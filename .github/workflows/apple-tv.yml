@@ -46,11 +46,25 @@ jobs:
           mkdir -p .agent-work
           cargo +1.100.0 test --locked --features account-fixture --manifest-path native/cue-core/Cargo.toml 2>&1 | tee .agent-work/core-test.log
           cargo +1.100.0 test --locked --manifest-path native/cue-torrent/Cargo.toml 2>&1 | tee .agent-work/native-test.log
-      - name: Build unsigned Apple TV app and native device libraries
+      - name: Build unsigned Release Apple TV app and native device libraries
         shell: bash
         run: |
           set -euo pipefail
-          make apple-build 2>&1 | tee .agent-work/apple-build.log
+          make apple-release-build 2>&1 | tee .agent-work/apple-build.log
+          python3 - <<'PYCODE'
+          import plistlib
+          from pathlib import Path
+          bundle = Path('.agent-work/DerivedData/Build/Products/Release-appletvos/SittingRoomTV.app')
+          with (bundle / 'Info.plist').open('rb') as stream:
+              info = plistlib.load(stream)
+          ats = info.get('NSAppTransportSecurity', {})
+          for key in ('NSAllowsArbitraryLoads', 'NSAllowsArbitraryLoadsForMedia', 'NSAllowsArbitraryLoadsInWebContent'):
+              assert ats.get(key, False) is False, f'Broad release transport exception: {key}'
+          assert ats.get('NSAllowsLocalNetworking') is True
+          assert set(ats) == {'NSAllowsLocalNetworking'}, 'Unexpected Release ATS exception'
+          assert (bundle / info['CFBundleExecutable']).is_file()
+          print('Verified unsigned Release bundle and local-only ATS exception')
+          PYCODE
       - name: Upload native and device results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

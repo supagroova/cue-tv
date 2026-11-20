@@ -56,10 +56,9 @@ targets:
         CFBundleDisplayName: TV
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
-        NSLocalNetworkUsageDescription: TV uses your home network to show your Stremio library and work with the iPhone remote.
+        NSLocalNetworkUsageDescription: Cue TV uses your local network to connect to torrent peers and play media.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-          NSAllowsArbitraryLoads: true
         LSApplicationQueriesSchemes: [stremio, youtube]
         CFBundleURLTypes:
           - CFBundleURLName: com.rupertlaycock.couchtv.appletv
