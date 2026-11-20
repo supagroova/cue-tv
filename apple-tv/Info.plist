@@ -38,13 +38,11 @@
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>TV uses your home network to show your Stremio library and work with the iPhone remote.</string>
+	<string>Cue TV uses your local network to connect to torrent peers and play media.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

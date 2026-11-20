@@ -94,10 +94,40 @@ have adequate evidence. Green CI alone does not meet this condition.
   simulator or framework-support claims.
 - Live Stremio account/add-on qualification and some phase 5 failure/UI journeys
   remain open; see [phase 5](PHASE-5.md) and the latest [handoff](../agent-harness/HANDOFF.md).
-- `apple-tv/project.yml` currently grants `NSAllowsArbitraryLoads` globally. Q18
-  cannot pass until release transport settings are narrowed and the resulting
-  release bundle plus required playback transports are checked.
+- The obsolete broad ATS declaration has been removed; the packaged Release plist
+  retains only `NSAllowsLocalNetworking`. This is not a claim that all networking
+  uses ATS: Rust/VLC transports have separate policies. Q18 still needs runtime
+  release checks and physical playback evidence.
 - Hardware-derived memory/cache ceilings, active cache-purge recovery, sustained
   playback and independent guest/account journeys have no physical evidence yet.
 - No measured row is marked passed here. Next implementation work includes release
   hardening and qualification tooling; hardware runs remain deferred.
+
+## Unsigned Release compilation and ATS audit
+
+With the pinned toolchain on PATH, run from the repository root:
+
+```sh
+make apple-release-build
+```
+
+The wrapper selects Xcode's `Release` configuration, generic tvOS device target
+and `CODE_SIGNING_ALLOWED=NO`. Output is
+`.agent-work/DerivedData/Build/Products/Release-appletvos/SittingRoomTV.app`.
+Native archives currently retain the existing Cargo development profile; this
+command does not imply fully optimized native code or a signed installable release.
+Record that profile when comparing performance.
+
+The device CI lane uses this command instead of adding a second app build. It
+checks the packaged plist for absence of enabled broad ATS exceptions and presence
+of the local-network declaration, and verifies the declared executable exists.
+The Debug simulator lane continues to run both its unit/native and short UI suites.
+No long qualification run was added to routine CI.
+
+Apple documents that the local-network key can override the broad arbitrary-load
+key on supported OS versions. Removing the latter cleans up an obsolete declaration;
+it is not proof that ATS had previously been disabled for every request. See
+[NSAllowsArbitraryLoads](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowsarbitraryloads)
+and [NSAllowsLocalNetworking](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking).
+The purpose string now describes local torrent peers and media instead of the old
+iPhone remote/backend flow. Validate local-network consent on the physical device.

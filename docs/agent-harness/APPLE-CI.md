@@ -4,7 +4,7 @@ The workflow keeps native host tests, unsigned tvOS device compilation, simulato
 
 ## Independent jobs
 
-- **Native tests and tvOS device build** runs the Core and torrent host suites, then `make apple-build`. The app's pre-build scripts compile both native libraries for the device target.
+- **Native tests and tvOS device build** runs the Core and torrent host suites, then `make apple-release-build`. The app's pre-build scripts compile both native libraries for the device target using their existing Cargo development profile. Xcode builds the unsigned app in Release, and CI inspects its packaged ATS settings. This replaces the prior Debug device build; it does not add a second build.
 - **Apple TV simulator tests** starts simulator boot after cache/tool setup, builds the fixture seeder, and runs `make apple-ci-test`. One Xcode invocation builds both native libraries for the simulator and runs the unit target plus `PlaybackLabTests`.
 - **build-and-test** preserves the existing aggregate check name. It passes only when both jobs succeed; a failed, skipped or cancelled job cannot produce a green aggregate.
 
